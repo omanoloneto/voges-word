@@ -383,6 +383,8 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
                           onFind: _openFind,
                           onInsertImage: _insertImage,
                           onEditLink: _editLink,
+                          pagesView: true,
+                          onPageCountChanged: (_) {},
                         ),
                         if (_findOpen)
                           Positioned(

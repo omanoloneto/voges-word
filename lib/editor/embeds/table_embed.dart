@@ -5,6 +5,7 @@ import 'package:flutter_quill/flutter_quill.dart';
 
 import '../../document/embeds.dart';
 import '../../document/tables.dart';
+import '../pagination.dart';
 
 class TableCellRef {
   const TableCellRef(this.table, this.row, this.column);
@@ -158,14 +159,7 @@ class TableView extends StatelessWidget {
             ),
           );
         }
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: rows,
-          ),
-        );
+        return PagedRows(children: rows);
       },
     );
   }

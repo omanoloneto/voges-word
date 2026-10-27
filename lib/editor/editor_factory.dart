@@ -108,10 +108,12 @@ class EditorFactory {
     bool autoFocus = false,
     String? placeholder,
     GlobalKey<EditorState>? editorKey,
+    QuillPageLayout? pageLayout,
   }) {
     return QuillEditorConfig(
       padding: padding,
       maxContentWidth: maxContentWidth,
+      pageLayout: pageLayout,
       scrollable: scrollable,
       expands: expands,
       autoFocus: autoFocus,

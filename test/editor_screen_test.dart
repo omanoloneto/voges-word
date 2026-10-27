@@ -1,3 +1,5 @@
+import 'package:flutter/widgets.dart' show Scrollable, ScrollableState;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_quill/quill_delta.dart';
@@ -124,4 +126,64 @@ void main() {
       isTrue,
     );
   });
+
+  testWidgets(
+    'clique em parágrafo dividido entre páginas acha a palavra certa',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final tables = TableStore();
+      final docx = DocxCodec(tables);
+      final files = DocumentFiles();
+      final session = EditorSession(
+        docx: docx,
+        plainText: PlainTextCodec(
+          look: docx.createEmpty().look,
+          tables: tables,
+        ),
+        files: files,
+        tables: tables,
+      );
+      final words = List.generate(900, (i) => 'palavra$i').join(' ');
+      final bytes = docx.encode(Delta()..insert('$words MARCADOR fim\n'));
+      session.open(OpenedFile(name: 'longo.docx', bytes: bytes));
+      await tester.pumpWidget(
+        VogesWordApp(
+          session: session,
+          systemOpen: SystemOpen(files),
+          launchArguments: const [],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final editor = tester
+          .state<EditorState>(find.byType(QuillRawEditor))
+          .renderEditor;
+      expect(editor.pageCount, greaterThan(1));
+      final target =
+          session.controller.document.toPlainText().indexOf('MARCADOR') + 3;
+      final scroll = tester.state<ScrollableState>(
+        find
+            .descendant(
+              of: find.byType(QuillEditor),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      final caret = editor.getLocalRectForCaret(TextPosition(offset: target));
+      scroll.position.jumpTo(caret.top - 200);
+      await tester.pumpAndSettle();
+
+      final endpoint = editor
+          .getEndpointsForSelection(TextSelection.collapsed(offset: target))
+          .single
+          .point;
+      final point = editor.localToGlobal(endpoint - const Offset(0, 6));
+      await tester.tapAt(point, kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      final got = session.controller.selection.baseOffset;
+      expect((got - target).abs(), lessThanOrEqualTo(1));
+    },
+  );
 }
