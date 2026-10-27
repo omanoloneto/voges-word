@@ -38,5 +38,37 @@ class AppDelegate: FlutterAppDelegate {
       self.pendingPaths.removeAll()
     }
     self.channel = channel
+
+    let bookmarks = FlutterMethodChannel(
+      name: "voges_word/bookmarks",
+      binaryMessenger: controller.engine.binaryMessenger)
+    bookmarks.setMethodCallHandler { call, result in
+      switch call.method {
+      case "create":
+        guard let path = call.arguments as? String,
+          let data = try? URL(fileURLWithPath: path).bookmarkData(
+            options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+        else {
+          result(nil)
+          return
+        }
+        result(data.base64EncodedString())
+      case "resolve":
+        var stale = false
+        guard let text = call.arguments as? String,
+          let data = Data(base64Encoded: text),
+          let url = try? URL(
+            resolvingBookmarkData: data, options: .withSecurityScope,
+            relativeTo: nil, bookmarkDataIsStale: &stale)
+        else {
+          result(nil)
+          return
+        }
+        _ = url.startAccessingSecurityScopedResource()
+        result(url.path)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
   }
 }

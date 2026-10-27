@@ -12,6 +12,7 @@ import 'package:voges_word/document/plain_text_codec.dart';
 import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/editor/editor_session.dart';
 import 'package:voges_word/files/document_files.dart';
+import 'package:voges_word/files/recent_files.dart';
 import 'package:voges_word/files/system_open.dart';
 
 /// Gera imagens da tela para conferência visual; só roda com VW_SCREENSHOTS.
@@ -76,7 +77,9 @@ void main() {
   testWidgets('telas', (tester) async {
     if (output == null) return;
     await tester.runAsync(loadFonts);
-    tester.view.physicalSize = const Size(1180, 860);
+    final width =
+        double.tryParse(Platform.environment['VW_WIDTH'] ?? '') ?? 1180;
+    tester.view.physicalSize = Size(width, 860);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
@@ -104,6 +107,7 @@ void main() {
         child: VogesWordApp(
           session: session,
           systemOpen: SystemOpen(files),
+          recents: RecentFiles(files),
           launchArguments: const [],
         ),
       ),
@@ -117,6 +121,16 @@ void main() {
         )
         .first;
     final position = tester.state<ScrollableState>(scrollable).position;
+    for (final tab in ['Inserir', 'Layout', 'Exibir']) {
+      await tester.tap(find.text(tab));
+      await capture(tester, 'aba-${tab.toLowerCase()}');
+    }
+    await tester.tap(find.text('Início'));
+    await tester.tap(find.text('Arquivo').first);
+    await capture(tester, 'arquivo');
+    await tester.tapAt(const Offset(10, 840));
+    await tester.pumpAndSettle();
+
     final offsets = (Platform.environment['VW_OFFSETS'] ?? '700')
         .split(',')
         .map(double.parse);

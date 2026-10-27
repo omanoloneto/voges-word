@@ -8,18 +8,23 @@ import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../docx/docx_template.dart';
 import '../docx/image_formats.dart';
 import '../document/document_codec.dart';
 import '../files/document_files.dart';
+import '../files/recent_files.dart';
 import '../files/system_open.dart';
 import 'dialogs.dart';
 import 'document_commands.dart';
 import 'editor_factory.dart';
 import 'editor_session.dart';
+import 'file_panel.dart';
 import 'find_bar.dart';
 import 'paper_view.dart';
+import 'ribbon/ribbon.dart';
+import 'ribbon/ribbon_style.dart';
 import 'status_bar.dart';
-import 'toolbar/editor_toolbar.dart';
+import 'title_bar.dart';
 
 bool get isDesktop =>
     !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
@@ -28,12 +33,14 @@ class EditorScreen extends StatefulWidget {
   const EditorScreen({
     required this.session,
     required this.systemOpen,
+    required this.recents,
     required this.launchArguments,
     super.key,
   });
 
   final EditorSession session;
   final SystemOpen systemOpen;
+  final RecentFiles recents;
   final List<String> launchArguments;
 
   @override
@@ -44,11 +51,16 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   final _focusNode = FocusNode(debugLabel: 'documento');
   final _scrollController = ScrollController();
   final _editorKey = GlobalKey<EditorState>();
+  final _pageInfo = ValueNotifier<(int, int)?>(null);
   late final AppLifecycleListener _lifecycle;
+  QuillController? _watchedController;
   var _zoom = 1.0;
+  var _pagesView = true;
   var _findOpen = false;
   var _findReplace = false;
   var _closing = false;
+  var _maximized = false;
+  var _pageInfoScheduled = false;
   String? _title;
 
   EditorSession get session => widget.session;
@@ -59,10 +71,11 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     _focusNode.addListener(() {
       if (_focusNode.hasFocus) session.focusMain();
     });
-    session.addListener(_updateTitle);
+    session.addListener(_onSessionChanged);
     _lifecycle = AppLifecycleListener(onExitRequested: _onExitRequested);
     if (isDesktop) windowManager.addListener(this);
     widget.systemOpen.listen(_openFromSystem);
+    _watchController();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _updateTitle();
       final pending = await widget.systemOpen.pending(widget.launchArguments);
@@ -72,12 +85,55 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
 
   @override
   void dispose() {
-    session.removeListener(_updateTitle);
+    session.removeListener(_onSessionChanged);
+    _watchedController?.removeListener(_schedulePageInfo);
     _lifecycle.dispose();
     if (isDesktop) windowManager.removeListener(this);
     _focusNode.dispose();
     _scrollController.dispose();
+    _pageInfo.dispose();
     super.dispose();
+  }
+
+  void _onSessionChanged() {
+    _updateTitle();
+    _watchController();
+  }
+
+  void _watchController() {
+    if (_watchedController == session.controller) return;
+    _watchedController?.removeListener(_schedulePageInfo);
+    _watchedController = session.controller..addListener(_schedulePageInfo);
+    _schedulePageInfo();
+  }
+
+  void _schedulePageInfo() {
+    if (_pageInfoScheduled) return;
+    _pageInfoScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pageInfoScheduled = false;
+      _updatePageInfo();
+    });
+  }
+
+  void _updatePageInfo() {
+    final editor = _editorKey.currentState?.renderEditor;
+    final pages = editor?.pageLayout;
+    if (editor == null || pages == null || !editor.hasSize) {
+      _pageInfo.value = null;
+      return;
+    }
+    final length = session.controller.document.length;
+    final offset = math.min(
+      math.max(session.controller.selection.extentOffset, 0),
+      math.max(length - 1, 0),
+    );
+    final caret = editor.getLocalRectForCaret(TextPosition(offset: offset));
+    final current = math.min(
+      math.max(pages.pageAt(caret.top) + 1, 1),
+      editor.pageCount,
+    );
+    _pageInfo.value = (current, editor.pageCount);
   }
 
   void _updateTitle() {
@@ -100,6 +156,12 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     }
   }
 
+  @override
+  void onWindowMaximize() => setState(() => _maximized = true);
+
+  @override
+  void onWindowUnmaximize() => setState(() => _maximized = false);
+
   Future<bool> _confirmDiscard() async {
     if (!session.dirty) return true;
     switch (await askToSave(context, session.name)) {
@@ -112,9 +174,11 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     }
   }
 
-  Future<void> _newDocument() async {
+  Future<void> _newDocument([
+    DocumentTemplate template = DocumentTemplate.blank,
+  ]) async {
     if (!await _confirmDiscard()) return;
-    session.newDocument();
+    session.newDocument(template);
     _afterLoad();
   }
 
@@ -128,6 +192,18 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       return;
     }
     if (file != null) _load(file);
+  }
+
+  Future<void> _openRecent(RecentFile recent) async {
+    if (!await _confirmDiscard()) return;
+    try {
+      _load(await widget.recents.open(recent));
+    } catch (error) {
+      _showError(
+        '"${recent.name}" não foi encontrado. Ele pode ter sido movido ou apagado.',
+      );
+      await widget.recents.forget(recent);
+    }
   }
 
   Future<void> _openFromSystem(OpenedFile file) async {
@@ -146,6 +222,8 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       );
       return;
     }
+    final path = file.path;
+    if (path != null) widget.recents.remember(path);
     _afterLoad();
     if (session.notices.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -171,6 +249,8 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   Future<bool> _runSave(Future<bool> Function() save) async {
     try {
       final saved = await save();
+      final path = session.path;
+      if (saved && path != null) widget.recents.remember(path);
       if (saved && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -312,7 +392,15 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     );
   }
 
-  void _setZoom(double zoom) => setState(() => _zoom = zoom);
+  void _setZoom(double zoom) {
+    setState(() => _zoom = zoom);
+    _schedulePageInfo();
+  }
+
+  void _setPagesView(bool pages) {
+    setState(() => _pagesView = pages);
+    _schedulePageInfo();
+  }
 
   void _stepZoom(int direction) {
     final index = zoomLevels.indexWhere(
@@ -322,9 +410,22 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     if (next >= 0 && next < zoomLevels.length) _setZoom(zoomLevels[next]);
   }
 
+  void _showFilePanel() => showFilePanel(
+    context,
+    session: session,
+    recents: widget.recents,
+    actions: FilePanelActions(
+      open: _open,
+      save: _save,
+      saveAs: _saveAs,
+      newDocument: _newDocument,
+      openRecent: _openRecent,
+      findAndReplace: () => _openFind(replace: true),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return ListenableBuilder(
       listenable: session,
       builder: (context, _) => PopScope(
@@ -346,200 +447,77 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
             shortcut(LogicalKeyboardKey.digit0): () => _setZoom(1),
           },
           child: Scaffold(
-            body: SafeArea(
-              child: Column(
-                children: [
-                  _FileBar(
-                    session: session,
-                    onNew: _newDocument,
-                    onOpen: _open,
-                    onSave: _save,
-                    onSaveAs: _saveAs,
-                    onFind: () => _openFind(replace: true),
-                  ),
-                  ColoredBox(
-                    color: theme.colorScheme.surface,
-                    child: EditorToolbar(
-                      session: session,
-                      actions: ToolbarActions(
-                        insertImage: _insertImage,
-                        editLink: _editLink,
-                        insertTable: _insertTable,
-                        removeTable: _removeTable,
-                        refocus: _refocus,
-                      ),
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: Stack(
+            body: Column(
+              children: [
+                ColoredBox(
+                  color: RibbonColors.background,
+                  child: SafeArea(
+                    bottom: false,
+                    child: Column(
                       children: [
-                        PaperView(
+                        AppTitleBar(
                           session: session,
-                          zoom: _zoom,
-                          focusNode: _focusNode,
-                          scrollController: _scrollController,
-                          editorKey: _editorKey,
-                          onFind: _openFind,
-                          onInsertImage: _insertImage,
-                          onEditLink: _editLink,
-                          pagesView: true,
-                          onPageCountChanged: (_) {},
+                          onFile: _showFilePanel,
+                          isMaximized: _maximized,
                         ),
-                        if (_findOpen)
-                          Positioned(
-                            top: 8,
-                            right: 16,
-                            child: FindBar(
-                              key: ValueKey(session.generation),
-                              controller: session.controller,
-                              startWithReplace: _findReplace,
-                              onClose: _closeFind,
-                              onReveal: _reveal,
-                            ),
+                        Ribbon(
+                          session: session,
+                          actions: RibbonActions(
+                            insertImage: _insertImage,
+                            editLink: _editLink,
+                            insertTable: _insertTable,
+                            removeTable: _removeTable,
+                            refocus: _refocus,
+                            pagesView: _pagesView,
+                            onPagesView: _setPagesView,
+                            zoom: _zoom,
+                            onZoom: _setZoom,
                           ),
+                        ),
                       ],
                     ),
                   ),
-                  StatusBar(
-                    session: session,
-                    zoom: _zoom,
-                    onZoomChanged: _setZoom,
+                ),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      PaperView(
+                        session: session,
+                        zoom: _zoom,
+                        pagesView: _pagesView,
+                        focusNode: _focusNode,
+                        scrollController: _scrollController,
+                        editorKey: _editorKey,
+                        onFind: _openFind,
+                        onInsertImage: _insertImage,
+                        onEditLink: _editLink,
+                        onPageCountChanged: (_) => _schedulePageInfo(),
+                      ),
+                      if (_findOpen)
+                        Positioned(
+                          top: 8,
+                          right: 16,
+                          child: FindBar(
+                            key: ValueKey(session.generation),
+                            controller: session.controller,
+                            startWithReplace: _findReplace,
+                            onClose: _closeFind,
+                            onReveal: _reveal,
+                          ),
+                        ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+                StatusBar(
+                  session: session,
+                  pageInfo: _pageInfo,
+                  zoom: _zoom,
+                  onZoomChanged: _setZoom,
+                ),
+              ],
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _FileBar extends StatelessWidget {
-  const _FileBar({
-    required this.session,
-    required this.onNew,
-    required this.onOpen,
-    required this.onSave,
-    required this.onSaveAs,
-    required this.onFind,
-  });
-
-  final EditorSession session;
-  final VoidCallback onNew;
-  final VoidCallback onOpen;
-  final VoidCallback onSave;
-  final ValueChanged<DocumentFormat> onSaveAs;
-  final VoidCallback onFind;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final mod = isApplePlatform ? '⌘' : 'Ctrl+';
-    final wide = MediaQuery.sizeOf(context).width > 640;
-
-    return Container(
-      height: 48,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      color: theme.colorScheme.primary,
-      child: Row(
-        children: [
-          Semantics(
-            label: 'Voges Word',
-            child: Container(
-              width: 30,
-              height: 30,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.onPrimary,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                'VW',
-                style: TextStyle(
-                  color: theme.colorScheme.primary,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          MenuAnchor(
-            menuChildren: [
-              MenuItemButton(
-                leadingIcon: const Icon(Icons.note_add_outlined),
-                shortcut: shortcut(LogicalKeyboardKey.keyN),
-                onPressed: onNew,
-                child: const Text('Novo'),
-              ),
-              MenuItemButton(
-                leadingIcon: const Icon(Icons.folder_open_outlined),
-                shortcut: shortcut(LogicalKeyboardKey.keyO),
-                onPressed: onOpen,
-                child: const Text('Abrir…'),
-              ),
-              const Divider(height: 8),
-              MenuItemButton(
-                leadingIcon: const Icon(Icons.save_outlined),
-                shortcut: shortcut(LogicalKeyboardKey.keyS),
-                onPressed: onSave,
-                child: const Text('Salvar'),
-              ),
-              MenuItemButton(
-                leadingIcon: const Icon(Icons.save_as_outlined),
-                shortcut: shortcut(LogicalKeyboardKey.keyS, shift: true),
-                onPressed: () => onSaveAs(DocumentFormat.docx),
-                child: const Text('Salvar como documento do Word (.docx)…'),
-              ),
-              MenuItemButton(
-                leadingIcon: const Icon(Icons.text_snippet_outlined),
-                onPressed: () => onSaveAs(DocumentFormat.plainText),
-                child: const Text('Salvar como texto simples (.txt)…'),
-              ),
-              const Divider(height: 8),
-              MenuItemButton(
-                leadingIcon: const Icon(Icons.find_replace),
-                shortcut: shortcut(LogicalKeyboardKey.keyH),
-                onPressed: onFind,
-                child: const Text('Localizar e substituir'),
-              ),
-            ],
-            builder: (context, menu, _) => TextButton.icon(
-              style: TextButton.styleFrom(
-                foregroundColor: theme.colorScheme.onPrimary,
-              ),
-              onPressed: () => menu.isOpen ? menu.close() : menu.open(),
-              icon: const Icon(Icons.menu),
-              label: const Text('Arquivo'),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              session.dirty ? '${session.name} • não salvo' : session.name,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleSmall?.copyWith(
-                color: theme.colorScheme.onPrimary,
-              ),
-            ),
-          ),
-          if (wide) ...[
-            IconButton(
-              tooltip: 'Abrir ($mod${'O'})',
-              color: theme.colorScheme.onPrimary,
-              onPressed: onOpen,
-              icon: const Icon(Icons.folder_open_outlined),
-            ),
-            IconButton(
-              tooltip: 'Salvar ($mod${'S'})',
-              color: theme.colorScheme.onPrimary,
-              onPressed: onSave,
-              icon: const Icon(Icons.save_outlined),
-            ),
-          ],
-        ],
       ),
     );
   }

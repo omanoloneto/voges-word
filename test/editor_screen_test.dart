@@ -11,6 +11,7 @@ import 'package:voges_word/document/plain_text_codec.dart';
 import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/editor/editor_session.dart';
 import 'package:voges_word/files/document_files.dart';
+import 'package:voges_word/files/recent_files.dart';
 import 'package:voges_word/files/system_open.dart';
 
 Future<EditorSession> _pumpApp(WidgetTester tester) async {
@@ -42,6 +43,7 @@ Future<EditorSession> _pumpApp(WidgetTester tester) async {
     VogesWordApp(
       session: session,
       systemOpen: SystemOpen(files),
+      recents: RecentFiles(files),
       launchArguments: const [],
     ),
   );
@@ -152,6 +154,7 @@ void main() {
         VogesWordApp(
           session: session,
           systemOpen: SystemOpen(files),
+          recents: RecentFiles(files),
           launchArguments: const [],
         ),
       );

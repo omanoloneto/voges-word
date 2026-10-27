@@ -4,9 +4,11 @@ import 'dart:typed_data';
 
 import 'package:flutter_quill/flutter_quill.dart' show Document;
 import 'package:flutter_quill/quill_delta.dart';
+import 'package:flutter/painting.dart' show EdgeInsets;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voges_word/docx/docx_codec.dart';
 import 'package:voges_word/docx/docx_package.dart';
+import 'package:voges_word/docx/docx_template.dart';
 import 'package:voges_word/docx/word_xml.dart';
 import 'package:voges_word/document/embeds.dart';
 import 'package:voges_word/document/plain_text_codec.dart';
@@ -211,5 +213,45 @@ void main() {
         reason: file.path,
       );
     }
+  });
+
+  test('tamanho, orientação e margens da aba Layout vão para o arquivo', () {
+    final document = codec.createEmpty();
+    final landscape = document.look.copyWith(
+      pageWidth: 841.9,
+      pageHeight: 595.3,
+      margins: const EdgeInsets.fromLTRB(85.05, 85.05, 56.7, 56.7),
+    );
+    final bytes = codec.encode(
+      document.delta,
+      source: document.source,
+      pageSetup: landscape,
+    );
+    _expectValidPackage(bytes);
+    final xml = DocxPackage.decode(bytes).text('word/document.xml')!;
+    expect(xml, contains('w:orient="landscape"'));
+    final reopened = codec.decode(bytes).look;
+    expect(reopened.pageWidth, closeTo(841.9, 0.1));
+    expect(reopened.pageHeight, closeTo(595.3, 0.1));
+    expect(reopened.margins.left, closeTo(85.05, 0.1));
+    expect(reopened.margins.bottom, closeTo(56.7, 0.1));
+  });
+
+  test('modelos de documento novo abrem com o estilo certo', () {
+    for (final template in DocumentTemplate.values) {
+      final document = codec.create(template);
+      _expectValidPackage(
+        codec.encode(document.delta, source: document.source),
+      );
+    }
+    expect(
+      codec.create(DocumentTemplate.schoolWork).look.lineSpacing,
+      closeTo(1.5, 0.01),
+    );
+    expect(codec.create(DocumentTemplate.singleSpaced).look.body.spaceAfter, 0);
+    expect(
+      codec.create(DocumentTemplate.resume).delta.toList().length,
+      greaterThan(10),
+    );
   });
 }

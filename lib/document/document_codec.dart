@@ -45,5 +45,6 @@ abstract interface class DocumentCodec {
 
   LoadedDocument decode(Uint8List bytes);
 
-  Uint8List encode(Delta delta, {Object? source});
+  /// [pageSetup] só vem quando o usuário mudou tamanho, orientação ou margens.
+  Uint8List encode(Delta delta, {Object? source, DocumentLook? pageSetup});
 }

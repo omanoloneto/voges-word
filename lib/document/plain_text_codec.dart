@@ -29,7 +29,7 @@ class PlainTextCodec implements DocumentCodec {
   }
 
   @override
-  Uint8List encode(Delta delta, {Object? source}) =>
+  Uint8List encode(Delta delta, {Object? source, DocumentLook? pageSetup}) =>
       Uint8List.fromList(utf8.encode(plainTextOf(delta)));
 
   String plainTextOf(Delta delta) {

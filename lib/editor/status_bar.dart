@@ -1,21 +1,24 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../document/document_codec.dart';
 import 'editor_session.dart';
 
-const zoomLevels = [0.5, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
-
 class StatusBar extends StatefulWidget {
   const StatusBar({
     required this.session,
+    required this.pageInfo,
     required this.zoom,
     required this.onZoomChanged,
     super.key,
   });
 
   final EditorSession session;
+
+  /// (página atual, total) quando o documento aparece em páginas.
+  final ValueListenable<(int, int)?> pageInfo;
   final double zoom;
   final ValueChanged<double> onZoomChanged;
 
@@ -79,9 +82,6 @@ class _StatusBarState extends State<StatusBar> {
     final theme = Theme.of(context);
     final small = theme.textTheme.bodySmall;
     final session = widget.session;
-    final zoomIndex = zoomLevels.indexWhere(
-      (level) => (level - widget.zoom).abs() < 0.001,
-    );
 
     return Container(
       height: 32,
@@ -89,9 +89,24 @@ class _StatusBarState extends State<StatusBar> {
       color: theme.colorScheme.surfaceContainer,
       child: Row(
         children: [
-          Text(
-            '$_words ${_words == 1 ? 'palavra' : 'palavras'} · $_characters caracteres',
-            style: small,
+          ValueListenableBuilder(
+            valueListenable: widget.pageInfo,
+            builder: (context, info, _) => info == null
+                ? const SizedBox.shrink()
+                : Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: Text(
+                      'Página ${info.$1} de ${info.$2}',
+                      style: small,
+                    ),
+                  ),
+          ),
+          Flexible(
+            child: Text(
+              '$_words ${_words == 1 ? 'palavra' : 'palavras'} · $_characters caracteres',
+              style: small,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           if (session.format == DocumentFormat.plainText) ...[
             const SizedBox(width: 12),
@@ -105,28 +120,30 @@ class _StatusBarState extends State<StatusBar> {
             ),
           ],
           const Spacer(),
-          IconButton(
-            tooltip: 'Diminuir zoom',
-            iconSize: 18,
-            visualDensity: VisualDensity.compact,
-            onPressed: zoomIndex > 0
-                ? () => widget.onZoomChanged(zoomLevels[zoomIndex - 1])
-                : null,
-            icon: const Icon(Icons.remove),
+          SizedBox(
+            width: 140,
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 2,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              ),
+              child: Slider(
+                min: 0.5,
+                max: 2,
+                divisions: 30,
+                value: widget.zoom.clamp(0.5, 2),
+                label: '${(widget.zoom * 100).round()}%',
+                semanticFormatterCallback: (value) =>
+                    'Zoom ${(value * 100).round()}%',
+                onChanged: widget.onZoomChanged,
+              ),
+            ),
           ),
           TextButton(
             onPressed: () => widget.onZoomChanged(1),
             style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
             child: Text('${(widget.zoom * 100).round()}%', style: small),
-          ),
-          IconButton(
-            tooltip: 'Aumentar zoom',
-            iconSize: 18,
-            visualDensity: VisualDensity.compact,
-            onPressed: zoomIndex < zoomLevels.length - 1
-                ? () => widget.onZoomChanged(zoomLevels[zoomIndex + 1])
-                : null,
-            icon: const Icon(Icons.add),
           ),
         ],
       ),

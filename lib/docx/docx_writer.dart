@@ -19,14 +19,18 @@ class DocxWriter {
 
   final TableStore tables;
 
-  Uint8List write(Delta delta, DocxPackage source) {
+  Uint8List write(Delta delta, DocxPackage source, {DocumentLook? pageSetup}) {
     final package = source.copy();
     final path = package.mainDocumentPath;
     final document = package.xml(path)!;
     final root = document.rootElement;
     final x = WordXml(root);
     final body = x.child(root, 'body')!;
-    final section = x.child(body, 'sectPr');
+    var section = x.child(body, 'sectPr');
+    if (pageSetup != null) {
+      section ??= XmlElement(XmlName.parts('sectPr', prefix: 'w'));
+      _applyPageSetup(section, pageSetup, x);
+    }
 
     final relationships = package.relationships(path);
     String? partOf(String type) {
@@ -111,6 +115,65 @@ class DocxWriter {
       overrides: overrides,
     );
     return package.encode();
+  }
+
+  static const _sectionOrder = [
+    'headerReference',
+    'footerReference',
+    'footnotePr',
+    'endnotePr',
+    'type',
+    'pgSz',
+    'pgMar',
+  ];
+
+  /// Grava tamanho, orientação e margens na última seção do documento.
+  static void _applyPageSetup(
+    XmlElement section,
+    DocumentLook look,
+    WordXml x,
+  ) {
+    String twips(double points) => '${(points * 20).round()}';
+
+    XmlElement ensure(String local) {
+      final existing = x.child(section, local);
+      if (existing != null) return existing;
+      final element = XmlElement(XmlName.parts(local, prefix: 'w'));
+      final rank = _sectionOrder.indexOf(local);
+      final children = section.children;
+      var index = 0;
+      for (var i = 0; i < children.length; i++) {
+        final node = children[i];
+        if (node is XmlElement) {
+          final other = _sectionOrder.indexOf(node.name.local);
+          if (other < 0 || other > rank) break;
+        }
+        index = i + 1;
+      }
+      children.insert(index, element);
+      return element;
+    }
+
+    final size = ensure('pgSz')
+      ..setAttribute('w:w', twips(look.pageWidth))
+      ..setAttribute('w:h', twips(look.pageHeight));
+    if (look.isLandscape) {
+      size.setAttribute('w:orient', 'landscape');
+    } else {
+      size.removeAttribute('w:orient');
+    }
+    final margins = ensure('pgMar')
+      ..setAttribute('w:top', twips(look.margins.top))
+      ..setAttribute('w:right', twips(look.margins.right))
+      ..setAttribute('w:bottom', twips(look.margins.bottom))
+      ..setAttribute('w:left', twips(look.margins.left));
+    for (final (name, value) in const [
+      ('w:header', '708'),
+      ('w:footer', '708'),
+      ('w:gutter', '0'),
+    ]) {
+      if (margins.getAttribute(name) == null) margins.setAttribute(name, value);
+    }
   }
 
   static String _renumberDrawings(String xml) {

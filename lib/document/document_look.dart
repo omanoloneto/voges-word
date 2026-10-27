@@ -47,6 +47,21 @@ class DocumentLook {
 
   double get contentWidth => pageWidth - margins.horizontal;
 
+  bool get isLandscape => pageWidth > pageHeight;
+
+  DocumentLook copyWith({
+    double? pageWidth,
+    double? pageHeight,
+    EdgeInsets? margins,
+  }) => DocumentLook(
+    pageWidth: pageWidth ?? this.pageWidth,
+    pageHeight: pageHeight ?? this.pageHeight,
+    margins: margins ?? this.margins,
+    body: body,
+    headings: headings,
+    lineSpacing: lineSpacing,
+  );
+
   TextLook heading(int level) =>
       headings[level] ??
       TextLook(

@@ -4,11 +4,12 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/widgets.dart' show FocusNode;
+import 'package:flutter/widgets.dart' show EdgeInsets, FocusNode;
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 
 import '../docx/docx_codec.dart';
+import '../docx/docx_template.dart';
 import '../docx/image_formats.dart';
 import '../document/document_codec.dart';
 import '../document/document_look.dart';
@@ -70,7 +71,22 @@ class EditorSession extends ChangeNotifier {
   /// Cresce a cada documento carregado, para a tela recriar o editor.
   int generation = 0;
 
-  DocumentLook get look => _document.look;
+  late DocumentLook _look;
+  var _pageSetupChanged = false;
+
+  DocumentLook get look => _look;
+
+  /// Tamanho, orientação e margens (em pontos) escolhidos na aba Layout.
+  void setPageSetup({double? width, double? height, EdgeInsets? margins}) {
+    _look = _look.copyWith(
+      pageWidth: width,
+      pageHeight: height,
+      margins: margins,
+    );
+    _pageSetupChanged = true;
+    dirty = true;
+    notifyListeners();
+  }
 
   List<String> get notices => _document.notices;
 
@@ -81,12 +97,13 @@ class EditorSession extends ChangeNotifier {
     return dot > 0 ? name.substring(0, dot) : name;
   }
 
-  void newDocument() => _load(
-    docx.createEmpty(),
-    name: untitledName,
-    path: null,
-    format: DocumentFormat.docx,
-  );
+  void newDocument([DocumentTemplate template = DocumentTemplate.blank]) =>
+      _load(
+        docx.create(template),
+        name: untitledName,
+        path: null,
+        format: DocumentFormat.docx,
+      );
 
   void open(OpenedFile file) {
     final format = DocumentFormat.fromFileName(file.name);
@@ -147,7 +164,11 @@ class EditorSession extends ChangeNotifier {
   Uint8List encode(DocumentFormat target) {
     final delta = controller.document.toDelta();
     return target == DocumentFormat.docx
-        ? docx.encode(delta, source: _document.source)
+        ? docx.encode(
+            delta,
+            source: _document.source,
+            pageSetup: _pageSetupChanged ? _look : null,
+          )
         : plainText.encode(delta);
   }
 
@@ -189,6 +210,8 @@ class EditorSession extends ChangeNotifier {
   }) {
     final previous = generation == 0 ? null : controller;
     _document = loaded;
+    _look = loaded.look;
+    _pageSetupChanged = false;
     controller = QuillController(
       document: Document.fromDelta(loaded.delta),
       selection: const TextSelection.collapsed(offset: 0),

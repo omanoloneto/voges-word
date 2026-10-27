@@ -7,7 +7,9 @@ import 'document/plain_text_codec.dart';
 import 'document/tables.dart';
 import 'editor/editor_screen.dart';
 import 'editor/editor_session.dart';
+import 'editor/title_bar.dart';
 import 'files/document_files.dart';
+import 'files/recent_files.dart';
 import 'files/system_open.dart';
 
 Future<void> main(List<String> arguments) async {
@@ -15,11 +17,15 @@ Future<void> main(List<String> arguments) async {
   if (isDesktop) {
     await windowManager.ensureInitialized();
     await windowManager.waitUntilReadyToShow(
-      const WindowOptions(
+      WindowOptions(
         title: 'Voges Word',
-        size: Size(1180, 860),
-        minimumSize: Size(420, 360),
+        size: const Size(1240, 880),
+        minimumSize: const Size(480, 420),
         center: true,
+        titleBarStyle: usesCustomTitleBar
+            ? TitleBarStyle.hidden
+            : TitleBarStyle.normal,
+        windowButtonVisibility: true,
       ),
       () async {
         await windowManager.setPreventClose(true);
@@ -39,10 +45,14 @@ Future<void> main(List<String> arguments) async {
     tables: tables,
   );
 
+  final recents = RecentFiles(files);
+  await recents.load();
+
   runApp(
     VogesWordApp(
       session: session,
       systemOpen: SystemOpen(files),
+      recents: recents,
       launchArguments: arguments,
     ),
   );

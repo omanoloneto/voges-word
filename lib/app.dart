@@ -4,20 +4,23 @@ import 'package:flutter_quill/flutter_quill.dart';
 
 import 'editor/editor_screen.dart';
 import 'editor/editor_session.dart';
+import 'files/recent_files.dart';
 import 'files/system_open.dart';
 
-const brandColor = Color(0xFF1F5FAD);
+const brandColor = Color(0xFF3D6FD8);
 
 class VogesWordApp extends StatelessWidget {
   const VogesWordApp({
     required this.session,
     required this.systemOpen,
+    required this.recents,
     required this.launchArguments,
     super.key,
   });
 
   final EditorSession session;
   final SystemOpen systemOpen;
+  final RecentFiles recents;
   final List<String> launchArguments;
 
   ThemeData _theme(Brightness brightness) => ThemeData(
@@ -49,6 +52,7 @@ class VogesWordApp extends StatelessWidget {
       home: EditorScreen(
         session: session,
         systemOpen: systemOpen,
+        recents: recents,
         launchArguments: launchArguments,
       ),
     );

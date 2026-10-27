@@ -6,9 +6,56 @@ import 'word_xml.dart';
 
 const _declaration = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 
+enum DocumentTemplate {
+  blank('Em branco'),
+  singleSpaced('Espaçamento simples'),
+  schoolWork('Trabalho escolar'),
+  resume('Currículo');
+
+  const DocumentTemplate(this.label);
+
+  final String label;
+}
+
+class TemplateOptions {
+  const TemplateOptions({
+    this.lineTwips = 276,
+    this.afterTwips = 160,
+    this.justify = false,
+    this.margins = (top: 1417, right: 1701, bottom: 1417, left: 1701),
+  });
+
+  final int lineTwips;
+  final int afterTwips;
+  final bool justify;
+  final ({int top, int right, int bottom, int left}) margins;
+
+  static TemplateOptions of(DocumentTemplate template) => switch (template) {
+    DocumentTemplate.singleSpaced => const TemplateOptions(
+      lineTwips: 240,
+      afterTwips: 0,
+    ),
+    // Normas da ABNT: 1,5 de entrelinha, justificado, margens 3 e 2 cm.
+    DocumentTemplate.schoolWork => const TemplateOptions(
+      lineTwips: 360,
+      afterTwips: 0,
+      justify: true,
+      margins: (top: 1701, right: 1134, bottom: 1134, left: 1701),
+    ),
+    DocumentTemplate.resume => const TemplateOptions(
+      lineTwips: 264,
+      afterTwips: 80,
+    ),
+    DocumentTemplate.blank => const TemplateOptions(),
+  };
+}
+
 /// Documento em branco: A4, margens do Word em português (3 cm / 2,5 cm),
 /// Arial 12 e títulos prontos para sumário.
-DocxPackage newDocumentPackage() {
+DocxPackage newDocumentPackage([
+  TemplateOptions options = const TemplateOptions(),
+]) {
+  final margins = options.margins;
   final namespaces = Namespaces.known.entries
       .map((entry) => 'xmlns:${entry.key}="${entry.value}"')
       .join(' ');
@@ -38,7 +85,7 @@ DocxPackage newDocumentPackage() {
         '<w:document $namespaces mc:Ignorable="w14 w15 wp14"><w:body>'
         '<w:p/>'
         '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
-        '<w:pgMar w:top="1417" w:right="1701" w:bottom="1417" w:left="1701" w:header="708" w:footer="708" w:gutter="0"/>'
+        '<w:pgMar w:top="${margins.top}" w:right="${margins.right}" w:bottom="${margins.bottom}" w:left="${margins.left}" w:header="708" w:footer="708" w:gutter="0"/>'
         '<w:cols w:space="708"/></w:sectPr>'
         '</w:body></w:document>',
     'word/settings.xml':
@@ -48,7 +95,7 @@ DocxPackage newDocumentPackage() {
         '<w:characterSpacingControl w:val="doNotCompress"/>'
         '<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>'
         '</w:settings>',
-    'word/styles.xml': _styles,
+    'word/styles.xml': _styles(options),
   };
   return DocxPackage({
     for (final entry in parts.entries)
@@ -65,7 +112,7 @@ String _heading(int level, int halfPoints, int before) =>
     '<w:rPr><w:b/><w:bCs/><w:sz w:val="$halfPoints"/><w:szCs w:val="$halfPoints"/></w:rPr>'
     '</w:style>';
 
-final _styles =
+String _styles(TemplateOptions options) =>
     '$_declaration'
     '<w:styles xmlns:w="${Namespaces.w}">'
     '<w:docDefaults>'
@@ -74,9 +121,10 @@ final _styles =
     '<w:sz w:val="24"/><w:szCs w:val="24"/>'
     '<w:lang w:val="pt-BR" w:eastAsia="en-US" w:bidi="ar-SA"/>'
     '</w:rPr></w:rPrDefault>'
-    '<w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault>'
+    '<w:pPrDefault><w:pPr><w:spacing w:after="${options.afterTwips}" w:line="${options.lineTwips}" w:lineRule="auto"/></w:pPr></w:pPrDefault>'
     '</w:docDefaults>'
-    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>'
+    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/>'
+    '${options.justify ? '<w:pPr><w:jc w:val="both"/></w:pPr>' : ''}</w:style>'
     '<w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont">'
     '<w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/><w:unhideWhenUsed/></w:style>'
     '<w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/>'
