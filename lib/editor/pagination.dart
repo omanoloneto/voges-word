@@ -91,8 +91,9 @@ class RenderPagedRows extends RenderBox
 
   @override
   void setupParentData(RenderBox child) {
-    if (child.parentData is! _RowParentData)
+    if (child.parentData is! _RowParentData) {
       child.parentData = _RowParentData();
+    }
   }
 
   @override
