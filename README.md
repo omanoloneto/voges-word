@@ -7,6 +7,9 @@ Editor de documentos leve, no espírito do Word, sem um milhão de opções. Abr
 - Abre `.docx` e `.txt`; salva em `.docx` (padrão) ou `.txt`.
 - Documento em páginas, como o Word: o texto passa para a página seguinte sozinho, parágrafos se dividem entre páginas (sem linha sozinha no pé ou no topo), títulos não ficam isolados no fim da página e tabelas quebram por linha. Também há o modo contínuo e zoom de 50% a 200%. Em telas estreitas o texto se ajusta à largura.
 - Faixa de ferramentas em abas (Início, Inserir, Layout, Exibir e Tabela, que aparece ao editar uma célula), com galeria de estilos e cores rápidas.
+- No computador, os botões da janela ficam dentro da faixa azul: à esquerda no Mac, à direita no Windows e, no Linux, do lado configurado no sistema (à direita se não houver configuração). Desfazer, refazer, copiar, recortar e colar ficam sempre do lado oposto.
+- Fontes com busca: as instaladas no computador e as do Google Fonts (cerca de 1.900). Uma fonte do Google é baixada na primeira vez que você a escolhe ou abre um documento que a usa, conferida pelo hash e guardada no aparelho.
+- Calibri, Cambria, Arial, Times New Roman, Courier New, Georgia e Helvetica, quando não estão instaladas, aparecem com as equivalentes de mesma medida do Google Fonts (Carlito, Caladea, Arimo, Tinos, Cousine e Gelasio). Assim o texto quebra nas mesmas linhas que no Word.
 - Layout da página: margens (Normal, ABNT, Estreita, Moderada, Larga), retrato ou paisagem e tamanho (A4, Carta, Ofício, A5), gravados no .docx.
 - Menu Arquivo com documento novo a partir de modelos (em branco, espaçamento simples, trabalho escolar nas normas da ABNT, currículo) e arquivos abertos recentemente.
 - Formatação do dia a dia: estilo (Normal, Título 1–3), fonte, tamanho, negrito, itálico, sublinhado, tachado, cor da fonte, realce, alinhamento, marcadores, numeração, recuo e espaçamento entre linhas.
@@ -22,7 +25,9 @@ O Voges Word reescreve só o corpo do documento. Cabeçalhos, rodapés, estilos,
 
 Limitações conhecidas:
 
-- A divisão em páginas é feita com as fontes do seu computador; se o arquivo usa fontes que você não tem (Calibri, Aptos), uma página pode terminar uma ou duas linhas antes ou depois do que no Word.
+- A divisão em páginas é feita com as fontes disponíveis. Se o arquivo usa uma fonte que não está instalada e não tem equivalente no Google Fonts (como a Aptos), uma página pode terminar uma ou duas linhas antes ou depois do que no Word.
+- No Android, no iOS e na web a lista traz só as fontes do Google: o Android não deixa usar as fontes do aparelho pelo nome.
+- Para baixar fontes, o app acessa fonts.gstatic.com, do Google. Sem internet, a fonte aparece com outra até poder ser baixada.
 - Cabeçalho e rodapé são mantidos, mas não aparecem nas páginas nem podem ser editados.
 - Comentários não aparecem; alterações controladas são aceitas ao abrir.
 - Recuo de primeira linha e espaçamento próprio de cada parágrafo são mantidos no arquivo, mas a tela usa o espaçamento do estilo Normal.
@@ -66,6 +71,12 @@ Para gerar imagens da tela e conferir o visual (fontes do sistema, sem abrir o a
 VW_SCREENSHOTS=pasta-de-saida VW_SAMPLES=/pasta/com/docx flutter test test/screenshots_test.dart
 ```
 
+A lista do Google Fonts (`assets/fonts/google_fonts.txt`) sai do código do pacote [google_fonts](https://pub.dev/packages/google_fonts) (licença BSD), com até quatro arquivos por família (normal, negrito, itálico e negrito itálico). Para atualizar:
+
+```sh
+dart run tool/google_fonts_catalog.dart ~/.pub-cache/hosted/pub.dev/google_fonts-<versão>/lib/src/google_fonts_parts
+```
+
 O editor de texto é o [flutter_quill](https://pub.dev/packages/flutter_quill) 11.5.0, copiado em `third_party/flutter_quill` (licença MIT) com a paginação acrescentada; as mudanças estão marcadas com `Voges Word:`.
 
 ## Estrutura
@@ -74,4 +85,6 @@ O editor de texto é o [flutter_quill](https://pub.dev/packages/flutter_quill) 1
 - `lib/document/` — modelo do documento: formatos, aparência da página, tabelas e conteúdos protegidos.
 - `lib/editor/` — tela, páginas, faixa de ferramentas, menu Arquivo, tabelas, busca e sessão (abrir, salvar, alterações).
 - `lib/files/` — diálogos de arquivo, arquivos abertos pelo sistema e recentes.
+- `lib/fonts/` — fontes instaladas, catálogo e download do Google Fonts.
+- `tool/` — gerador da lista do Google Fonts.
 - `third_party/flutter_quill/` — editor de texto com paginação.

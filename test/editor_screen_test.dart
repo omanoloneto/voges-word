@@ -1,3 +1,5 @@
+import 'package:crypto/crypto.dart';
+import 'package:flutter/material.dart' show TextField;
 import 'package:flutter/widgets.dart' show Scrollable, ScrollableState;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/services.dart';
@@ -13,8 +15,17 @@ import 'package:voges_word/editor/editor_session.dart';
 import 'package:voges_word/files/document_files.dart';
 import 'package:voges_word/files/recent_files.dart';
 import 'package:voges_word/files/system_open.dart';
+import 'package:voges_word/fonts/font_catalog.dart';
 
-Future<EditorSession> _pumpApp(WidgetTester tester) async {
+FontCatalog _offlineFonts() => FontCatalog(
+  listSystemFonts: () async => const [],
+  readGoogleCatalog: () async => '',
+);
+
+Future<EditorSession> _pumpApp(
+  WidgetTester tester, {
+  FontCatalog? fonts,
+}) async {
   tester.view.physicalSize = const Size(1200, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -44,6 +55,7 @@ Future<EditorSession> _pumpApp(WidgetTester tester) async {
       session: session,
       systemOpen: SystemOpen(files),
       recents: RecentFiles(files),
+      fonts: fonts ?? _offlineFonts(),
       launchArguments: const [],
     ),
   );
@@ -155,6 +167,7 @@ void main() {
           session: session,
           systemOpen: SystemOpen(files),
           recents: RecentFiles(files),
+          fonts: _offlineFonts(),
           launchArguments: const [],
         ),
       );
@@ -200,5 +213,46 @@ void main() {
 
     final words = tester.getRect(find.textContaining('palavras'));
     expect(words.bottom, lessThanOrEqualTo(900 - 48));
+  });
+
+  testWidgets('seletor de fontes busca e aplica uma fonte do Google', (
+    tester,
+  ) async {
+    final bytes = Uint8List.fromList(List.generate(64, (i) => i));
+    final hash = sha256.convert(bytes).toString();
+    final requested = <Uri>[];
+    final fonts = FontCatalog(
+      listSystemFonts: () async => const ['Georgia'],
+      readGoogleCatalog: () async => 'Lato\t$hash\nRoboto\t$hash\n',
+      download: (url) async {
+        requested.add(url);
+        return bytes;
+      },
+      cacheDirectory: () async => null,
+    );
+    final session = await _pumpApp(tester, fonts: fonts);
+    session.controller.updateSelection(
+      const TextSelection(baseOffset: 0, extentOffset: 5),
+      ChangeSource.local,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Fonte'));
+    await tester.pumpAndSettle();
+    expect(find.text('NO APARELHO'), findsOneWidget);
+    expect(find.text('GOOGLE FONTS'), findsOneWidget);
+    expect(find.text('Georgia'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'la');
+    await tester.pumpAndSettle();
+    expect(find.text('Georgia'), findsNothing);
+
+    await tester.tap(find.text('Lato'));
+    await tester.pumpAndSettle();
+
+    final first = session.controller.document.toDelta().operations.first;
+    expect(first.data, 'Texto');
+    expect(first.attributes?[Attribute.font.key], 'Lato');
+    expect(requested, [Uri.parse('https://fonts.gstatic.com/s/a/$hash.ttf')]);
   });
 }

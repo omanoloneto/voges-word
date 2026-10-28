@@ -39,6 +39,17 @@ class AppDelegate: FlutterAppDelegate {
     }
     self.channel = channel
 
+    let fonts = FlutterMethodChannel(
+      name: "voges_word/fonts",
+      binaryMessenger: controller.engine.binaryMessenger)
+    fonts.setMethodCallHandler { call, result in
+      guard call.method == "families" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      result(NSFontManager.shared.availableFontFamilies.filter { !$0.hasPrefix(".") })
+    }
+
     let bookmarks = FlutterMethodChannel(
       name: "voges_word/bookmarks",
       binaryMessenger: controller.engine.binaryMessenger)

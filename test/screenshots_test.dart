@@ -14,6 +14,17 @@ import 'package:voges_word/editor/editor_session.dart';
 import 'package:voges_word/files/document_files.dart';
 import 'package:voges_word/files/recent_files.dart';
 import 'package:voges_word/files/system_open.dart';
+import 'package:voges_word/fonts/font_catalog.dart';
+
+const _systemSample = [
+  'Georgia',
+  'Verdana',
+  'Courier New',
+  'Trebuchet MS',
+  'Tahoma',
+  'Impact',
+  'Comic Sans MS',
+];
 
 /// Gera imagens da tela para conferência visual; só roda com VW_SCREENSHOTS.
 /// `VW_SCREENSHOTS=pasta-de-saida VW_SAMPLES=pasta-com-docx flutter test test/screenshots_test.dart`
@@ -47,6 +58,7 @@ void main() {
         for (final style in ['', ' Bold', ' Italic', ' Bold Italic'])
           '$supplemental/Times New Roman$style.ttf',
       ],
+      for (final family in _systemSample) family: ['$supplemental/$family.ttf'],
     };
     for (final entry in families.entries) {
       final loader = FontLoader(entry.key);
@@ -108,6 +120,15 @@ void main() {
           session: session,
           systemOpen: SystemOpen(files),
           recents: RecentFiles(files),
+          fonts: FontCatalog(
+            listSystemFonts: () async => [
+              'Arial',
+              'Times New Roman',
+              ..._systemSample,
+            ],
+            download: (_) => throw UnsupportedError('sem rede nas capturas'),
+            cacheDirectory: () async => null,
+          ),
           launchArguments: const [],
         ),
       ),
@@ -126,6 +147,13 @@ void main() {
       await capture(tester, 'aba-${tab.toLowerCase()}');
     }
     await tester.tap(find.text('Início'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Fonte'));
+    await capture(tester, 'fontes');
+    await tester.enterText(find.byType(TextField), 'ro');
+    await capture(tester, 'fontes-busca');
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Arquivo').first);
     await capture(tester, 'arquivo');
     await tester.tapAt(const Offset(10, 840));
@@ -138,5 +166,5 @@ void main() {
       position.jumpTo(offset.clamp(0, position.maxScrollExtent));
       await capture(tester, '2-rolagem-${offset.round()}');
     }
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 }

@@ -3,10 +3,12 @@ import 'package:flutter_quill/flutter_quill.dart';
 
 import '../../document/document_look.dart';
 import '../../document/page_setup.dart';
+import '../../fonts/font_catalog.dart';
 import '../document_commands.dart';
 import '../editor_factory.dart';
 import '../editor_session.dart';
 import '../embeds/table_embed.dart';
+import 'font_picker.dart';
 import 'ribbon_controls.dart';
 import 'ribbon_style.dart';
 
@@ -47,16 +49,6 @@ enum RibbonTab {
 }
 
 const zoomLevels = [0.5, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
-
-const _fonts = [
-  'Arial',
-  'Calibri',
-  'Cambria',
-  'Courier New',
-  'Georgia',
-  'Times New Roman',
-  'Verdana',
-];
 
 const _sizes = <num>[
   8,
@@ -125,9 +117,15 @@ String _number(num value) => value == value.roundToDouble()
     : '$value'.replaceAll('.', ',');
 
 class Ribbon extends StatefulWidget {
-  const Ribbon({required this.session, required this.actions, super.key});
+  const Ribbon({
+    required this.session,
+    required this.fonts,
+    required this.actions,
+    super.key,
+  });
 
   final EditorSession session;
+  final FontCatalog fonts;
   final RibbonActions actions;
 
   @override
@@ -222,6 +220,19 @@ class _RibbonState extends State<Ribbon> {
     widget.actions.refocus();
   }
 
+  Future<void> _loadFont(String family) async {
+    final fonts = widget.fonts;
+    if (await fonts.ensureLoaded(family) || !fonts.canProvide(family)) return;
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Não foi possível baixar a fonte "$family". Verifique a internet.',
+        ),
+      ),
+    );
+  }
+
   Widget _homeTab() => _withController((controller) {
     final look = session.look;
     final header = controller.valueOf<int>(Attribute.header.key) ?? 0;
@@ -254,25 +265,19 @@ class _RibbonState extends State<Ribbon> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  RibbonDropdown<String>(
-                    tooltip: 'Fonte',
-                    label: font ?? 'Padrão',
-                    width: 148,
-                    selected: font,
-                    options: [
-                      for (final family in {..._fonts, ?font}.toList()..sort())
-                        RibbonOption(
-                          family,
-                          family,
-                          style: TextStyle(fontFamily: family),
+                  FontPicker(
+                    fonts: widget.fonts,
+                    current: font,
+                    documentFonts: session.fontsInUse,
+                    onSelected: (family) {
+                      _apply(
+                        () => controller.setInline(
+                          Attribute.font,
+                          family == base.fontFamily ? null : family,
                         ),
-                    ],
-                    onSelected: (family) => _apply(
-                      () => controller.setInline(
-                        Attribute.font,
-                        family == base.fontFamily ? null : family,
-                      ),
-                    ),
+                      );
+                      _loadFont(family);
+                    },
                   ),
                   const SizedBox(width: 6),
                   SizeStepper(

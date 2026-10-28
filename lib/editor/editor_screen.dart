@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 
@@ -14,6 +13,7 @@ import '../document/document_codec.dart';
 import '../files/document_files.dart';
 import '../files/recent_files.dart';
 import '../files/system_open.dart';
+import '../fonts/font_catalog.dart';
 import 'dialogs.dart';
 import 'document_commands.dart';
 import 'editor_factory.dart';
@@ -25,23 +25,25 @@ import 'ribbon/ribbon.dart';
 import 'ribbon/ribbon_style.dart';
 import 'status_bar.dart';
 import 'title_bar.dart';
-
-bool get isDesktop =>
-    !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
+import 'window_buttons.dart';
 
 class EditorScreen extends StatefulWidget {
   const EditorScreen({
     required this.session,
     required this.systemOpen,
     required this.recents,
+    required this.fonts,
     required this.launchArguments,
+    this.windowButtons = WindowButtonsLayout.right,
     super.key,
   });
 
   final EditorSession session;
   final SystemOpen systemOpen;
   final RecentFiles recents;
+  final FontCatalog fonts;
   final List<String> launchArguments;
+  final WindowButtonsLayout windowButtons;
 
   @override
   State<EditorScreen> createState() => _EditorScreenState();
@@ -60,6 +62,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   var _findReplace = false;
   var _closing = false;
   var _maximized = false;
+  var _fullScreen = false;
   var _pageInfoScheduled = false;
   String? _title;
 
@@ -73,11 +76,12 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     });
     session.addListener(_onSessionChanged);
     _lifecycle = AppLifecycleListener(onExitRequested: _onExitRequested);
-    if (isDesktop) windowManager.addListener(this);
+    if (isDesktopPlatform) windowManager.addListener(this);
     widget.systemOpen.listen(_openFromSystem);
     _watchController();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _updateTitle();
+      _loadDocumentFonts();
       final pending = await widget.systemOpen.pending(widget.launchArguments);
       if (pending.isNotEmpty) _load(pending.first);
     });
@@ -88,7 +92,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     session.removeListener(_onSessionChanged);
     _watchedController?.removeListener(_schedulePageInfo);
     _lifecycle.dispose();
-    if (isDesktop) windowManager.removeListener(this);
+    if (isDesktopPlatform) windowManager.removeListener(this);
     _focusNode.dispose();
     _scrollController.dispose();
     _pageInfo.dispose();
@@ -140,7 +144,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     final title = '${session.dirty ? '• ' : ''}${session.name} — Voges Word';
     if (title == _title) return;
     _title = title;
-    if (isDesktop) windowManager.setTitle(title).ignore();
+    if (isDesktopPlatform) windowManager.setTitle(title).ignore();
   }
 
   Future<AppExitResponse> _onExitRequested() async {
@@ -161,6 +165,12 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
 
   @override
   void onWindowUnmaximize() => setState(() => _maximized = false);
+
+  @override
+  void onWindowEnterFullScreen() => setState(() => _fullScreen = true);
+
+  @override
+  void onWindowLeaveFullScreen() => setState(() => _fullScreen = false);
 
   Future<bool> _confirmDiscard() async {
     if (!session.dirty) return true;
@@ -239,6 +249,13 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     setState(() => _findOpen = false);
     if (_scrollController.hasClients) _scrollController.jumpTo(0);
     _focusNode.requestFocus();
+    _loadDocumentFonts();
+  }
+
+  void _loadDocumentFonts() {
+    for (final family in session.fontsInUse()) {
+      widget.fonts.ensureLoaded(family).ignore();
+    }
   }
 
   Future<bool> _save() => _runSave(session.save);
@@ -446,79 +463,100 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
             shortcut(LogicalKeyboardKey.minus): () => _stepZoom(-1),
             shortcut(LogicalKeyboardKey.digit0): () => _setZoom(1),
           },
-          child: Scaffold(
-            body: Column(
-              children: [
-                ColoredBox(
-                  color: RibbonColors.background,
-                  child: SafeArea(
-                    bottom: false,
-                    child: Column(
-                      children: [
-                        AppTitleBar(
-                          session: session,
-                          onFile: _showFilePanel,
-                          isMaximized: _maximized,
-                        ),
-                        Ribbon(
-                          session: session,
-                          actions: RibbonActions(
-                            insertImage: _insertImage,
-                            editLink: _editLink,
-                            insertTable: _insertTable,
-                            removeTable: _removeTable,
-                            refocus: _refocus,
-                            pagesView: _pagesView,
-                            onPagesView: _setPagesView,
-                            zoom: _zoom,
-                            onZoom: _setZoom,
+          child: _resizable(
+            Scaffold(
+              body: Column(
+                children: [
+                  ColoredBox(
+                    color: RibbonColors.background,
+                    child: SafeArea(
+                      bottom: false,
+                      child: Column(
+                        children: [
+                          AppTitleBar(
+                            session: session,
+                            onFile: _showFilePanel,
+                            isMaximized: _maximized,
+                            isFullScreen: _fullScreen,
+                            windowButtons: widget.windowButtons,
                           ),
+                          Ribbon(
+                            session: session,
+                            fonts: widget.fonts,
+                            actions: RibbonActions(
+                              insertImage: _insertImage,
+                              editLink: _editLink,
+                              insertTable: _insertTable,
+                              removeTable: _removeTable,
+                              refocus: _refocus,
+                              pagesView: _pagesView,
+                              onPagesView: _setPagesView,
+                              zoom: _zoom,
+                              onZoom: _setZoom,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Stack(
+                      children: [
+                        PaperView(
+                          session: session,
+                          zoom: _zoom,
+                          pagesView: _pagesView,
+                          focusNode: _focusNode,
+                          scrollController: _scrollController,
+                          editorKey: _editorKey,
+                          onFind: _openFind,
+                          onInsertImage: _insertImage,
+                          onEditLink: _editLink,
+                          onPageCountChanged: (_) => _schedulePageInfo(),
                         ),
+                        if (_findOpen)
+                          Positioned(
+                            top: 8,
+                            right: 16,
+                            child: FindBar(
+                              key: ValueKey(session.generation),
+                              controller: session.controller,
+                              startWithReplace: _findReplace,
+                              onClose: _closeFind,
+                              onReveal: _reveal,
+                            ),
+                          ),
                       ],
                     ),
                   ),
-                ),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      PaperView(
-                        session: session,
-                        zoom: _zoom,
-                        pagesView: _pagesView,
-                        focusNode: _focusNode,
-                        scrollController: _scrollController,
-                        editorKey: _editorKey,
-                        onFind: _openFind,
-                        onInsertImage: _insertImage,
-                        onEditLink: _editLink,
-                        onPageCountChanged: (_) => _schedulePageInfo(),
-                      ),
-                      if (_findOpen)
-                        Positioned(
-                          top: 8,
-                          right: 16,
-                          child: FindBar(
-                            key: ValueKey(session.generation),
-                            controller: session.controller,
-                            startWithReplace: _findReplace,
-                            onClose: _closeFind,
-                            onReveal: _reveal,
-                          ),
-                        ),
-                    ],
+                  StatusBar(
+                    session: session,
+                    pageInfo: _pageInfo,
+                    zoom: _zoom,
+                    onZoomChanged: _setZoom,
                   ),
-                ),
-                StatusBar(
-                  session: session,
-                  pageInfo: _pageInfo,
-                  zoom: _zoom,
-                  onZoomChanged: _setZoom,
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// Sem a barra do sistema, a janela precisa das bordas para redimensionar:
+  /// no Windows só falta a de cima; no Linux, sem moldura, faltam todas.
+  Widget _resizable(Widget child) {
+    if (!isDesktopPlatform || defaultTargetPlatform == TargetPlatform.macOS) {
+      return child;
+    }
+    return DragToResizeArea(
+      enableResizeEdges: _maximized || _fullScreen
+          ? const []
+          : defaultTargetPlatform == TargetPlatform.windows
+          ? const [ResizeEdge.topLeft, ResizeEdge.top, ResizeEdge.topRight]
+          : null,
+      child: child,
     );
   }
 }

@@ -175,6 +175,20 @@ class EditorSession extends ChangeNotifier {
   String plainTextContent() =>
       plainText.plainTextOf(controller.document.toDelta());
 
+  Set<String> fontsInUse() => {
+    ?_look.body.fontFamily,
+    for (final heading in _look.headings.values) ?heading.fontFamily,
+    for (final editor in [
+      controller,
+      for (final table in tables.all)
+        for (final row in table.rows)
+          for (final cell in row.cells) cell.controller,
+    ])
+      for (final operation in editor.document.toDelta().operations)
+        if (operation.attributes?[Attribute.font.key] case final String font)
+          font,
+  };
+
   FocusNode? activeCellFocus;
 
   void focusCell(TableCellRef cell, FocusNode focusNode) {

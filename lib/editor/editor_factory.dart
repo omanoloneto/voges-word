@@ -33,6 +33,12 @@ bool get isApplePlatform =>
     defaultTargetPlatform == TargetPlatform.macOS ||
     defaultTargetPlatform == TargetPlatform.iOS;
 
+bool get isDesktopPlatform =>
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux);
+
 SingleActivator shortcut(LogicalKeyboardKey key, {bool shift = false}) =>
     SingleActivator(
       key,
