@@ -1,0 +1,115 @@
+# Voges Word
+
+Editor de documentos leve, no espírito do Word, sem um milhão de opções. Abre e salva arquivos `.docx` de verdade e roda em macOS, Windows, Linux, Android, iOS e web (Flutter).
+
+## Instalar
+
+Os instaladores estão na [última versão](https://github.com/omanoloneto/voges-word/releases/latest) e na página [omanoloneto.pro/voges/word](https://omanoloneto.pro/voges/word/).
+
+- **macOS** 10.15 ou mais novo, Apple Silicon e Intel: abra o `VogesWord-macos.dmg` e arraste o Voges Word para Aplicativos. O app não é autenticado pela Apple; na primeira vez, libere em Ajustes do Sistema → Privacidade e Segurança → Abrir Mesmo Assim.
+- **Windows** 10 ou 11, 64 bits: `VogesWord-windows-setup.exe`. Instala sem administrador e entra no "Abrir com" do `.docx` e do `.txt`. Se o SmartScreen avisar, clique em "Mais informações" e depois em "Executar assim mesmo".
+- **Linux** (Ubuntu 22.04, Debian 12 ou mais novos e derivados, 64 bits): `sudo apt install ./voges-word-linux-amd64.deb`.
+
+## O que faz
+
+- Abre `.docx` e `.txt`; salva em `.docx` (padrão) ou `.txt`.
+- Documento em páginas, como o Word: o texto passa para a página seguinte sozinho, parágrafos se dividem entre páginas (sem linha sozinha no pé ou no topo), títulos não ficam isolados no fim da página e tabelas quebram por linha. Também há o modo contínuo e zoom de 50% a 200%. Em telas estreitas o texto se ajusta à largura.
+- Faixa de ferramentas em abas (Início, Inserir, Layout, Exibir e Tabela, que aparece ao editar uma célula), com galeria de estilos e cores rápidas.
+- No computador, os botões da janela ficam dentro da faixa azul: à esquerda no Mac, à direita no Windows e, no Linux, do lado configurado no sistema (à direita se não houver configuração). Desfazer, refazer, copiar, recortar e colar ficam sempre do lado oposto.
+- Fontes com busca: as instaladas no computador e 630 do Google Fonts, o terço mais popular entre as que escrevem português. As outras do Google aparecem quando você busca por elas; ao escolher uma, ela entra na sua lista.
+- Uma fonte do Google é baixada na primeira vez que você a escolhe ou abre um documento que a usa. O arquivo é conferido pelo hash e fica guardado no aparelho.
+- Calibri, Cambria, Arial, Times New Roman, Courier New, Georgia e Helvetica, quando não estão instaladas, aparecem com as equivalentes de mesma medida do Google Fonts (Carlito, Caladea, Arimo, Tinos, Cousine e Gelasio). Assim o texto quebra nas mesmas linhas que no Word.
+- Layout da página: margens (Normal, ABNT, Estreita, Moderada, Larga), retrato ou paisagem e tamanho (A4, Carta, Ofício, A5), gravados no .docx.
+- Menu Arquivo com documento novo a partir de modelos (em branco, espaçamento simples, trabalho escolar nas normas da ABNT, currículo) e arquivos abertos recentemente.
+- Formatação do dia a dia: estilo (Normal, Título 1–3), fonte, tamanho, negrito, itálico, sublinhado, tachado, cor da fonte, realce, alinhamento, marcadores, numeração, recuo e espaçamento entre linhas.
+- Inserir link, imagem, tabela (com linhas e colunas novas) e quebra de página.
+- Cabeçalho, rodapé e número de página (aba Inserir), com primeira página diferente para capa. Logos e campos de página que vêm do Word aparecem em cada folha.
+- Recuo da primeira linha, recuos e espaçamento de cada parágrafo aparecem na tela como no arquivo; o modelo de trabalho escolar já vem com o recuo de 1,25 cm da ABNT.
+- PDF, impressão e compartilhamento pelo menu Arquivo. O PDF sai igual à tela, com o texto pesquisável.
+- Corretor ortográfico em português, com sugestões no botão direito (ou no toque longo), no Mac, no Android e no iPhone.
+- Recuperação: enquanto há alterações não salvas, uma cópia fica guardada; se o app fechar sem salvar, ele oferece recuperar ao abrir de novo.
+- Tabelas editáveis célula por célula, inclusive com células mescladas.
+- Localizar e substituir, contagem de palavras, desfazer/refazer.
+- Avisa antes de fechar ou abrir outro arquivo com alterações não salvas.
+- "Abrir com" do sistema no macOS, no Android e, pelos instaladores, no Windows e no Linux. O caminho do arquivo também pode ser passado na linha de comando.
+
+## Fidelidade ao abrir e salvar
+
+O Voges Word reescreve só o corpo do documento. Cabeçalhos, rodapés, estilos, tema, numeração, notas de rodapé, imagens e configurações de página continuam no arquivo como vieram. O que o editor mostra mas não edita (sumário, campos como número de página, equações, gráficos, caixas de texto, notas) fica protegido e volta para o arquivo exatamente igual.
+
+Limitações conhecidas:
+
+- A divisão em páginas é feita com as fontes disponíveis. Se o arquivo usa uma fonte que não está instalada e não tem equivalente no Google Fonts (como a Aptos), uma página pode terminar uma ou duas linhas antes ou depois do que no Word.
+- No Android, no iOS e na web a lista traz só as fontes do Google: o Android não deixa usar as fontes do aparelho pelo nome.
+- Para baixar fontes, o app acessa fonts.gstatic.com, do Google. Sem internet, a fonte aparece com outra até poder ser baixada.
+- Em documentos com várias seções, todas as páginas mostram o cabeçalho e o rodapé da última seção; tabelas dentro do cabeçalho não aparecem nas folhas.
+- O PDF guarda cada página como imagem a 200 dpi, com o texto invisível por cima para buscar e copiar; por isso fica maior que um PDF exportado pelo Word.
+- No Windows e no Linux, Imprimir abre o PDF no visualizador do sistema, de onde se imprime. O Linux não compartilha arquivos.
+- O corretor ortográfico ainda não existe no Windows, no Linux e na web.
+- Comentários não aparecem; alterações controladas são aceitas ao abrir.
+- Recuo deslocado (o inverso do recuo de primeira linha) é mantido no arquivo, mas a tela mostra o parágrafo sem ele.
+- Arquivos `.doc` antigos (Word 97–2003) não são suportados.
+
+## Atalhos
+
+| Ação | Atalho |
+| --- | --- |
+| Novo / Abrir / Salvar | Ctrl+N / Ctrl+O / Ctrl+S |
+| Salvar como | Ctrl+Shift+S |
+| Negrito / Itálico / Sublinhado | Ctrl+B / Ctrl+I / Ctrl+U |
+| Alinhar esquerda / centro / direita / justificar | Ctrl+L / Ctrl+E / Ctrl+R / Ctrl+J |
+| Link / Imagem | Ctrl+K / Ctrl+G |
+| Localizar / Substituir | Ctrl+F / Ctrl+H |
+| Imprimir | Ctrl+P |
+| Quebra de linha no mesmo parágrafo | Shift+Enter |
+| Quebra de página | Ctrl+Enter |
+| Zoom | Ctrl+= / Ctrl+- / Ctrl+0 |
+
+No macOS, use ⌘ no lugar de Ctrl.
+
+## Desenvolvimento
+
+Requer Flutter 3.41 ou mais novo.
+
+```sh
+flutter pub get
+flutter run -d macos      # ou windows, linux, chrome, android
+flutter test
+```
+
+Para testar com documentos reais sem colocá-los no repositório:
+
+```sh
+VW_SAMPLES=/pasta/com/docx flutter test test/docx_roundtrip_test.dart
+```
+
+Para gerar imagens da tela e conferir o visual (fontes do sistema, sem abrir o app):
+
+```sh
+VW_SCREENSHOTS=pasta-de-saida VW_SAMPLES=/pasta/com/docx flutter test test/screenshots_test.dart
+```
+
+A lista do Google Fonts (`assets/fonts/google_fonts.txt`) sai do código do pacote [google_fonts](https://pub.dev/packages/google_fonts) (licença BSD), com até quatro arquivos por família (normal, negrito, itálico e negrito itálico). Quais entram na lista padrão vem da popularidade publicada em fonts.google.com. Para atualizar:
+
+```sh
+dart run tool/google_fonts_catalog.dart ~/.pub-cache/hosted/pub.dev/google_fonts-<versão>/lib/src/google_fonts_parts
+```
+
+### Publicar uma versão
+
+Atualize `version` no `pubspec.yaml` e crie a tag igual, como `v1.2.3`. O workflow `Release` roda os testes, monta o `.dmg`, o instalador do Windows (Inno Setup) e o `.deb` e publica a release com o `SHA256SUMS.txt`. Em pull requests ele só monta os instaladores. Os nomes dos arquivos são fixos porque a página do site aponta para eles.
+
+O editor de texto é o [flutter_quill](https://pub.dev/packages/flutter_quill) 11.5.0, copiado em `third_party/flutter_quill` (licença MIT) com a paginação acrescentada; as mudanças estão marcadas com `Voges Word:`.
+
+## Estrutura
+
+- `lib/docx/` — leitura e gravação de `.docx` (pacote zip, estilos, numeração, conversão para o modelo do editor e de volta).
+- `lib/document/` — modelo do documento: formatos, aparência da página, tabelas e conteúdos protegidos.
+- `lib/editor/` — tela, páginas, faixa de ferramentas, menu Arquivo, tabelas, busca e sessão (abrir, salvar, alterações).
+- `lib/files/` — diálogos de arquivo, arquivos abertos pelo sistema e recentes.
+- `lib/fonts/` — fontes instaladas, catálogo e download do Google Fonts.
+- `lib/print/` — páginas desenhadas fora da tela, montagem do PDF e impressão pelo sistema.
+- `lib/spell/` — corretor ortográfico do sistema e sublinhado no editor.
+- `tool/` — gerador da lista do Google Fonts.
+- `packaging/` — instaladores (`.dmg`, Inno Setup e `.deb`) usados pelo workflow de release.
+- `third_party/flutter_quill/` — editor de texto com paginação.

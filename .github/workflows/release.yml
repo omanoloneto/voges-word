@@ -1,0 +1,168 @@
+name: Release
+
+# só a tag publica a release; PR e disparo manual montam os instaladores para conferir
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FLUTTER_VERSION: 3.41.6
+
+jobs:
+  version:
+    name: Versão
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pubspec.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pubspec
+        name: Versão do pubspec
+        run: |
+          VERSION=$(sed -n 's/^version: *\([0-9.]*\).*/\1/p' pubspec.yaml)
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::pubspec.yaml diz $VERSION, a tag é $GITHUB_REF_NAME"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Linux
+    needs: version
+    # o binário exige a glibc de onde foi compilado: no 22.04 o .deb roda no Debian 12 e no Mint 21
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependências do build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev imagemagick
+      - name: Instalar o Flutter
+        run: |
+          git clone --depth 1 --branch "$FLUTTER_VERSION" \
+            https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: |
+          flutter build linux --release \
+            --build-name "$VERSION" --build-number "$GITHUB_RUN_NUMBER"
+      - name: Montar o .deb
+        run: |
+          packaging/linux/build_deb.sh "$VERSION" \
+            build/linux/x64/release/bundle voges-word-linux-amd64.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: voges-word-linux-amd64.deb
+          if-no-files-found: error
+
+  macos:
+    name: macOS
+    needs: version
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar o Flutter
+        run: |
+          git clone --depth 1 --branch "$FLUTTER_VERSION" \
+            https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - run: flutter pub get
+      - run: |
+          flutter build macos --release \
+            --build-name "$VERSION" --build-number "$GITHUB_RUN_NUMBER"
+      - name: Montar o .dmg
+        run: |
+          app="build/macos/Build/Products/Release/Voges Word.app"
+          codesign --verify --deep --strict "$app"
+          packaging/macos/build_dmg.sh "$app" VogesWord-macos.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: VogesWord-macos.dmg
+          if-no-files-found: error
+
+  windows:
+    name: Windows
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar o Flutter
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch $env:FLUTTER_VERSION `
+            https://github.com/flutter/flutter.git "$env:RUNNER_TEMP\flutter"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\flutter\bin"
+      - run: flutter pub get
+      - name: Build
+        shell: pwsh
+        run: |
+          flutter build windows --release `
+            --build-name $env:VERSION --build-number $env:GITHUB_RUN_NUMBER
+      # o Windows recém-instalado não tem o runtime do Visual C++
+      - name: Runtime do Visual C++
+        shell: pwsh
+        run: |
+          foreach ($dll in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            Copy-Item "$env:SystemRoot\System32\$dll" build\windows\x64\runner\Release\
+          }
+      - name: Montar o instalador
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          & $iscc "/DAppVersion=$env:VERSION" packaging\windows\voges_word.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: build/installer/VogesWord-windows-setup.exe
+          if-no-files-found: error
+
+  release:
+    name: Publicar
+    if: github.ref_type == 'tag'
+    needs: [version, linux, macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: SHA-256 dos arquivos
+        working-directory: dist
+        run: |
+          sha256sum VogesWord-macos.dmg VogesWord-windows-setup.exe \
+            voges-word-linux-amd64.deb > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Criar a release
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "Voges Word $VERSION" --notes-file packaging/release-notes.md \
+            dist/VogesWord-macos.dmg dist/VogesWord-windows-setup.exe \
+            dist/voges-word-linux-amd64.deb dist/SHA256SUMS.txt
