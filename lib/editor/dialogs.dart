@@ -28,6 +28,41 @@ Future<UnsavedChoice> askToSave(BuildContext context, String name) async {
   return choice ?? UnsavedChoice.cancel;
 }
 
+/// Verdadeiro para recuperar a cópia; falso para descartá-la.
+Future<bool> askToRecover(
+  BuildContext context,
+  String name,
+  DateTime savedAt,
+) async {
+  final localizations = MaterialLocalizations.of(context);
+  final when =
+      '${localizations.formatShortDate(savedAt)} às '
+      '${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(savedAt))}';
+  final recover = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: const Text('Recuperar documento?'),
+      content: Text(
+        '"$name" foi fechado sem salvar. Há uma cópia de $when. '
+        'Deseja recuperá-la?',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Descartar'),
+        ),
+        FilledButton(
+          autofocus: true,
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Recuperar'),
+        ),
+      ],
+    ),
+  );
+  return recover ?? false;
+}
+
 class LinkRequest {
   const LinkRequest({required this.url, this.text});
 

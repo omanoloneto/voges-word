@@ -16,6 +16,7 @@ import '../document/document_look.dart';
 import '../document/plain_text_codec.dart';
 import '../document/tables.dart';
 import '../files/document_files.dart';
+import '../files/recovery.dart';
 import 'document_commands.dart';
 import 'embeds/table_embed.dart';
 import 'paste_sanitizer.dart';
@@ -71,6 +72,9 @@ class EditorSession extends ChangeNotifier {
   /// Cresce a cada documento carregado, para a tela recriar o editor.
   int generation = 0;
 
+  /// Cresce a cada alteração, para saber se a cópia de recuperação está em dia.
+  int revision = 0;
+
   late DocumentLook _look;
   var _pageSetupChanged = false;
 
@@ -84,6 +88,7 @@ class EditorSession extends ChangeNotifier {
       margins: margins,
     );
     _pageSetupChanged = true;
+    revision++;
     dirty = true;
     notifyListeners();
   }
@@ -123,6 +128,30 @@ class EditorSession extends ChangeNotifier {
       throw UserFacingException(error.message);
     }
     _load(loaded, name: file.name, path: file.path, format: format);
+  }
+
+  RecoverySnapshot snapshot() => RecoverySnapshot(
+    name: name,
+    path: path,
+    format: format,
+    bytes: encode(format),
+    savedAt: DateTime.now(),
+  );
+
+  /// Reabre a cópia de recuperação como documento ainda não salvo.
+  void restore(RecoverySnapshot snapshot, {required bool keepPath}) {
+    final loaded = snapshot.format == DocumentFormat.docx
+        ? docx.decode(snapshot.bytes)
+        : plainText.decode(snapshot.bytes);
+    _load(
+      loaded,
+      name: snapshot.name,
+      path: keepPath ? snapshot.path : null,
+      format: snapshot.format,
+    );
+    revision++;
+    dirty = true;
+    notifyListeners();
   }
 
   /// Retorna falso se o usuário cancelou.
@@ -254,6 +283,7 @@ class EditorSession extends ChangeNotifier {
   }
 
   void _markDirty() {
+    revision++;
     if (dirty) return;
     dirty = true;
     notifyListeners();

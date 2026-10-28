@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
@@ -12,6 +13,7 @@ import '../docx/image_formats.dart';
 import '../document/document_codec.dart';
 import '../files/document_files.dart';
 import '../files/recent_files.dart';
+import '../files/recovery.dart';
 import '../files/system_open.dart';
 import '../fonts/font_catalog.dart';
 import 'dialogs.dart';
@@ -35,6 +37,7 @@ class EditorScreen extends StatefulWidget {
     required this.fonts,
     required this.launchArguments,
     this.windowButtons = WindowButtonsLayout.right,
+    this.recovery,
     super.key,
   });
 
@@ -44,6 +47,7 @@ class EditorScreen extends StatefulWidget {
   final FontCatalog fonts;
   final List<String> launchArguments;
   final WindowButtonsLayout windowButtons;
+  final RecoveryStore? recovery;
 
   @override
   State<EditorScreen> createState() => _EditorScreenState();
@@ -55,6 +59,9 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   final _editorKey = GlobalKey<EditorState>();
   final _pageInfo = ValueNotifier<(int, int)?>(null);
   late final AppLifecycleListener _lifecycle;
+  late final Timer _recoveryTimer;
+  var _recoveryRevision = -1;
+  var _recoverySaved = false;
   QuillController? _watchedController;
   var _zoom = 1.0;
   var _pagesView = true;
@@ -75,13 +82,22 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       if (_focusNode.hasFocus) session.focusMain();
     });
     session.addListener(_onSessionChanged);
-    _lifecycle = AppLifecycleListener(onExitRequested: _onExitRequested);
+    _lifecycle = AppLifecycleListener(
+      onExitRequested: _onExitRequested,
+      onHide: _saveRecovery,
+      onPause: _saveRecovery,
+    );
+    _recoveryTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _saveRecovery(),
+    );
     if (isDesktopPlatform) windowManager.addListener(this);
     widget.systemOpen.listen(_openFromSystem);
     _watchController();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _updateTitle();
       _loadDocumentFonts();
+      await _offerRecovery();
       final pending = await widget.systemOpen.pending(widget.launchArguments);
       if (pending.isNotEmpty) _load(pending.first);
     });
@@ -92,6 +108,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     session.removeListener(_onSessionChanged);
     _watchedController?.removeListener(_schedulePageInfo);
     _lifecycle.dispose();
+    _recoveryTimer.cancel();
     if (isDesktopPlatform) windowManager.removeListener(this);
     _focusNode.dispose();
     _scrollController.dispose();
@@ -102,6 +119,54 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   void _onSessionChanged() {
     _updateTitle();
     _watchController();
+    if (!session.dirty && _recoverySaved) _clearRecovery();
+  }
+
+  Future<void> _offerRecovery() async {
+    final store = widget.recovery;
+    final snapshot = await store?.load();
+    if (store == null || snapshot == null || !mounted) return;
+    if (!await askToRecover(context, snapshot.name, snapshot.savedAt)) {
+      await store.clear();
+      return;
+    }
+    try {
+      // No macOS o sandbox só deixa gravar no arquivo escolhido pelo usuário.
+      session.restore(
+        snapshot,
+        keepPath: defaultTargetPlatform != TargetPlatform.macOS,
+      );
+    } catch (_) {
+      _showError('Não foi possível recuperar o documento.');
+      await store.clear();
+      return;
+    }
+    _recoveryRevision = session.revision;
+    _recoverySaved = true;
+    _afterLoad();
+  }
+
+  Future<void> _saveRecovery() async {
+    final store = widget.recovery;
+    if (store == null ||
+        !session.dirty ||
+        session.revision == _recoveryRevision) {
+      return;
+    }
+    _recoveryRevision = session.revision;
+    try {
+      await store.save(session.snapshot());
+      _recoverySaved = true;
+      if (!session.dirty) _clearRecovery();
+    } catch (_) {
+      _recoveryRevision = -1;
+    }
+  }
+
+  void _clearRecovery() {
+    _recoverySaved = false;
+    _recoveryRevision = -1;
+    widget.recovery?.clear().ignore();
   }
 
   void _watchController() {
@@ -178,6 +243,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       case UnsavedChoice.save:
         return _save();
       case UnsavedChoice.discard:
+        _clearRecovery();
         return true;
       case UnsavedChoice.cancel:
         return false;

@@ -11,6 +11,7 @@ import 'editor/title_bar.dart';
 import 'editor/window_buttons.dart';
 import 'files/document_files.dart';
 import 'files/recent_files.dart';
+import 'files/recovery.dart';
 import 'files/system_open.dart';
 import 'fonts/font_catalog.dart';
 
@@ -59,6 +60,7 @@ Future<void> main(List<String> arguments) async {
       fonts: fonts,
       launchArguments: arguments,
       windowButtons: windowButtons,
+      recovery: RecoveryStore(),
     ),
   );
 }

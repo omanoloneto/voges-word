@@ -6,6 +6,7 @@ import 'editor/editor_screen.dart';
 import 'editor/editor_session.dart';
 import 'editor/window_buttons.dart';
 import 'files/recent_files.dart';
+import 'files/recovery.dart';
 import 'files/system_open.dart';
 import 'fonts/font_catalog.dart';
 
@@ -19,6 +20,7 @@ class VogesWordApp extends StatelessWidget {
     required this.fonts,
     required this.launchArguments,
     this.windowButtons = WindowButtonsLayout.right,
+    this.recovery,
     super.key,
   });
 
@@ -28,6 +30,7 @@ class VogesWordApp extends StatelessWidget {
   final FontCatalog fonts;
   final List<String> launchArguments;
   final WindowButtonsLayout windowButtons;
+  final RecoveryStore? recovery;
 
   ThemeData _theme(Brightness brightness) => ThemeData(
     colorScheme: ColorScheme.fromSeed(
@@ -62,6 +65,7 @@ class VogesWordApp extends StatelessWidget {
         fonts: fonts,
         launchArguments: launchArguments,
         windowButtons: windowButtons,
+        recovery: recovery,
       ),
     );
   }
