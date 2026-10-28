@@ -2,6 +2,14 @@
 
 Editor de documentos leve, no espírito do Word, sem um milhão de opções. Abre e salva arquivos `.docx` de verdade e roda em macOS, Windows, Linux, Android, iOS e web (Flutter).
 
+## Instalar
+
+Os instaladores estão na [última versão](https://github.com/omanoloneto/voges-word/releases/latest) e na página [omanoloneto.pro/voges/word](https://omanoloneto.pro/voges/word/).
+
+- **macOS** 10.15 ou mais novo, Apple Silicon e Intel: abra o `VogesWord-macos.dmg` e arraste o Voges Word para Aplicativos. O app não é autenticado pela Apple; na primeira vez, libere em Ajustes do Sistema → Privacidade e Segurança → Abrir Mesmo Assim.
+- **Windows** 10 ou 11, 64 bits: `VogesWord-windows-setup.exe`. Instala sem administrador e entra no "Abrir com" do `.docx` e do `.txt`. Se o SmartScreen avisar, clique em "Mais informações" e depois em "Executar assim mesmo".
+- **Linux** (Debian, Ubuntu e derivados, 64 bits): `sudo apt install ./voges-word-linux-amd64.deb`.
+
 ## O que faz
 
 - Abre `.docx` e `.txt`; salva em `.docx` (padrão) ou `.txt`.
@@ -23,7 +31,7 @@ Editor de documentos leve, no espírito do Word, sem um milhão de opções. Abr
 - Tabelas editáveis célula por célula, inclusive com células mescladas.
 - Localizar e substituir, contagem de palavras, desfazer/refazer.
 - Avisa antes de fechar ou abrir outro arquivo com alterações não salvas.
-- Pelo sistema: "Abrir com" no macOS (Finder) e no Android; no Windows e no Linux o caminho do arquivo pode ser passado na linha de comando.
+- "Abrir com" do sistema no macOS, no Android e, pelos instaladores, no Windows e no Linux. O caminho do arquivo também pode ser passado na linha de comando.
 
 ## Fidelidade ao abrir e salvar
 
@@ -87,6 +95,10 @@ A lista do Google Fonts (`assets/fonts/google_fonts.txt`) sai do código do paco
 dart run tool/google_fonts_catalog.dart ~/.pub-cache/hosted/pub.dev/google_fonts-<versão>/lib/src/google_fonts_parts
 ```
 
+### Publicar uma versão
+
+Atualize `version` no `pubspec.yaml` e crie a tag igual, como `v1.2.3`. O workflow `Release` roda os testes, monta o `.dmg`, o instalador do Windows (Inno Setup) e o `.deb` e publica a release com o `SHA256SUMS.txt`. Em pull requests ele só monta os instaladores. Os nomes dos arquivos são fixos porque a página do site aponta para eles.
+
 O editor de texto é o [flutter_quill](https://pub.dev/packages/flutter_quill) 11.5.0, copiado em `third_party/flutter_quill` (licença MIT) com a paginação acrescentada; as mudanças estão marcadas com `Voges Word:`.
 
 ## Estrutura
@@ -99,4 +111,5 @@ O editor de texto é o [flutter_quill](https://pub.dev/packages/flutter_quill) 1
 - `lib/print/` — páginas desenhadas fora da tela, montagem do PDF e impressão pelo sistema.
 - `lib/spell/` — corretor ortográfico do sistema e sublinhado no editor.
 - `tool/` — gerador da lista do Google Fonts.
+- `packaging/` — instaladores (`.dmg`, Inno Setup e `.deb`) usados pelo workflow de release.
 - `third_party/flutter_quill/` — editor de texto com paginação.
