@@ -24,6 +24,8 @@ class QuillPageLayout {
     this.keepsWithNext,
     this.flowsAcrossPages,
     this.onPageCountChanged,
+    this.paintPage,
+    this.repaint,
   });
 
   final double pageHeight;
@@ -92,6 +94,13 @@ class QuillPageLayout {
   double totalHeight(int pageCount) =>
       pageTop(math.max(pageCount, 1) - 1) + pageHeight + firstPageTop;
 
+  /// Desenha cabeçalho e rodapé sobre a folha [index] de [count].
+  final void Function(Canvas canvas, Rect page, int index, int count)?
+      paintPage;
+
+  /// Avisa quando [paintPage] precisa desenhar de novo.
+  final Listenable? repaint;
+
   bool sameGeometry(QuillPageLayout? other) =>
       other != null &&
       other.pageHeight == pageHeight &&
@@ -105,11 +114,13 @@ class QuillPageLayout {
       other is QuillPageLayout &&
       sameGeometry(other) &&
       other.pageColor == pageColor &&
-      other.shadowColor == shadowColor;
+      other.shadowColor == shadowColor &&
+      other.paintPage == paintPage &&
+      other.repaint == repaint;
 
   @override
-  int get hashCode => Object.hash(
-      pageHeight, marginTop, marginBottom, pageGap, firstPageTop, pageColor, shadowColor);
+  int get hashCode => Object.hash(pageHeight, marginTop, marginBottom, pageGap,
+      firstPageTop, pageColor, shadowColor, paintPage, repaint);
 }
 
 /// Restrições de layout que levam a posição vertical do filho no documento,

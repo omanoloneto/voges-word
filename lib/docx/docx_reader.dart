@@ -8,6 +8,7 @@ import 'package:xml/xml.dart';
 import '../document/document_codec.dart';
 import '../document/document_look.dart';
 import '../document/embeds.dart';
+import '../document/headers_footers.dart';
 import '../document/tables.dart';
 import 'docx_numbering.dart';
 import 'docx_package.dart';
@@ -61,12 +62,80 @@ class DocxReader {
     _BlockReader(context, delta).read(body.childElements);
     if (delta.isEmpty || !_endsWithNewline(delta)) delta.insert('\n');
 
+    final section = x.child(body, 'sectPr');
     return LoadedDocument(
       delta: delta,
-      look: _look(styles, x, x.child(body, 'sectPr')),
+      look: _look(styles, x, section),
       source: package,
       notices: context.notices.toList(),
+      headersFooters: _headersFooters(
+        context,
+        section,
+        _xmlOf(partOf('settings')),
+      ),
     );
+  }
+
+  HeadersFooters _headersFooters(
+    _ReadContext main,
+    XmlElement? section,
+    XmlDocument? settings,
+  ) {
+    final x = main.x;
+    Map<PageVariant, HeaderFooterStory> read(String reference) => {
+      if (section != null)
+        for (final element in x.children(section, reference))
+          switch (x.attr(element, 'type')) {
+            'first' => PageVariant.first,
+            'even' => PageVariant.even,
+            _ => PageVariant.normal,
+          }: ?_story(
+            main,
+            x.relAttr(element, 'id'),
+          ),
+    };
+
+    double distance(String name) =>
+        (double.tryParse(x.attr(x.child(section, 'pgMar'), name) ?? '') ??
+            708) /
+        20;
+
+    final settingsRoot = settings?.rootElement;
+    return HeadersFooters(
+      headers: read('headerReference'),
+      footers: read('footerReference'),
+      differentFirstPage: x.onOff(x.child(section, 'titlePg')) ?? false,
+      differentOddEven:
+          settingsRoot != null &&
+          (WordXml(settingsRoot).onOff(
+                WordXml(settingsRoot).child(settingsRoot, 'evenAndOddHeaders'),
+              ) ??
+              false),
+      headerDistance: distance('header'),
+      footerDistance: distance('footer'),
+    );
+  }
+
+  HeaderFooterStory? _story(_ReadContext main, String? relationshipId) {
+    final relationship = main.relationships[relationshipId];
+    if (relationship == null || relationship.external) return null;
+    final path = DocxPackage.resolve(main.documentPath, relationship.target);
+    final root = package.xml(path)?.rootElement;
+    if (root == null) return null;
+    final context = _ReadContext(
+      package: package,
+      documentPath: path,
+      x: WordXml(root),
+      styles: main.styles,
+      numbering: main.numbering,
+      relationships: {for (final r in package.relationships(path)) r.id: r},
+      tables: tables,
+    );
+    final delta = Delta();
+    _BlockReader(context, delta).read(root.childElements);
+    if (delta.isEmpty || !_endsWithNewline(delta)) delta.insert('\n');
+    main.notices.addAll(context.notices);
+    return HeaderFooterStory(delta: delta, partPath: path);
   }
 
   XmlDocument? _xmlOf(String? path) => path == null ? null : package.xml(path);
@@ -683,8 +752,15 @@ class _InlineReader {
         flush();
         final xml =
             '<${run.name.qualified}>$rPrXml${child.toXmlString()}</${run.name.qualified}>';
+        final alternative = name == 'AlternateContent'
+            ? child.descendantElements
+                  .where((element) => x.isW(element, 'drawing'))
+                  .firstOrNull
+            : null;
         if (x.isW(child, 'drawing')) {
           _drawing(child, xml);
+        } else if (alternative != null) {
+          _drawing(alternative, xml);
         } else if (x.isW(child, 'footnoteReference') ||
             x.isW(child, 'endnoteReference')) {
           _opaque(xml, '${++c.footnotes}', label: 'nota');

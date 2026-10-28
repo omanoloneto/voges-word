@@ -84,6 +84,7 @@ class EditorFactory {
     const SectionBreakEmbedBuilder(),
     const OpaqueInlineEmbedBuilder(),
     const OpaqueBlockEmbedBuilder(),
+    const PageNumberEmbedBuilder(),
     TableEmbedBuilder(
       tables: tables,
       cellEditor: _cellEditor,

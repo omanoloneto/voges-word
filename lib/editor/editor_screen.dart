@@ -22,6 +22,7 @@ import 'editor_factory.dart';
 import 'editor_session.dart';
 import 'file_panel.dart';
 import 'find_bar.dart';
+import 'header_footer_dialog.dart';
 import 'paper_view.dart';
 import 'ribbon/ribbon.dart';
 import 'ribbon/ribbon_style.dart';
@@ -438,6 +439,12 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     _refocus();
   }
 
+  Future<void> _editHeadersFooters() async {
+    final result = await showHeaderFooterDialog(context, session);
+    if (result != null) session.setHeadersFooters(result);
+    _refocus();
+  }
+
   void _removeTable() {
     final cell = session.activeCell.value;
     if (cell == null) return;
@@ -554,6 +561,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
                               editLink: _editLink,
                               insertTable: _insertTable,
                               removeTable: _removeTable,
+                              editHeadersFooters: _editHeadersFooters,
                               refocus: _refocus,
                               pagesView: _pagesView,
                               onPagesView: _setPagesView,

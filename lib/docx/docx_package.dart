@@ -28,6 +28,8 @@ abstract final class RelationshipTypes {
   static const image = '$_base/image';
   static const hyperlink = '$_base/hyperlink';
   static const numbering = '$_base/numbering';
+  static const header = '$_base/header';
+  static const footer = '$_base/footer';
 }
 
 /// Arquivo .docx aberto: todas as partes do zip, para salvar sem perder nada.

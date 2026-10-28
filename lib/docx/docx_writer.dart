@@ -7,6 +7,7 @@ import 'package:xml/xml.dart';
 
 import '../document/document_look.dart';
 import '../document/embeds.dart';
+import '../document/headers_footers.dart';
 import '../document/tables.dart';
 import 'docx_numbering.dart';
 import 'docx_package.dart';
@@ -19,7 +20,12 @@ class DocxWriter {
 
   final TableStore tables;
 
-  Uint8List write(Delta delta, DocxPackage source, {DocumentLook? pageSetup}) {
+  Uint8List write(
+    Delta delta,
+    DocxPackage source, {
+    DocumentLook? pageSetup,
+    HeadersFooters? headersFooters,
+  }) {
     final package = source.copy();
     final path = package.mainDocumentPath;
     final document = package.xml(path)!;
@@ -57,7 +63,11 @@ class DocxWriter {
     final marginLeft = double.tryParse(x.attr(margins, 'left') ?? '') ?? 1701;
     final marginRight = double.tryParse(x.attr(margins, 'right') ?? '') ?? 1701;
 
-    final context = _WriteContext(
+    final takenMedia = {...package.parts.keys};
+    _WriteContext contextFor(
+      List<Relationship> relationships, {
+      int bookmarkStart = 100000,
+    }) => _WriteContext(
       packageId: package.id,
       styles: styles,
       numbering: numbering,
@@ -68,20 +78,36 @@ class DocxWriter {
       },
       tables: tables,
       contentWidthTwips: pageWidth - marginLeft - marginRight,
+      takenMedia: takenMedia,
+      bookmarkStart: bookmarkStart,
     );
+    final context = contextFor(relationships);
 
     final bodyXml = _renumberDrawings(_BlockWriter(context).write(delta));
+
+    final overrides = <String, String>{};
+    if (headersFooters != null) {
+      section ??= XmlElement(XmlName.parts('sectPr', prefix: 'w'));
+      _writeStories(
+        package,
+        context,
+        section,
+        headersFooters,
+        x,
+        overrides,
+        contextFor,
+      );
+    }
 
     body.children.clear();
     body.children.add(XmlComment('vw-body'));
     if (section != null) body.children.add(section);
-    _declareNamespaces(root, bodyXml);
+    _declareNamespaces(root, bodyXml + (section?.toXmlString() ?? ''));
     package.setText(
       path,
       document.toXmlString().replaceFirst('<!--vw-body-->', bodyXml),
     );
 
-    final overrides = <String, String>{};
     if (!context.numberingPlan.isEmpty) {
       final target = numberingPath ?? 'word/numbering.xml';
       package.setText(
@@ -125,7 +151,150 @@ class DocxWriter {
     'type',
     'pgSz',
     'pgMar',
+    'paperSrc',
+    'pgBorders',
+    'lnNumType',
+    'pgNumType',
+    'cols',
+    'formProt',
+    'vAlign',
+    'noEndnote',
+    'titlePg',
+    'textDirection',
+    'bidi',
+    'rtlGutter',
+    'docGrid',
+    'printerSettings',
+    'sectPrChange',
   ];
+
+  /// Põe o elemento na seção respeitando a ordem do esquema do Word.
+  static void _insertInSection(XmlElement section, XmlElement element) {
+    final rank = _sectionOrder.indexOf(element.name.local);
+    final children = section.children;
+    var index = 0;
+    for (var i = 0; i < children.length; i++) {
+      final node = children[i];
+      if (node is XmlElement) {
+        final other = _sectionOrder.indexOf(node.name.local);
+        if (other < 0 || other > rank) break;
+      }
+      index = i + 1;
+    }
+    children.insert(index, element);
+  }
+
+  static const _storyContentTypes = {
+    'hdr':
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml',
+    'ftr':
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml',
+  };
+
+  /// Regrava só os cabeçalhos e rodapés editados; os novos ganham parte,
+  /// relação e referência na seção.
+  static void _writeStories(
+    DocxPackage package,
+    _WriteContext main,
+    XmlElement section,
+    HeadersFooters stories,
+    WordXml x,
+    Map<String, String> overrides,
+    _WriteContext Function(List<Relationship>, {int bookmarkStart}) contextFor,
+  ) {
+    var drawingStart = 20000;
+    var bookmarkStart = 200000;
+    for (final (reference, rootName, type, all) in [
+      ('headerReference', 'hdr', RelationshipTypes.header, stories.headers),
+      ('footerReference', 'ftr', RelationshipTypes.footer, stories.footers),
+    ]) {
+      for (final MapEntry(key: variant, value: story) in all.entries) {
+        if (!story.edited) continue;
+        final original = story.partPath;
+        final existing = original != null && package.parts.containsKey(original)
+            ? original
+            : null;
+        final partPath = existing ?? _newPartPath(package, reference);
+        final context = contextFor(
+          existing == null ? const [] : package.relationships(existing),
+          bookmarkStart: bookmarkStart,
+        );
+        final content = _renumberDrawings(
+          _BlockWriter(context).write(story.delta),
+          start: drawingStart,
+        );
+        drawingStart += 1000;
+        bookmarkStart += 10000;
+
+        final document = existing == null
+            ? XmlDocument.parse(
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<w:$rootName xmlns:w="${Namespaces.w}" xmlns:r="${Namespaces.r}"/>',
+              )
+            : package.xml(existing)!;
+        final root = document.rootElement;
+        root.children
+          ..clear()
+          ..add(XmlComment('vw-story'));
+        _declareNamespaces(root, content);
+        package.setText(
+          partPath,
+          document.toXmlString().replaceFirst('<!--vw-story-->', content),
+        );
+        package.addRelationships(partPath, context.newRelationships);
+        context.media.forEach((path, bytes) => package.parts[path] = bytes);
+        main.mediaTypes.addAll(context.mediaTypes);
+        if (existing != null) continue;
+
+        final id = main.newRelationshipId();
+        main.newRelationships.add(
+          Relationship(
+            id: id,
+            type: type,
+            target: partPath.substring('word/'.length),
+          ),
+        );
+        overrides['/$partPath'] = _storyContentTypes[rootName]!;
+        final variantName = switch (variant) {
+          PageVariant.normal => 'default',
+          PageVariant.first => 'first',
+          PageVariant.even => 'even',
+        };
+        section.children.removeWhere(
+          (node) =>
+              node is XmlElement &&
+              x.isW(node, reference) &&
+              (x.attr(node, 'type') ?? 'default') == variantName,
+        );
+        _insertInSection(
+          section,
+          XmlElement(XmlName.parts(reference, prefix: 'w'), [
+            XmlAttribute(XmlName.parts('type', prefix: 'w'), variantName),
+            XmlAttribute(XmlName.parts('id', prefix: 'r'), id),
+          ]),
+        );
+      }
+    }
+
+    final titlePage = x.child(section, 'titlePg');
+    if (stories.differentFirstPage && titlePage == null) {
+      _insertInSection(
+        section,
+        XmlElement(XmlName.parts('titlePg', prefix: 'w')),
+      );
+    } else if (!stories.differentFirstPage && titlePage != null) {
+      titlePage.remove();
+    }
+  }
+
+  static String _newPartPath(DocxPackage package, String reference) {
+    final base = reference == 'headerReference' ? 'header' : 'footer';
+    var number = 1;
+    while (package.parts.containsKey('word/$base$number.xml')) {
+      number++;
+    }
+    return 'word/$base$number.xml';
+  }
 
   /// Grava tamanho, orientação e margens na última seção do documento.
   static void _applyPageSetup(
@@ -139,18 +308,7 @@ class DocxWriter {
       final existing = x.child(section, local);
       if (existing != null) return existing;
       final element = XmlElement(XmlName.parts(local, prefix: 'w'));
-      final rank = _sectionOrder.indexOf(local);
-      final children = section.children;
-      var index = 0;
-      for (var i = 0; i < children.length; i++) {
-        final node = children[i];
-        if (node is XmlElement) {
-          final other = _sectionOrder.indexOf(node.name.local);
-          if (other < 0 || other > rank) break;
-        }
-        index = i + 1;
-      }
-      children.insert(index, element);
+      _insertInSection(section, element);
       return element;
     }
 
@@ -176,8 +334,8 @@ class DocxWriter {
     }
   }
 
-  static String _renumberDrawings(String xml) {
-    var next = 10000;
+  static String _renumberDrawings(String xml, {int start = 10000}) {
+    var next = start;
     return xml.replaceAllMapped(
       RegExp(r'(<(?:\w+:)?docPr\b[^>]*?\sid=")(\d+)(")'),
       (match) => '${match[1]}${next++}${match[3]}',
@@ -240,7 +398,10 @@ class _WriteContext {
     required this.existingHyperlinks,
     required this.tables,
     required this.contentWidthTwips,
-  }) : numberingPlan = NumberingPlan(numbering),
+    required this.takenMedia,
+    int bookmarkStart = 100000,
+  }) : _bookmarkId = bookmarkStart,
+       numberingPlan = NumberingPlan(numbering),
        normalRun = styles.runProps(null),
        normalParagraph = styles.paragraphProps(null),
        listParagraphStyleId = styles.idByName('List Paragraph'),
@@ -259,6 +420,9 @@ class _WriteContext {
   final String? listParagraphStyleId;
   final String? hyperlinkStyleId;
 
+  /// Caminhos de mídia já usados no pacote, por todas as partes.
+  final Set<String> takenMedia;
+
   final newRelationships = <Relationship>[];
   final media = <String, Uint8List>{};
   final mediaTypes = <String, String>{};
@@ -266,7 +430,7 @@ class _WriteContext {
   final usedBookmarks = <String>{};
   var _relationshipCounter = 0;
   var _mediaCounter = 0;
-  var _bookmarkId = 100000;
+  int _bookmarkId;
 
   String newRelationshipId() {
     String id;
@@ -298,7 +462,7 @@ class _WriteContext {
     String path;
     do {
       path = 'word/media/vw-image${++_mediaCounter}.$extension';
-    } while (media.containsKey(path));
+    } while (!takenMedia.add(path));
     media[path] = bytes;
     mediaTypes[extension] = mime;
     final id = newRelationshipId();
@@ -618,17 +782,26 @@ class _BlockWriter {
       }
       out.write(switch (segment) {
         _TextSegment() => _textRun(segment.text, segment.attributes, line),
-        _EmbedSegment() => _inlineEmbed(segment),
+        _EmbedSegment() => _inlineEmbed(segment, line),
       });
     }
     if (openLink != null) out.write('</w:hyperlink>');
     return out.toString();
   }
 
-  String _inlineEmbed(_EmbedSegment segment) {
+  String _inlineEmbed(_EmbedSegment segment, _LineStyle line) {
     switch (segment.type) {
       case EmbedTypes.image:
         return _image(segment);
+      case EmbedTypes.pageNumber:
+        final properties = _runProperties(segment.attributes ?? const {}, line);
+        return [
+          '<w:fldChar w:fldCharType="begin"/>',
+          '<w:instrText xml:space="preserve"> PAGE </w:instrText>',
+          '<w:fldChar w:fldCharType="separate"/>',
+          '<w:t>1</w:t>',
+          '<w:fldChar w:fldCharType="end"/>',
+        ].map((content) => '<w:r>$properties$content</w:r>').join();
       case EmbedTypes.pageBreak:
         return '<w:r><w:br w:type="page"/></w:r>';
       case EmbedTypes.opaqueInline:

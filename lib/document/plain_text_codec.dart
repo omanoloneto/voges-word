@@ -6,6 +6,7 @@ import 'package:flutter_quill/quill_delta.dart';
 import 'document_codec.dart';
 import 'document_look.dart';
 import 'embeds.dart';
+import 'headers_footers.dart';
 import 'tables.dart';
 
 class PlainTextCodec implements DocumentCodec {
@@ -29,8 +30,12 @@ class PlainTextCodec implements DocumentCodec {
   }
 
   @override
-  Uint8List encode(Delta delta, {Object? source, DocumentLook? pageSetup}) =>
-      Uint8List.fromList(utf8.encode(plainTextOf(delta)));
+  Uint8List encode(
+    Delta delta, {
+    Object? source,
+    DocumentLook? pageSetup,
+    HeadersFooters? headersFooters,
+  }) => Uint8List.fromList(utf8.encode(plainTextOf(delta)));
 
   String plainTextOf(Delta delta) {
     final out = StringBuffer();

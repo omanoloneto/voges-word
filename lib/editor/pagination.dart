@@ -6,18 +6,23 @@ import 'package:flutter_quill/flutter_quill.dart';
 
 import '../document/document_look.dart';
 import '../document/embeds.dart';
+import 'header_footer_painter.dart';
 
 const pageGap = 24.0;
 
+/// Cabeçalho ou rodapé mais alto que a margem empurra o texto, como no Word.
 QuillPageLayout pageLayoutFor(
   DocumentLook look,
   double scale, {
   ValueChanged<int>? onPageCountChanged,
+  HeaderFooterPainter? decorations,
 }) {
   return QuillPageLayout(
     pageHeight: look.pageHeight * scale,
-    marginTop: look.margins.top * scale,
-    marginBottom: look.margins.bottom * scale,
+    marginTop:
+        math.max(look.margins.top, decorations?.headerBottom ?? 0) * scale,
+    marginBottom:
+        math.max(look.margins.bottom, decorations?.footerTop ?? 0) * scale,
     pageGap: pageGap,
     firstPageTop: pageGap,
     breaksBefore: _startsWithPageBreak,
@@ -26,6 +31,8 @@ QuillPageLayout pageLayoutFor(
         node is Line && node.style.attributes.containsKey(Attribute.header.key),
     flowsAcrossPages: _isTableLine,
     onPageCountChanged: onPageCountChanged,
+    paintPage: decorations?.paint,
+    repaint: decorations,
   );
 }
 

@@ -4,6 +4,7 @@ import 'package:flutter_quill/quill_delta.dart';
 
 import '../document/document_codec.dart';
 import '../document/document_look.dart';
+import '../document/headers_footers.dart';
 import '../document/tables.dart';
 import 'docx_package.dart';
 import 'docx_reader.dart';
@@ -71,10 +72,15 @@ class DocxCodec implements DocumentCodec {
   }
 
   @override
-  Uint8List encode(Delta delta, {Object? source, DocumentLook? pageSetup}) =>
-      DocxWriter(tables).write(
-        delta,
-        source is DocxPackage ? source : newDocumentPackage(),
-        pageSetup: pageSetup,
-      );
+  Uint8List encode(
+    Delta delta, {
+    Object? source,
+    DocumentLook? pageSetup,
+    HeadersFooters? headersFooters,
+  }) => DocxWriter(tables).write(
+    delta,
+    source is DocxPackage ? source : newDocumentPackage(),
+    pageSetup: pageSetup,
+    headersFooters: headersFooters,
+  );
 }

@@ -251,6 +251,48 @@ class OpaqueInlineEmbedBuilder extends EmbedBuilder {
   }
 }
 
+/// Campo de número da página: no cabeçalho vira o número de cada folha.
+class PageNumberEmbedBuilder extends EmbedBuilder {
+  const PageNumberEmbedBuilder();
+
+  @override
+  String get key => EmbedTypes.pageNumber;
+
+  @override
+  bool get expanded => false;
+
+  @override
+  WidgetSpan buildWidgetSpan(Widget widget) => WidgetSpan(
+    child: widget,
+    alignment: PlaceholderAlignment.baseline,
+    baseline: TextBaseline.alphabetic,
+  );
+
+  @override
+  String toPlainText(Embed node) => '#';
+
+  @override
+  Widget build(BuildContext context, EmbedContext embedContext) {
+    return Tooltip(
+      message: 'Número da página',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFFDCE7FB),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          child: Text(
+            '#',
+            style: embedContext.textStyle,
+            textScaler: TextScaler.noScaling,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class OpaqueBlockEmbedBuilder extends EmbedBuilder {
   const OpaqueBlockEmbedBuilder();
 

@@ -7,6 +7,7 @@ import '../../fonts/font_catalog.dart';
 import '../document_commands.dart';
 import '../editor_factory.dart';
 import '../editor_session.dart';
+import '../page_numbers.dart';
 import '../embeds/table_embed.dart';
 import 'font_picker.dart';
 import 'ribbon_controls.dart';
@@ -18,6 +19,7 @@ class RibbonActions {
     required this.editLink,
     required this.insertTable,
     required this.removeTable,
+    required this.editHeadersFooters,
     required this.refocus,
     required this.pagesView,
     required this.onPagesView,
@@ -29,6 +31,7 @@ class RibbonActions {
   final VoidCallback editLink;
   final void Function(int rows, int columns) insertTable;
   final VoidCallback removeTable;
+  final VoidCallback editHeadersFooters;
   final VoidCallback refocus;
   final bool pagesView;
   final ValueChanged<bool> onPagesView;
@@ -515,6 +518,59 @@ class _RibbonState extends State<Ribbon> {
           tooltip: 'Começa uma página nova ($_mod${'Enter'})',
           onPressed: () =>
               _apply(session.activeController.value.insertPageBreak),
+        ),
+      ),
+      const RibbonGroupDivider(),
+      RibbonGroup(
+        label: 'Cabeçalho e rodapé',
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            RibbonBigButton(
+              icon: Icons.web_asset_outlined,
+              label: 'Cabeçalho e rodapé',
+              tooltip: 'Editar o texto do topo e da base das páginas',
+              onPressed: widget.actions.editHeadersFooters,
+            ),
+            ListenableBuilder(
+              listenable: session,
+              builder: (context, _) {
+                final stories = session.headersFooters;
+                final current = pageNumberPosition(stories);
+                return _MenuBigButton(
+                  icon: Icons.tag,
+                  label: 'Número de página',
+                  items: [
+                    for (final position in PageNumberPosition.values)
+                      _MenuItem(
+                        position.label,
+                        checked: position == current,
+                        onTap: () => session.setHeadersFooters(
+                          withPageNumber(stories, position),
+                        ),
+                      ),
+                    _MenuItem(
+                      'Primeira página sem número',
+                      subtitle: 'Para capa',
+                      checked: stories.differentFirstPage,
+                      onTap: () => session.setHeadersFooters(
+                        stories.copyWith(
+                          differentFirstPage: !stories.differentFirstPage,
+                        ),
+                      ),
+                    ),
+                    if (current != null)
+                      _MenuItem(
+                        'Remover números',
+                        onTap: () => session.setHeadersFooters(
+                          withoutPageNumbers(stories),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
         ),
       ),
     ],

@@ -3,6 +3,7 @@ import 'package:flutter_quill/flutter_quill.dart';
 
 import 'editor_factory.dart';
 import 'editor_session.dart';
+import 'header_footer_painter.dart';
 import 'pagination.dart';
 import 'paper_styles.dart';
 
@@ -43,12 +44,27 @@ class _PaperViewState extends State<PaperView> {
   Object? _factoryKey;
   QuillPageLayout? _pageLayout;
   Object? _pageLayoutKey;
+  HeaderFooterPainter? _decorations;
   final _paperFocus = FocusNode(canRequestFocus: false, skipTraversal: true);
 
   @override
   void dispose() {
     _paperFocus.dispose();
+    _decorations?.dispose();
     super.dispose();
+  }
+
+  HeaderFooterPainter _decorationsFor() {
+    final session = widget.session;
+    final current = _decorations;
+    if (current != null &&
+        current.stories == session.headersFooters &&
+        current.look == session.look) {
+      return current;
+    }
+    final next = HeaderFooterPainter(session.headersFooters, session.look);
+    WidgetsBinding.instance.addPostFrameCallback((_) => current?.dispose());
+    return _decorations = next;
   }
 
   EditorFactory _factoryFor(double contentWidth) {
@@ -76,13 +92,15 @@ class _PaperViewState extends State<PaperView> {
   }
 
   QuillPageLayout _pageLayoutFor(double scale) {
-    final key = (widget.session.look, scale);
+    final decorations = _decorationsFor();
+    final key = (widget.session.look, scale, decorations);
     if (_pageLayout == null || _pageLayoutKey != key) {
       _pageLayoutKey = key;
       _pageLayout = pageLayoutFor(
         widget.session.look,
         scale,
         onPageCountChanged: widget.onPageCountChanged,
+        decorations: decorations,
       );
     }
     return _pageLayout!;

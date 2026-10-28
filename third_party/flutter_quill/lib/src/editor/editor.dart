@@ -848,9 +848,25 @@ class RenderEditor extends RenderEditableContainerBox
 
   int get pageCount => _pageCount;
 
+  @override
+  void attach(PipelineOwner owner) {
+    super.attach(owner);
+    _pageLayout?.repaint?.addListener(markNeedsPaint);
+  }
+
+  @override
+  void detach() {
+    _pageLayout?.repaint?.removeListener(markNeedsPaint);
+    super.detach();
+  }
+
   set pageLayout(QuillPageLayout? value) {
     final previous = _pageLayout;
     _pageLayout = value;
+    if (attached && previous?.repaint != value?.repaint) {
+      previous?.repaint?.removeListener(markNeedsPaint);
+      value?.repaint?.addListener(markNeedsPaint);
+    }
     if (value == null || previous == null || !value.sameGeometry(previous)) {
       markNeedsLayout();
     } else if (value != previous) {
@@ -920,6 +936,7 @@ class RenderEditor extends RenderEditableContainerBox
       canvas
         ..drawRect(rect.shift(const Offset(0, 1.5)), shadow)
         ..drawRect(rect, paper);
+      pages.paintPage?.call(canvas, rect, page, _pageCount);
     }
   }
 

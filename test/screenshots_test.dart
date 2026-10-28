@@ -145,6 +145,17 @@ void main() {
     for (final tab in ['Inserir', 'Layout', 'Exibir']) {
       await tester.tap(find.text(tab));
       await capture(tester, 'aba-${tab.toLowerCase()}');
+      if (tab != 'Inserir') continue;
+      await tester.tap(find.text('Número de página'));
+      await capture(tester, 'numero-pagina');
+      await tester.tap(find.text('No rodapé, à direita'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byTooltip('Editar o texto do topo e da base das páginas'),
+      );
+      await capture(tester, 'cabecalho-rodape');
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
     }
     await tester.tap(find.text('Início'));
     await tester.pumpAndSettle();

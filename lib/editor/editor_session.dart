@@ -13,6 +13,7 @@ import '../docx/docx_template.dart';
 import '../docx/image_formats.dart';
 import '../document/document_codec.dart';
 import '../document/document_look.dart';
+import '../document/headers_footers.dart';
 import '../document/plain_text_codec.dart';
 import '../document/tables.dart';
 import '../files/document_files.dart';
@@ -79,6 +80,16 @@ class EditorSession extends ChangeNotifier {
   var _pageSetupChanged = false;
 
   DocumentLook get look => _look;
+
+  HeadersFooters headersFooters = const HeadersFooters();
+
+  /// Novo cabeçalho, rodapé ou opção de primeira página.
+  void setHeadersFooters(HeadersFooters value) {
+    headersFooters = value;
+    revision++;
+    dirty = true;
+    notifyListeners();
+  }
 
   /// Tamanho, orientação e margens (em pontos) escolhidos na aba Layout.
   void setPageSetup({double? width, double? height, EdgeInsets? margins}) {
@@ -197,6 +208,7 @@ class EditorSession extends ChangeNotifier {
             delta,
             source: _document.source,
             pageSetup: _pageSetupChanged ? _look : null,
+            headersFooters: headersFooters,
           )
         : plainText.encode(delta);
   }
@@ -254,6 +266,7 @@ class EditorSession extends ChangeNotifier {
     final previous = generation == 0 ? null : controller;
     _document = loaded;
     _look = loaded.look;
+    headersFooters = loaded.headersFooters;
     _pageSetupChanged = false;
     controller = QuillController(
       document: Document.fromDelta(loaded.delta),

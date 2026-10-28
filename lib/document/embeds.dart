@@ -10,6 +10,9 @@ abstract final class EmbedTypes {
   static const opaqueBlock = 'vw-block';
   static const opaqueInline = 'vw-inline';
 
+  /// Campo PAGE do Word: o número da página onde aparece.
+  static const pageNumber = 'vw-page-number';
+
   /// Ocupam a linha inteira; o resto são embutidos no meio do texto.
   static const blockLevel = {table, sectionBreak, opaqueBlock};
 }
@@ -70,6 +73,17 @@ class OpaqueContent {
     if (label != null) 'label': label,
     if (hidden) 'hidden': true,
   });
+}
+
+/// Primeira palavra da instrução de um campo do Word (PAGE, NUMPAGES...).
+String? fieldNameOf(String xml) {
+  final simple = RegExp(r'w:instr="([^"]*)"').firstMatch(xml)?.group(1);
+  final complex = RegExp(
+    r'<w:instrText[^>]*>([^<]*)</w:instrText>',
+  ).allMatches(xml).map((match) => match.group(1)).join();
+  final instruction = (simple ?? complex).trim();
+  if (instruction.isEmpty) return null;
+  return instruction.split(RegExp(r'\s+')).first.toUpperCase();
 }
 
 String tableIdOf(Object? data) =>

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_quill/quill_delta.dart';
 
 import 'document_look.dart';
+import 'headers_footers.dart';
 
 enum DocumentFormat {
   docx('docx', 'Documento do Word'),
@@ -28,10 +29,12 @@ class LoadedDocument {
     required this.look,
     this.source,
     this.notices = const [],
+    this.headersFooters = const HeadersFooters(),
   });
 
   final Delta delta;
   final DocumentLook look;
+  final HeadersFooters headersFooters;
 
   /// Contexto do formato de origem, usado para salvar sem perder conteúdo.
   final Object? source;
@@ -46,5 +49,10 @@ abstract interface class DocumentCodec {
   LoadedDocument decode(Uint8List bytes);
 
   /// [pageSetup] só vem quando o usuário mudou tamanho, orientação ou margens.
-  Uint8List encode(Delta delta, {Object? source, DocumentLook? pageSetup});
+  Uint8List encode(
+    Delta delta, {
+    Object? source,
+    DocumentLook? pageSetup,
+    HeadersFooters? headersFooters,
+  });
 }
