@@ -33,6 +33,8 @@ Os instaladores estão na [última versão](https://github.com/omanoloneto/voges
 - Avisa antes de fechar ou abrir outro arquivo com alterações não salvas.
 - "Abrir com" do sistema no macOS, no Android e, pelos instaladores, no Windows e no Linux. O caminho do arquivo também pode ser passado na linha de comando.
 
+O que já existe e o que falta em relação às funções mais usadas do Word está em [docs/word-feature-checklist.md](docs/word-feature-checklist.md).
+
 ## Fidelidade ao abrir e salvar
 
 O Voges Word reescreve só o corpo do documento. Cabeçalhos, rodapés, estilos, tema, numeração, notas de rodapé, imagens e configurações de página continuam no arquivo como vieram. O que o editor mostra mas não edita (sumário, campos como número de página, equações, gráficos, caixas de texto, notas) fica protegido e volta para o arquivo exatamente igual.
