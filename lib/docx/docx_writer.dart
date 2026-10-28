@@ -168,7 +168,7 @@ class DocxWriter {
     'sectPrChange',
   ];
 
-  /// Põe o elemento na seção respeitando a ordem do esquema do Word.
+  /// Puts the element in the section, following the order of Word's schema.
   static void _insertInSection(XmlElement section, XmlElement element) {
     final rank = _sectionOrder.indexOf(element.name.local);
     final children = section.children;
@@ -191,8 +191,8 @@ class DocxWriter {
         'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml',
   };
 
-  /// Regrava só os cabeçalhos e rodapés editados; os novos ganham parte,
-  /// relação e referência na seção.
+  /// Rewrites only the edited headers and footers; new ones get a part, a
+  /// relationship and a reference in the section.
   static void _writeStories(
     DocxPackage package,
     _WriteContext main,
@@ -296,7 +296,7 @@ class DocxWriter {
     return 'word/$base$number.xml';
   }
 
-  /// Grava tamanho, orientação e margens na última seção do documento.
+  /// Writes size, orientation and margins to the document's last section.
   static void _applyPageSetup(
     XmlElement section,
     DocumentLook look,
@@ -420,7 +420,7 @@ class _WriteContext {
   final String? listParagraphStyleId;
   final String? hyperlinkStyleId;
 
-  /// Caminhos de mídia já usados no pacote, por todas as partes.
+  /// Media paths already used in the package, across all parts.
   final Set<String> takenMedia;
 
   final newRelationships = <Relationship>[];
@@ -978,10 +978,10 @@ class _BlockWriter {
     final id = c.addImage(decoded.bytes, decoded.mime);
     return '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">'
         '<wp:extent cx="$cx" cy="$cy"/><wp:effectExtent l="0" t="0" r="0" b="0"/>'
-        '<wp:docPr id="1" name="Imagem"/>'
+        '<wp:docPr id="1" name="Picture"/>'
         '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>'
         '<a:graphic><a:graphicData uri="${Namespaces.pic}">'
-        '<pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="Imagem"/><pic:cNvPicPr/></pic:nvPicPr>'
+        '<pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="Picture"/><pic:cNvPicPr/></pic:nvPicPr>'
         '<pic:blipFill><a:blip r:embed="$id"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
         '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="$cx" cy="$cy"/></a:xfrm>'
         '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>'

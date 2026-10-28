@@ -49,7 +49,7 @@ SingleActivator shortcut(LogicalKeyboardKey key, {bool shift = false}) =>
       shift: shift,
     );
 
-/// Monta o editor principal e os editores das células com a mesma aparência.
+/// Builds the main editor and the cell editors with the same look.
 class EditorFactory {
   EditorFactory({
     required this.look,
@@ -73,11 +73,11 @@ class EditorFactory {
   final VoidCallback onInsertImage;
   final VoidCallback onEditLink;
 
-  /// Células não ficam sob o foco do editor principal; senão ele acha que
-  /// ainda tem o foco quando o usuário clica de volta no texto.
+  /// Cells do not sit under the main editor's focus; otherwise it thinks it
+  /// still has focus when the user clicks back into the text.
   final FocusNode cellFocusParent;
 
-  /// Nulo onde não há corretor e no PDF.
+  /// Null where there is no spell checker, and in the PDF.
   final SpellChecker? spelling;
 
   double get scale => pointsToPixels * zoom;
@@ -178,8 +178,8 @@ class EditorFactory {
     );
   }
 
-  /// O toque do flutter_quill é "transparente": sem isso o editor de fora
-  /// disputa o foco com a célula clicada.
+  /// flutter_quill taps are "transparent": without this the outer editor
+  /// fights the tapped cell for focus.
   static bool _isOnTable(QuillController controller, TextPosition position) {
     final line = controller.document.queryChild(position.offset).node;
     return line is Line &&

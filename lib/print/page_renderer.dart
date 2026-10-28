@@ -15,11 +15,11 @@ import '../editor/pagination.dart';
 import '../editor/paper_styles.dart';
 import 'pdf_document.dart';
 
-/// Resolução das folhas no PDF e na impressão.
+/// Page resolution in the PDF and when printing.
 const printDpi = 200.0;
 
-/// Desenha o documento fora da tela, em páginas e igual ao editor, e monta
-/// o PDF folha a folha.
+/// Draws the document off-screen, in pages and just like the editor, and
+/// builds the PDF page by page.
 Future<Uint8List> documentPdf(
   BuildContext context,
   EditorSession session, {
@@ -43,9 +43,9 @@ Future<Uint8List> documentPdf(
 
   try {
     await decorations.ready;
-    if (!context.mounted) throw StateError('Tela fechada');
+    if (!context.mounted) throw StateError('Screen closed');
     await _precacheImages(context, session);
-    if (!context.mounted) throw StateError('Tela fechada');
+    if (!context.mounted) throw StateError('Screen closed');
 
     final layout = pageLayoutFor(look, scale, decorations: decorations);
     final factory = EditorFactory(
@@ -135,7 +135,7 @@ Future<Uint8List> documentPdf(
       await Future<void>.delayed(Duration.zero);
       frame();
 
-      // A GlobalKey só enxerga a árvore principal; aqui a busca é direta.
+      // A GlobalKey only sees the main tree; here the search is direct.
       final renderEditor = _find<RenderEditor>(boundary)!;
       final origin = renderEditor.localToGlobal(
         Offset.zero,
@@ -198,7 +198,7 @@ Future<Uint8List> documentPdf(
   }
 }
 
-/// Altura máxima da área de desenho, bem acima de qualquer documento real.
+/// Maximum height of the drawing area, well above any real document.
 const _maxHeight = 2000000.0;
 
 Future<void> _precacheImages(BuildContext context, EditorSession session) {
@@ -223,7 +223,7 @@ Future<Uint8List> _rgbOf(ui.Image image) async {
   final pixels = image.width * image.height;
   final rgb = Uint8List(pixels * 3);
   for (var i = 0, j = 0; i < pixels; i++, j += 4) {
-    // Fundo transparente vira papel branco.
+    // A transparent background becomes white paper.
     final alpha = rgba[j + 3];
     final white = 255 - alpha;
     rgb[i * 3] = math.min(255, rgba[j] + white);

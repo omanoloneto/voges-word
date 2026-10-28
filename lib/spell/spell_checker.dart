@@ -9,16 +9,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 class Misspelling {
   const Misspelling(this.start, this.end, this.suggestions);
 
-  /// Posições dentro do texto do parágrafo.
+  /// Offsets within the paragraph's text.
   final int start;
   final int end;
   final List<String> suggestions;
 }
 
-/// Corretor do sistema: NSSpellChecker no macOS; no celular, o serviço de
-/// ortografia do teclado. Windows, Linux e web ficam sem por enquanto.
+/// The system spell checker: NSSpellChecker on macOS and the keyboard's spell
+/// checking service on phones. Windows, Linux and the web have none for now.
 abstract interface class SpellBackend {
-  Future<List<List<Misspelling>>> check(List<String> texts);
+  /// [language] is a code like `pt_BR`, `es` or `en`.
+  Future<List<List<Misspelling>>> check(List<String> texts, String language);
 }
 
 SpellBackend? platformSpellBackend() {
@@ -34,9 +35,16 @@ class _NativeSpellBackend implements SpellBackend {
   static const _channel = MethodChannel('voges_word/spell');
 
   @override
-  Future<List<List<Misspelling>>> check(List<String> texts) async {
+  Future<List<List<Misspelling>>> check(
+    List<String> texts,
+    String language,
+  ) async {
     final results =
-        await _channel.invokeListMethod<Object?>('check', texts) ?? const [];
+        await _channel.invokeListMethod<Object?>('check', {
+          'texts': texts,
+          'language': language,
+        }) ??
+        const [];
     return [
       for (final found in results)
         [
@@ -55,25 +63,30 @@ class _MobileSpellBackend implements SpellBackend {
   final _service = DefaultSpellCheckService();
 
   @override
-  Future<List<List<Misspelling>>> check(List<String> texts) async => [
-    for (final text in texts)
-      [
-        for (final span
-            in await _service.fetchSpellCheckSuggestions(
-                  const Locale('pt', 'BR'),
-                  text,
-                ) ??
-                const <SuggestionSpan>[])
-          Misspelling(span.range.start, span.range.end, span.suggestions),
-      ],
-  ];
+  Future<List<List<Misspelling>>> check(
+    List<String> texts,
+    String language,
+  ) async {
+    final [code, ...region] = language.split('_');
+    final locale = Locale(code, region.firstOrNull);
+    return [
+      for (final text in texts)
+        [
+          for (final span
+              in await _service.fetchSpellCheckSuggestions(locale, text) ??
+                  const <SuggestionSpan>[])
+            Misspelling(span.range.start, span.range.end, span.suggestions),
+        ],
+    ];
+  }
 }
 
-/// Ortografia dos parágrafos, verificada em segundo plano e guardada pelo
-/// texto de cada um; palavras ignoradas valem para todos os documentos.
+/// Paragraph spelling, checked in the background and cached by each
+/// paragraph's text; ignored words apply to every document.
 class SpellChecker extends ChangeNotifier {
   SpellChecker(this._backend);
 
+  // Stored on the user's device; renaming these keys loses their data.
   static const _ignoredKey = 'ortografia_ignoradas';
   static const _enabledKey = 'ortografia_ligada';
 
@@ -82,11 +95,23 @@ class SpellChecker extends ChangeNotifier {
   final _queue = <String>{};
   var _ignored = <String>{};
   var _enabled = true;
+  var _language = 'en';
   Timer? _timer;
   var _running = false;
   var _disposed = false;
 
   bool get enabled => _enabled;
+
+  String get language => _language;
+
+  /// Results of another language are dropped and the text is checked again.
+  set language(String value) {
+    if (value == _language) return;
+    _language = value;
+    _results.clear();
+    _queue.clear();
+    if (!_disposed) notifyListeners();
+  }
 
   Future<void> load() async {
     try {
@@ -106,7 +131,7 @@ class SpellChecker extends ChangeNotifier {
     _save((preferences) => preferences.setBool(_enabledKey, value));
   }
 
-  /// Nulo enquanto o parágrafo ainda não foi verificado.
+  /// Null while the paragraph has not been checked yet.
   List<Misspelling>? misspellingsOf(String text) {
     if (!_enabled || text.trim().isEmpty) return null;
     final found = _results[text];
@@ -144,7 +169,9 @@ class SpellChecker extends ChangeNotifier {
       while (_queue.isNotEmpty && !_disposed) {
         final batch = _queue.take(20).toList();
         _queue.removeAll(batch);
-        final found = await _backend.check(batch);
+        final language = _language;
+        final found = await _backend.check(batch, language);
+        if (language != _language) continue;
         for (var i = 0; i < batch.length && i < found.length; i++) {
           _results[batch[i]] = found[i];
         }

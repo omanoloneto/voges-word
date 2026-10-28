@@ -63,7 +63,7 @@ class DocxNumbering {
   }
 }
 
-/// Definições de lista que o Voges Word acrescenta ao salvar.
+/// List definitions that Voges Word adds when saving.
 class NumberingPlan {
   NumberingPlan(this._numbering);
 
@@ -82,7 +82,7 @@ class NumberingPlan {
     return _bulletNum ??= _register(_bulletAbstract!);
   }
 
-  /// Cada lista numerada contínua recomeça do 1.
+  /// Each contiguous numbered list restarts at 1.
   int newOrderedList() {
     _orderedAbstract ??= _nextAbstract++;
     return _register(_orderedAbstract!);

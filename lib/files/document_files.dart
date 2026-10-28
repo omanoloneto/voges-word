@@ -14,8 +14,8 @@ class OpenedFile {
   final String name;
   final Uint8List bytes;
 
-  /// Caminho gravável; só existe no computador (no celular e na web o arquivo
-  /// chega como cópia).
+  /// Writable path; it only exists on desktop (on phones and the web the file
+  /// comes as a copy).
   final String? path;
 }
 
@@ -26,8 +26,25 @@ class PickedImage {
   final String mime;
 }
 
-/// Abre e salva arquivos conforme o que cada sistema permite.
+/// Titles of the system file dialogs, set by the screen in the user's language.
+class FileDialogTitles {
+  const FileDialogTitles({
+    this.open = 'Open document',
+    this.insertPicture = 'Insert picture',
+    this.saveAs = 'Save as',
+    this.export = 'Export',
+  });
+
+  final String open;
+  final String insertPicture;
+  final String saveAs;
+  final String export;
+}
+
+/// Opens and saves files the way each platform allows.
 class DocumentFiles {
+  FileDialogTitles titles = const FileDialogTitles();
+
   bool get canSaveInPlace =>
       !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
 
@@ -37,7 +54,7 @@ class DocumentFiles {
 
   Future<OpenedFile?> pickDocument() async {
     final result = await FilePicker.pickFiles(
-      dialogTitle: 'Abrir documento',
+      dialogTitle: titles.open,
       type: FileType.custom,
       allowedExtensions: _extensions,
       withData: !canSaveInPlace,
@@ -60,7 +77,7 @@ class DocumentFiles {
 
   Future<PickedImage?> pickImage() async {
     final result = await FilePicker.pickFiles(
-      dialogTitle: 'Inserir imagem',
+      dialogTitle: titles.insertPicture,
       type: FileType.custom,
       allowedExtensions: insertableImageExtensions,
       withData: true,
@@ -71,12 +88,12 @@ class DocumentFiles {
     return PickedImage(bytes: bytes, mime: mimeForPath(file.name));
   }
 
-  /// No computador só escolhe o caminho; quem grava é [write].
+  /// On desktop it only picks the path; [write] does the writing.
   Future<String?> chooseSaveLocation(
     String suggestedName,
     DocumentFormat format,
   ) => FilePicker.saveFile(
-    dialogTitle: 'Salvar como',
+    dialogTitle: titles.saveAs,
     fileName: suggestedName,
     type: FileType.custom,
     allowedExtensions: [format.extension],
@@ -85,7 +102,7 @@ class DocumentFiles {
   Future<void> write(String path, Uint8List bytes) =>
       File(path).writeAsBytes(bytes, flush: true);
 
-  /// O share_plus no Linux só manda texto por e-mail, não arquivos.
+  /// On Linux, share_plus only sends text by email, not files.
   bool get canShare => kIsWeb || !Platform.isLinux;
 
   Future<void> share(
@@ -101,11 +118,11 @@ class DocumentFiles {
     ),
   );
 
-  /// Grava uma cópia em outro formato (PDF); falso se o usuário cancelar.
+  /// Saves a copy in another format (PDF); false if the user cancels.
   Future<bool> export(Uint8List bytes, String name, String extension) async {
     if (!canSaveInPlace) {
       final path = await FilePicker.saveFile(
-        dialogTitle: 'Exportar',
+        dialogTitle: titles.export,
         fileName: name,
         type: FileType.custom,
         allowedExtensions: [extension],
@@ -114,7 +131,7 @@ class DocumentFiles {
       return kIsWeb || path != null;
     }
     var path = await FilePicker.saveFile(
-      dialogTitle: 'Exportar',
+      dialogTitle: titles.export,
       fileName: name,
       type: FileType.custom,
       allowedExtensions: [extension],
@@ -125,14 +142,14 @@ class DocumentFiles {
     return true;
   }
 
-  /// Celular e web: o sistema grava (ou baixa) o arquivo.
+  /// Phones and the web: the system saves (or downloads) the file.
   Future<bool> saveCopy(
     String fileName,
     Uint8List bytes,
     DocumentFormat format,
   ) async {
     final path = await FilePicker.saveFile(
-      dialogTitle: 'Salvar como',
+      dialogTitle: titles.saveAs,
       fileName: fileName,
       type: FileType.custom,
       allowedExtensions: [format.extension],

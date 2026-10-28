@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../fonts/font_catalog.dart';
+import '../../l10n/l10n.dart';
 import '../editor_factory.dart';
 import 'ribbon_controls.dart';
 import 'ribbon_style.dart';
@@ -9,7 +10,7 @@ enum _RowKind { header, font, add }
 
 typedef _Row = ({String text, _RowKind kind});
 
-/// Campo de fonte com busca: as do documento, as instaladas e as do Google.
+/// Searchable font field: the document's fonts, installed ones and Google's.
 class FontPicker extends StatefulWidget {
   const FontPicker({
     required this.fonts,
@@ -50,7 +51,7 @@ class _FontPickerState extends State<FontPicker> {
         ),
       ],
       builder: (context, menu, _) => Tooltip(
-        message: 'Fonte',
+        message: context.l10n.groupFont,
         child: RibbonField(
           width: widget.width,
           onTap: () => menu.isOpen ? menu.close() : menu.open(),
@@ -58,7 +59,7 @@ class _FontPickerState extends State<FontPicker> {
             children: [
               Expanded(
                 child: Text(
-                  widget.current ?? 'Padrão',
+                  widget.current ?? context.l10n.defaultFont,
                   style: RibbonText.control,
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
@@ -114,20 +115,21 @@ class _FontPanelState extends State<_FontPanel> {
     }
 
     final fonts = widget.fonts;
+    final l10n = context.l10n;
     return [
       ...section(
-        'Neste documento',
+        l10n.fontsInDocument,
         widget.documentFonts.toList()
           ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())),
       ),
       ...section(
-        isDesktopPlatform ? 'No computador' : 'No aparelho',
+        isDesktopPlatform ? l10n.fontsOnComputer : l10n.fontsOnDevice,
         fonts.systemFamilies,
       ),
       ...section('Google Fonts', fonts.googleFamilies),
       if (query.isNotEmpty)
         ...section(
-          'Adicionar do Google Fonts',
+          l10n.addFromGoogleFonts,
           fonts.unlistedGoogleFamilies,
           kind: _RowKind.add,
         ),
@@ -153,7 +155,7 @@ class _FontPanelState extends State<_FontPanel> {
               style: RibbonText.control,
               cursorColor: RibbonColors.text,
               decoration: InputDecoration(
-                hintText: 'Buscar fonte',
+                hintText: context.l10n.searchFont,
                 hintStyle: RibbonText.control.copyWith(
                   color: RibbonColors.muted,
                 ),
@@ -185,9 +187,9 @@ class _FontPanelState extends State<_FontPanel> {
               builder: (context, _) {
                 final rows = _rows();
                 if (rows.isEmpty) {
-                  return const Center(
+                  return Center(
                     child: Text(
-                      'Nenhuma fonte encontrada',
+                      context.l10n.noFontsFound,
                       style: RibbonText.label,
                     ),
                   );
@@ -250,18 +252,18 @@ class _FontPanelState extends State<_FontPanel> {
               ),
             ),
             if (missing)
-              const Tooltip(
-                message: 'Não instalada: aparece com outra fonte',
-                child: Icon(
+              Tooltip(
+                message: context.l10n.fontMissing,
+                child: const Icon(
                   Icons.warning_amber_rounded,
                   size: 16,
                   color: RibbonColors.muted,
                 ),
               )
             else if (!ready)
-              const Tooltip(
-                message: 'Baixa do Google Fonts ao usar',
-                child: Icon(
+              Tooltip(
+                message: context.l10n.fontDownloadsOnUse,
+                child: const Icon(
                   Icons.cloud_download_outlined,
                   size: 16,
                   color: RibbonColors.muted,
@@ -289,9 +291,9 @@ class _FontPanelState extends State<_FontPanel> {
               style: RibbonText.control,
             ),
           ),
-          const Tooltip(
-            message: 'Adicionar à lista',
-            child: Icon(
+          Tooltip(
+            message: context.l10n.addToList,
+            child: const Icon(
               Icons.add_circle_outline,
               size: 16,
               color: RibbonColors.text,

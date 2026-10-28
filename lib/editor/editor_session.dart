@@ -4,9 +4,10 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/widgets.dart' show EdgeInsets, FocusNode;
+import 'package:flutter/widgets.dart' show EdgeInsets, FocusNode, Locale;
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
+import 'package:flutter_quill/quill_delta.dart';
 
 import '../docx/docx_codec.dart';
 import '../docx/docx_template.dart';
@@ -18,18 +19,38 @@ import '../document/plain_text_codec.dart';
 import '../document/tables.dart';
 import '../files/document_files.dart';
 import '../files/recovery.dart';
+import '../l10n/app_language.dart';
+import '../l10n/l10n.dart';
 import 'document_commands.dart';
 import 'embeds/table_embed.dart';
 import 'paste_sanitizer.dart';
+import 'template_content.dart';
 
-/// Erro com mensagem pronta para mostrar ao usuário.
-class UserFacingException implements Exception {
-  const UserFacingException(this.message);
+/// What the session shows or writes in the user's language.
+class SessionLocale {
+  const SessionLocale({
+    required this.language,
+    required this.untitledName,
+    required this.untitledFileName,
+    required this.resume,
+  });
 
-  final String message;
+  factory SessionLocale.of(AppLocalizations l10n) => SessionLocale(
+    language: documentLanguageTag(Locale(l10n.localeName)),
+    untitledName: l10n.untitledDocument,
+    untitledFileName: l10n.untitledFileName,
+    resume: resumeContent(l10n),
+  );
 
-  @override
-  String toString() => message;
+  /// Language tag of new documents, like `pt-BR`.
+  final String language;
+  final String untitledName;
+
+  /// Suggested file name when an untitled document is saved.
+  final String untitledFileName;
+
+  /// Sample text of the résumé template.
+  final Delta resume;
 }
 
 class EditorSession extends ChangeNotifier {
@@ -38,17 +59,21 @@ class EditorSession extends ChangeNotifier {
     required this.plainText,
     required this.files,
     required this.tables,
-  }) {
+    SessionLocale? locale,
+  }) : locale =
+           locale ??
+           SessionLocale.of(lookupAppLocalizations(appLanguages.first)) {
     _tableEdits = tables.edits.listen((_) => _markDirty());
     _load(
-      docx.createEmpty(),
-      name: untitledName,
+      docx.create(DocumentTemplate.blank, language: this.locale.language),
+      name: null,
       path: null,
       format: DocumentFormat.docx,
     );
   }
 
-  static const untitledName = 'Documento sem título';
+  /// Updated by the screen when the language changes.
+  SessionLocale locale;
 
   final DocxCodec docx;
   final PlainTextCodec plainText;
@@ -65,15 +90,17 @@ class EditorSession extends ChangeNotifier {
   late StreamSubscription<void> _tableEdits;
   StreamSubscription<DocChange>? _changes;
 
-  String name = untitledName;
+  String? _name;
+  String get name => _name ?? locale.untitledName;
+  set name(String value) => _name = value;
   String? path;
   DocumentFormat format = DocumentFormat.docx;
   bool dirty = false;
 
-  /// Cresce a cada documento carregado, para a tela recriar o editor.
+  /// Grows with each loaded document, so the screen recreates the editor.
   int generation = 0;
 
-  /// Cresce a cada alteração, para saber se a cópia de recuperação está em dia.
+  /// Grows with each change, to tell whether the recovery copy is up to date.
   int revision = 0;
 
   late DocumentLook _look;
@@ -83,7 +110,7 @@ class EditorSession extends ChangeNotifier {
 
   HeadersFooters headersFooters = const HeadersFooters();
 
-  /// Novo cabeçalho, rodapé ou opção de primeira página.
+  /// New header, footer or first-page option.
   void setHeadersFooters(HeadersFooters value) {
     headersFooters = value;
     revision++;
@@ -91,7 +118,7 @@ class EditorSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Tamanho, orientação e margens (em pontos) escolhidos na aba Layout.
+  /// Size, orientation and margins (in points) chosen in the Layout tab.
   void setPageSetup({double? width, double? height, EdgeInsets? margins}) {
     _look = _look.copyWith(
       pageWidth: width,
@@ -104,9 +131,9 @@ class EditorSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  List<String> get notices => _document.notices;
+  List<DocumentNotice> get notices => _document.notices;
 
-  bool get isUntitled => name == untitledName && path == null;
+  bool get isUntitled => _name == null && path == null;
 
   String get baseName {
     final dot = name.lastIndexOf('.');
@@ -115,8 +142,12 @@ class EditorSession extends ChangeNotifier {
 
   void newDocument([DocumentTemplate template = DocumentTemplate.blank]) =>
       _load(
-        docx.create(template),
-        name: untitledName,
+        docx.create(
+          template,
+          language: locale.language,
+          content: template == DocumentTemplate.resume ? locale.resume : null,
+        ),
+        name: null,
         path: null,
         format: DocumentFormat.docx,
       );
@@ -124,10 +155,10 @@ class EditorSession extends ChangeNotifier {
   void open(OpenedFile file) {
     final format = DocumentFormat.fromFileName(file.name);
     if (format == null) {
-      throw UserFacingException(
+      throw DocumentProblemException(
         file.name.toLowerCase().endsWith('.doc')
-            ? 'Arquivos .doc antigos não são suportados. Abra no Word e salve como .docx.'
-            : 'O Voges Word abre arquivos .docx e .txt.',
+            ? DocumentProblem.legacyDoc
+            : DocumentProblem.unsupportedFormat,
       );
     }
     final LoadedDocument loaded;
@@ -135,28 +166,30 @@ class EditorSession extends ChangeNotifier {
       loaded = format == DocumentFormat.docx
           ? docx.decode(file.bytes)
           : plainText.decode(file.bytes);
-    } on FormatException catch (error) {
-      throw UserFacingException(error.message);
+    } on DocumentProblemException {
+      rethrow;
+    } on FormatException {
+      throw DocumentProblemException(DocumentProblem.damaged);
     }
     _load(loaded, name: file.name, path: file.path, format: format);
   }
 
   RecoverySnapshot snapshot() => RecoverySnapshot(
-    name: name,
+    name: _name ?? '',
     path: path,
     format: format,
     bytes: encode(format),
     savedAt: DateTime.now(),
   );
 
-  /// Reabre a cópia de recuperação como documento ainda não salvo.
+  /// Reopens the recovery copy as a document that is not saved yet.
   void restore(RecoverySnapshot snapshot, {required bool keepPath}) {
     final loaded = snapshot.format == DocumentFormat.docx
         ? docx.decode(snapshot.bytes)
         : plainText.decode(snapshot.bytes);
     _load(
       loaded,
-      name: snapshot.name,
+      name: snapshot.name.isEmpty ? null : snapshot.name,
       path: keepPath ? snapshot.path : null,
       format: snapshot.format,
     );
@@ -165,7 +198,7 @@ class EditorSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Retorna falso se o usuário cancelou.
+  /// Returns false if the user canceled.
   Future<bool> save() async {
     final target = path;
     if (target != null && files.canSaveInPlace) {
@@ -178,7 +211,7 @@ class EditorSession extends ChangeNotifier {
 
   Future<bool> saveAs(DocumentFormat target) async {
     final suggested =
-        '${isUntitled ? 'Documento' : baseName}.${target.extension}';
+        '${isUntitled ? locale.untitledFileName : baseName}.${target.extension}';
     if (!files.canSaveInPlace) {
       if (!await files.saveCopy(suggested, encode(target), target)) {
         return false;
@@ -244,7 +277,7 @@ class EditorSession extends ChangeNotifier {
     activeCell.value = null;
   }
 
-  /// Procura a tabela no texto principal e dentro de outras tabelas.
+  /// Looks for the table in the main text and inside other tables.
   void removeTable(TableModel table) {
     controller.removeTable(table.id);
     for (final other in tables.all) {
@@ -259,7 +292,7 @@ class EditorSession extends ChangeNotifier {
 
   void _load(
     LoadedDocument loaded, {
-    required String name,
+    required String? name,
     required String? path,
     required DocumentFormat format,
   }) {
@@ -283,7 +316,7 @@ class EditorSession extends ChangeNotifier {
     _changes = controller.document.changes.listen((change) {
       if (change.source == ChangeSource.local) _markDirty();
     });
-    this.name = name;
+    _name = name;
     this.path = path;
     this.format = format;
     dirty = false;

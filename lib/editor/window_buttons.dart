@@ -7,11 +7,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../l10n/l10n.dart';
 import 'ribbon/ribbon_style.dart';
 
 enum WindowButton { minimize, maximize, close }
 
-/// Lado e ordem dos botões da janela desenhados pelo app (Windows e Linux).
+/// Side and order of the window buttons the app draws (Windows and Linux).
 class WindowButtonsLayout {
   const WindowButtonsLayout({
     this.leading = const [],
@@ -26,7 +27,7 @@ class WindowButtonsLayout {
     ],
   );
 
-  /// Formato do GNOME (gtk-decoration-layout), ex.: "appmenu:minimize,close".
+  /// GNOME format (gtk-decoration-layout), e.g. "appmenu:minimize,close".
   factory WindowButtonsLayout.parse(String value) {
     List<WindowButton> buttons(String side) => [
       for (final name in side.split(','))
@@ -44,7 +45,7 @@ class WindowButtonsLayout {
   final List<WindowButton> leading;
   final List<WindowButton> trailing;
 
-  /// No Linux segue a configuração do sistema; sem ela, à direita.
+  /// On Linux it follows the system setting; without one, on the right.
   static Future<WindowButtonsLayout> forPlatform() async {
     if (kIsWeb || !Platform.isLinux) return right;
     try {
@@ -63,7 +64,7 @@ class WindowButtonsLayout {
   }
 }
 
-/// No macOS os botões são os do sistema, só centralizados na faixa azul.
+/// On macOS the buttons are the system ones, just centered in the blue ribbon.
 Future<void> placeNativeWindowButtons(double titleBarHeight) async {
   if (kIsWeb || !Platform.isMacOS) return;
   try {
@@ -105,10 +106,10 @@ class WindowButtons extends StatelessWidget {
           if (windows) const SizedBox(width: 8),
           for (final button in buttons)
             Tooltip(
-              message: _label(button),
+              message: _label(context.l10n, button),
               child: Semantics(
                 button: true,
-                label: _label(button),
+                label: _label(context.l10n, button),
                 child: windows
                     ? SizedBox(height: height, child: _windowsButton(button))
                     : SizedBox(
@@ -123,10 +124,10 @@ class WindowButtons extends StatelessWidget {
     );
   }
 
-  String _label(WindowButton button) => switch (button) {
-    WindowButton.minimize => 'Minimizar',
-    WindowButton.maximize => isMaximized ? 'Restaurar' : 'Maximizar',
-    WindowButton.close => 'Fechar',
+  String _label(AppLocalizations l10n, WindowButton button) => switch (button) {
+    WindowButton.minimize => l10n.minimize,
+    WindowButton.maximize => isMaximized ? l10n.restore : l10n.maximize,
+    WindowButton.close => l10n.close,
   };
 
   Widget _windowsButton(WindowButton button) => switch (button) {
@@ -149,7 +150,7 @@ class WindowButtons extends StatelessWidget {
   };
 }
 
-/// Botão redondo no estilo do GNOME.
+/// Round button in the GNOME style.
 class _RoundButton extends StatelessWidget {
   const _RoundButton(this.button, this.isMaximized);
 

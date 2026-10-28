@@ -10,8 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'system_fonts.dart';
 
-/// Fontes do Office trocadas pelas equivalentes de mesma métrica do Google
-/// Fonts, para o texto quebrar nas mesmas linhas que no Word.
+/// Office fonts swapped for their metric-compatible Google Fonts equivalents,
+/// so text wraps on the same lines as in Word.
 const metricCompatibleFonts = {
   'Arial': 'Arimo',
   'Calibri': 'Carlito',
@@ -22,8 +22,8 @@ const metricCompatibleFonts = {
   'Times New Roman': 'Tinos',
 };
 
-/// Fontes instaladas e do Google Fonts; as do Google são baixadas quando o
-/// documento ou o usuário usa, conferidas pelo hash e guardadas no aparelho.
+/// Installed fonts and Google Fonts; the Google ones are downloaded when the
+/// document or the user uses them, verified by hash and kept on the device.
 class FontCatalog extends ChangeNotifier {
   FontCatalog({
     Future<List<String>> Function() listSystemFonts = systemFontFamilies,
@@ -53,11 +53,11 @@ class FontCatalog extends ChangeNotifier {
 
   List<String> get systemFamilies => _system;
 
-  /// O terço mais popular do catálogo, as adicionadas pelo usuário e os
-  /// nomes do Office atendidos pelas equivalentes do Google.
+  /// The most popular third of the catalog, the ones the user added and the
+  /// Office names served by their Google equivalents.
   List<String> get googleFamilies => _googleNames;
 
-  /// Fora da lista: aparecem na busca, para adicionar.
+  /// Not in the list: they show up in search, to be added.
   List<String> get unlistedGoogleFamilies => _unlisted;
 
   Future<void> load() => _loading ??= _load();
@@ -102,7 +102,7 @@ class FontCatalog extends ChangeNotifier {
     );
   }
 
-  /// Põe uma fonte do Google na lista do usuário; fica salva no aparelho.
+  /// Adds a Google font to the user's list; it stays saved on the device.
   Future<void> add(String family) async {
     await load();
     if (!_google.containsKey(family) || !_added.add(family)) return;
@@ -125,7 +125,7 @@ class FontCatalog extends ChangeNotifier {
     }
   }
 
-  /// Pode ser desenhada agora, sem baixar nada.
+  /// Can be drawn now, without downloading anything.
   bool isReady(String family) =>
       _systemNames.contains(family) || _registered.contains(family);
 
@@ -135,7 +135,7 @@ class FontCatalog extends ChangeNotifier {
   List<String>? _filesFor(String family) =>
       _google[family] ?? _google[metricCompatibleFonts[family]];
 
-  /// Baixa (ou lê do cache) e registra a família; falso se não deu.
+  /// Downloads (or reads the cache) and registers the family; false on failure.
   Future<bool> ensureLoaded(String family) async {
     await load();
     if (isReady(family)) return true;
@@ -175,7 +175,9 @@ class FontCatalog extends ChangeNotifier {
       Uri.https('fonts.gstatic.com', '/s/a/$hash.ttf'),
     );
     if (!_matches(bytes, hash)) {
-      throw const FormatException('Fonte baixada não confere com o catálogo.');
+      throw const FormatException(
+        'The downloaded font does not match the catalog.',
+      );
     }
     if (cached != null) {
       await cached.parent.create(recursive: true);
@@ -185,6 +187,7 @@ class FontCatalog extends ChangeNotifier {
   }
 }
 
+/// Stored on the user's device; renaming it loses their data.
 const _addedKey = 'fontes_adicionadas';
 
 bool _matches(Uint8List bytes, String hash) =>

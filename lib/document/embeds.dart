@@ -10,15 +10,15 @@ abstract final class EmbedTypes {
   static const opaqueBlock = 'vw-block';
   static const opaqueInline = 'vw-inline';
 
-  /// Campo PAGE do Word: o número da página onde aparece.
+  /// Word's PAGE field: the number of the page it appears on.
   static const pageNumber = 'vw-page-number';
 
-  /// Ocupam a linha inteira; o resto são embutidos no meio do texto.
+  /// These take up a whole line; the rest are embeds inside the text.
   static const blockLevel = {table, sectionBreak, opaqueBlock};
 }
 
-/// Atributos invisíveis que guardam o que o editor não mostra, para o arquivo
-/// salvo continuar igual ao original.
+/// Invisible attributes that keep what the editor does not show, so the saved
+/// file stays the same as the original.
 abstract final class HiddenAttributes {
   static const paragraphProperties = 'vw-ppr';
   static const runProperties = 'vw-rpr';
@@ -27,19 +27,33 @@ abstract final class HiddenAttributes {
   static const drawing = 'vw-drawing';
   static const package = 'vw-pkg';
 
-  /// Cópias em pontos do espaçamento e dos recuos do parágrafo, só para a
-  /// tela; o arquivo continua vindo de [paragraphProperties].
+  /// Copies in points of the paragraph's spacing and indents, for the screen
+  /// only; the file still comes from [paragraphProperties].
   static const spaceBefore = 'vw-sb';
   static const spaceAfter = 'vw-sa';
   static const indentRight = 'vw-ir';
   static const firstLine = 'vw-fl';
 
-  /// Estilo dos parágrafos que não somam espaço entre si.
+  /// Style of the paragraphs that add no space between one another.
   static const contextualGroup = 'vw-ctx';
 }
 
-/// Conteúdo do Word que o editor exibe mas não edita (campos, sumário,
-/// equações, formas...).
+/// Kinds of protected content; the editor shows them in the user's language.
+abstract final class OpaqueLabels {
+  static const special = 'special';
+  static const tableOfContents = 'toc';
+  static const coverPage = 'cover';
+  static const bibliography = 'bibliography';
+  static const note = 'note';
+  static const chart = 'chart';
+  static const diagram = 'diagram';
+  static const textBox = 'textBox';
+  static const equation = 'equation';
+  static const object = 'object';
+}
+
+/// Word content the editor shows but does not edit (fields, table of contents,
+/// equations, shapes...).
 class OpaqueContent {
   const OpaqueContent({
     required this.xml,
@@ -75,7 +89,7 @@ class OpaqueContent {
   });
 }
 
-/// Primeira palavra da instrução de um campo do Word (PAGE, NUMPAGES...).
+/// First word of a Word field's instruction (PAGE, NUMPAGES...).
 String? fieldNameOf(String xml) {
   final simple = RegExp(r'w:instr="([^"]*)"').firstMatch(xml)?.group(1);
   final complex = RegExp(

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
+import 'package:intl/intl.dart';
 
 import '../../document/document_look.dart';
 import '../../document/page_setup.dart';
 import '../../fonts/font_catalog.dart';
+import '../../l10n/l10n.dart';
 import '../../spell/spell_checker.dart';
 import '../document_commands.dart';
 import '../editor_factory.dart';
@@ -41,15 +43,19 @@ class RibbonActions {
 }
 
 enum RibbonTab {
-  home('Início'),
-  insert('Inserir'),
-  layout('Layout'),
-  view('Exibir'),
-  table('Tabela');
+  home,
+  insert,
+  layout,
+  view,
+  table;
 
-  const RibbonTab(this.label);
-
-  final String label;
+  String label(AppLocalizations l10n) => switch (this) {
+    home => l10n.tabHome,
+    insert => l10n.tabInsert,
+    layout => l10n.tabLayout,
+    view => l10n.tabView,
+    table => l10n.tabTable,
+  };
 }
 
 const zoomLevels = [0.5, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
@@ -73,52 +79,94 @@ const _sizes = <num>[
 ];
 
 const _quickTextColors = [
-  ColorChoice('#C00000', 'Vermelho escuro'),
-  ColorChoice('#0070C0', 'Azul'),
-  ColorChoice('#00B050', 'Verde'),
-  ColorChoice('#ED7D31', 'Laranja'),
+  ColorChoice('#C00000', ColorName.darkRed),
+  ColorChoice('#0070C0', ColorName.blue),
+  ColorChoice('#00B050', ColorName.green),
+  ColorChoice('#ED7D31', ColorName.orange),
 ];
 
 const _textPalette = [
-  ColorChoice('#000000', 'Preto'),
-  ColorChoice('#595959', 'Cinza escuro'),
-  ColorChoice('#A6A6A6', 'Cinza claro'),
-  ColorChoice('#C00000', 'Vermelho escuro'),
-  ColorChoice('#FF0000', 'Vermelho'),
-  ColorChoice('#ED7D31', 'Laranja'),
-  ColorChoice('#BF8F00', 'Dourado'),
-  ColorChoice('#00B050', 'Verde'),
-  ColorChoice('#00B0F0', 'Azul claro'),
-  ColorChoice('#0070C0', 'Azul'),
-  ColorChoice('#002060', 'Azul escuro'),
-  ColorChoice('#7030A0', 'Roxo'),
+  ColorChoice('#000000', ColorName.black),
+  ColorChoice('#595959', ColorName.darkGray),
+  ColorChoice('#A6A6A6', ColorName.lightGray),
+  ColorChoice('#C00000', ColorName.darkRed),
+  ColorChoice('#FF0000', ColorName.red),
+  ColorChoice('#ED7D31', ColorName.orange),
+  ColorChoice('#BF8F00', ColorName.gold),
+  ColorChoice('#00B050', ColorName.green),
+  ColorChoice('#00B0F0', ColorName.lightBlue),
+  ColorChoice('#0070C0', ColorName.blue),
+  ColorChoice('#002060', ColorName.darkBlue),
+  ColorChoice('#7030A0', ColorName.purple),
 ];
 
-/// Cores de realce do Word, que voltam como realce de verdade no .docx.
+/// Word's highlight colors, saved back as real highlighting in the .docx.
 const _quickHighlights = [
-  ColorChoice('#FFFF00', 'Amarelo'),
-  ColorChoice('#00FF00', 'Verde-limão'),
-  ColorChoice('#00FFFF', 'Turquesa'),
-  ColorChoice('#FF00FF', 'Rosa'),
+  ColorChoice('#FFFF00', ColorName.yellow),
+  ColorChoice('#00FF00', ColorName.brightGreen),
+  ColorChoice('#00FFFF', ColorName.turquoise),
+  ColorChoice('#FF00FF', ColorName.pink),
 ];
 
 const _highlightPalette = [
   ..._quickHighlights,
-  ColorChoice('#C0C0C0', 'Cinza'),
-  ColorChoice('#FF0000', 'Vermelho'),
-  ColorChoice('#0000FF', 'Azul'),
-  ColorChoice('#008000', 'Verde'),
-  ColorChoice('#800080', 'Violeta'),
-  ColorChoice('#808000', 'Oliva'),
+  ColorChoice('#C0C0C0', ColorName.gray),
+  ColorChoice('#FF0000', ColorName.red),
+  ColorChoice('#0000FF', ColorName.blue),
+  ColorChoice('#008000', ColorName.green),
+  ColorChoice('#800080', ColorName.violet),
+  ColorChoice('#808000', ColorName.olive),
 ];
 
 const _lineSpacings = [1.0, 1.15, 1.5, 2.0];
 
 String get _mod => isApplePlatform ? '⌘' : 'Ctrl+';
 
-String _number(num value) => value == value.roundToDouble()
-    ? '${value.toInt()}'
-    : '$value'.replaceAll('.', ',');
+String _pageNumberLabel(AppLocalizations l10n, PageNumberPosition position) =>
+    switch (position) {
+      PageNumberPosition.topRight => l10n.pageNumberTopRight,
+      PageNumberPosition.topCenter => l10n.pageNumberTopCenter,
+      PageNumberPosition.bottomRight => l10n.pageNumberBottomRight,
+      PageNumberPosition.bottomCenter => l10n.pageNumberBottomCenter,
+    };
+
+String _marginName(AppLocalizations l10n, MarginPresetName name) =>
+    switch (name) {
+      MarginPresetName.normal => l10n.marginsNormal,
+      MarginPresetName.abnt => l10n.marginsAbnt,
+      MarginPresetName.narrow => l10n.marginsNarrow,
+      MarginPresetName.moderate => l10n.marginsModerate,
+      MarginPresetName.wide => l10n.marginsWide,
+    };
+
+String _marginDescription(AppLocalizations l10n, EdgeInsets margins) {
+  String cm(double points) =>
+      NumberFormat('0.##', l10n.localeName).format(points / 28.35);
+  final EdgeInsets(:left, :top, :right, :bottom) = margins;
+  if (left == top && top == right && right == bottom) {
+    return l10n.marginsAllSides(cm(top));
+  }
+  if (top == bottom && left == right) {
+    return l10n.marginsTopBottomSides(cm(top), cm(left));
+  }
+  if (top == left && bottom == right) {
+    return l10n.marginsTopLeftBottomRight(cm(top), cm(bottom));
+  }
+  return l10n.marginsEachSide(cm(top), cm(bottom), cm(left), cm(right));
+}
+
+String _paperName(AppLocalizations l10n, PaperName name) => switch (name) {
+  PaperName.a4 => 'A4',
+  PaperName.letter => l10n.paperLetter,
+  PaperName.legal => l10n.paperLegal,
+  PaperName.a5 => 'A5',
+};
+
+String _paperDescription(AppLocalizations l10n, PaperSize paper) {
+  String cm(double points) =>
+      NumberFormat('0.#', l10n.localeName).format(points / 28.35);
+  return '${cm(paper.width)} × ${cm(paper.height)} cm';
+}
 
 class Ribbon extends StatefulWidget {
   const Ribbon({
@@ -231,15 +279,12 @@ class _RibbonState extends State<Ribbon> {
     if (await fonts.ensureLoaded(family) || !fonts.canProvide(family)) return;
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Não foi possível baixar a fonte "$family". Verifique a internet.',
-        ),
-      ),
+      SnackBar(content: Text(context.l10n.fontDownloadFailed(family))),
     );
   }
 
   Widget _homeTab() => _withController((controller) {
+    final l10n = context.l10n;
     final look = session.look;
     final header = controller.valueOf<int>(Attribute.header.key) ?? 0;
     final base = header == 0 ? look.body : look.heading(header);
@@ -264,7 +309,7 @@ class _RibbonState extends State<Ribbon> {
     return Row(
       children: [
         RibbonGroup(
-          label: 'Fonte',
+          label: l10n.groupFont,
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -287,7 +332,7 @@ class _RibbonState extends State<Ribbon> {
                   ),
                   const SizedBox(width: 6),
                   SizeStepper(
-                    label: _number(size),
+                    label: formatRibbonNumber(size, l10n.localeName),
                     sizes: _sizes,
                     current: size,
                     onSelected: (value) => _apply(
@@ -308,29 +353,29 @@ class _RibbonState extends State<Ribbon> {
                         (
                           Attribute.bold,
                           Icons.format_bold,
-                          'Negrito (${_mod}B)',
+                          '${l10n.bold} (${_mod}B)',
                         ),
                         (
                           Attribute.italic,
                           Icons.format_italic,
-                          'Itálico (${_mod}I)',
+                          '${l10n.italic} (${_mod}I)',
                         ),
                         (
                           Attribute.underline,
                           Icons.format_underlined,
-                          'Sublinhado (${_mod}U)',
+                          '${l10n.underline} (${_mod}U)',
                         ),
                         (
                           Attribute.strikeThrough,
                           Icons.strikethrough_s,
-                          'Tachado',
+                          l10n.strikethrough,
                         ),
                         (
                           Attribute.superscript,
                           Icons.superscript,
-                          'Sobrescrito',
+                          l10n.superscript,
                         ),
-                        (Attribute.subscript, Icons.subscript, 'Subscrito'),
+                        (Attribute.subscript, Icons.subscript, l10n.subscript),
                       ])
                     RibbonIconButton(
                       icon: icon,
@@ -340,7 +385,7 @@ class _RibbonState extends State<Ribbon> {
                     ),
                   RibbonIconButton(
                     icon: Icons.format_clear,
-                    tooltip: 'Limpar formatação',
+                    tooltip: l10n.clearFormatting,
                     onPressed: controller.clearFormatting,
                   ),
                 ],
@@ -350,18 +395,18 @@ class _RibbonState extends State<Ribbon> {
         ),
         const RibbonGroupDivider(),
         RibbonGroup(
-          label: 'Cor',
+          label: l10n.groupColor,
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               ColorRow(
                 icon: Icons.format_color_text,
-                tooltip: 'Cor da fonte',
+                tooltip: l10n.fontColor,
                 quick: _quickTextColors,
                 palette: _textPalette,
                 current: controller.valueOf<String>(Attribute.color.key),
                 lastUsed: _lastTextColor,
-                clearLabel: 'Automática',
+                clearLabel: l10n.automaticColor,
                 onSelected: (hex) => _apply(() {
                   if (hex != null) setState(() => _lastTextColor = hex);
                   controller.setInline(Attribute.color, hex);
@@ -370,12 +415,12 @@ class _RibbonState extends State<Ribbon> {
               const SizedBox(height: 6),
               ColorRow(
                 icon: Icons.border_color,
-                tooltip: 'Cor de realce',
+                tooltip: l10n.highlightColor,
                 quick: _quickHighlights,
                 palette: _highlightPalette,
                 current: controller.valueOf<String>(Attribute.background.key),
                 lastUsed: _lastHighlight,
-                clearLabel: 'Sem realce',
+                clearLabel: l10n.noHighlight,
                 onSelected: (hex) => _apply(() {
                   if (hex != null) setState(() => _lastHighlight = hex);
                   controller.setInline(Attribute.background, hex);
@@ -386,28 +431,23 @@ class _RibbonState extends State<Ribbon> {
         ),
         const RibbonGroupDivider(),
         RibbonGroup(
-          label: 'Parágrafo',
+          label: l10n.groupParagraph,
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (final (value, icon, tip, key) in const [
+                  for (final (value, icon, tip, key) in [
+                    ('left', Icons.format_align_left, l10n.alignLeft, 'L'),
                     (
-                      'left',
-                      Icons.format_align_left,
-                      'Alinhar à esquerda',
-                      'L',
+                      'center',
+                      Icons.format_align_center,
+                      l10n.alignCenter,
+                      'E',
                     ),
-                    ('center', Icons.format_align_center, 'Centralizar', 'E'),
-                    (
-                      'right',
-                      Icons.format_align_right,
-                      'Alinhar à direita',
-                      'R',
-                    ),
-                    ('justify', Icons.format_align_justify, 'Justificar', 'J'),
+                    ('right', Icons.format_align_right, l10n.alignRight, 'R'),
+                    ('justify', Icons.format_align_justify, l10n.justify, 'J'),
                   ])
                     RibbonIconButton(
                       icon: icon,
@@ -418,12 +458,12 @@ class _RibbonState extends State<Ribbon> {
                   const SizedBox(width: 6),
                   RibbonIconButton(
                     icon: Icons.format_indent_decrease,
-                    tooltip: 'Diminuir recuo',
+                    tooltip: l10n.decreaseIndent,
                     onPressed: () => controller.indentSelection(false),
                   ),
                   RibbonIconButton(
                     icon: Icons.format_indent_increase,
-                    tooltip: 'Aumentar recuo',
+                    tooltip: l10n.increaseIndent,
                     onPressed: () => controller.indentSelection(true),
                   ),
                 ],
@@ -434,13 +474,13 @@ class _RibbonState extends State<Ribbon> {
                 children: [
                   RibbonIconButton(
                     icon: Icons.format_list_bulleted,
-                    tooltip: 'Marcadores',
+                    tooltip: l10n.bullets,
                     selected: list == 'bullet',
                     onPressed: () => controller.toggleList(Attribute.ul),
                   ),
                   RibbonIconButton(
                     icon: Icons.format_list_numbered,
-                    tooltip: 'Numeração',
+                    tooltip: l10n.numbering,
                     selected: list == 'ordered',
                     onPressed: () => controller.toggleList(Attribute.ol),
                   ),
@@ -455,7 +495,7 @@ class _RibbonState extends State<Ribbon> {
                   ),
                   RibbonIconButton(
                     icon: Icons.insert_page_break_outlined,
-                    tooltip: 'Quebra de página ($_mod${'Enter'})',
+                    tooltip: '${l10n.pageBreak} ($_mod${'Enter'})',
                     onPressed: controller.insertPageBreak,
                   ),
                 ],
@@ -465,7 +505,7 @@ class _RibbonState extends State<Ribbon> {
         ),
         const RibbonGroupDivider(),
         RibbonGroup(
-          label: 'Estilos',
+          label: l10n.groupStyles,
           child: _StyleGallery(
             look: look,
             current: header,
@@ -476,112 +516,116 @@ class _RibbonState extends State<Ribbon> {
     );
   });
 
-  Widget _insertTab() => Row(
-    children: [
-      RibbonGroup(
-        label: 'Ilustrações',
-        child: RibbonBigButton(
-          icon: Icons.image_outlined,
-          label: 'Imagem',
-          tooltip: 'Inserir imagem ($_mod${'G'})',
-          onPressed: widget.actions.insertImage,
-        ),
-      ),
-      const RibbonGroupDivider(),
-      RibbonGroup(
-        label: 'Tabelas',
-        child: MenuAnchor(
-          style: ribbonMenuStyle(),
-          menuChildren: [
-            TableSizePicker(onSelected: widget.actions.insertTable),
-          ],
-          builder: (context, menu, _) => RibbonBigButton(
-            icon: Icons.table_chart_outlined,
-            label: 'Tabela',
-            onPressed: () => menu.isOpen ? menu.close() : menu.open(),
+  Widget _insertTab() {
+    final l10n = context.l10n;
+    return Row(
+      children: [
+        RibbonGroup(
+          label: l10n.groupIllustrations,
+          child: RibbonBigButton(
+            icon: Icons.image_outlined,
+            label: l10n.picture,
+            tooltip: '${l10n.insertPicture} ($_mod${'G'})',
+            onPressed: widget.actions.insertImage,
           ),
         ),
-      ),
-      const RibbonGroupDivider(),
-      RibbonGroup(
-        label: 'Links',
-        child: RibbonBigButton(
-          icon: Icons.link,
-          label: 'Link',
-          tooltip: 'Inserir link ($_mod${'K'})',
-          onPressed: widget.actions.editLink,
-        ),
-      ),
-      const RibbonGroupDivider(),
-      RibbonGroup(
-        label: 'Páginas',
-        child: RibbonBigButton(
-          icon: Icons.insert_page_break_outlined,
-          label: 'Quebra de página',
-          tooltip: 'Começa uma página nova ($_mod${'Enter'})',
-          onPressed: () =>
-              _apply(session.activeController.value.insertPageBreak),
-        ),
-      ),
-      const RibbonGroupDivider(),
-      RibbonGroup(
-        label: 'Cabeçalho e rodapé',
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RibbonBigButton(
-              icon: Icons.web_asset_outlined,
-              label: 'Cabeçalho e rodapé',
-              tooltip: 'Editar o texto do topo e da base das páginas',
-              onPressed: widget.actions.editHeadersFooters,
+        const RibbonGroupDivider(),
+        RibbonGroup(
+          label: l10n.groupTables,
+          child: MenuAnchor(
+            style: ribbonMenuStyle(),
+            menuChildren: [
+              TableSizePicker(onSelected: widget.actions.insertTable),
+            ],
+            builder: (context, menu, _) => RibbonBigButton(
+              icon: Icons.table_chart_outlined,
+              label: l10n.table,
+              onPressed: () => menu.isOpen ? menu.close() : menu.open(),
             ),
-            ListenableBuilder(
-              listenable: session,
-              builder: (context, _) {
-                final stories = session.headersFooters;
-                final current = pageNumberPosition(stories);
-                return _MenuBigButton(
-                  icon: Icons.tag,
-                  label: 'Número de página',
-                  items: [
-                    for (final position in PageNumberPosition.values)
-                      _MenuItem(
-                        position.label,
-                        checked: position == current,
-                        onTap: () => session.setHeadersFooters(
-                          withPageNumber(stories, position),
-                        ),
-                      ),
-                    _MenuItem(
-                      'Primeira página sem número',
-                      subtitle: 'Para capa',
-                      checked: stories.differentFirstPage,
-                      onTap: () => session.setHeadersFooters(
-                        stories.copyWith(
-                          differentFirstPage: !stories.differentFirstPage,
-                        ),
-                      ),
-                    ),
-                    if (current != null)
-                      _MenuItem(
-                        'Remover números',
-                        onTap: () => session.setHeadersFooters(
-                          withoutPageNumbers(stories),
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          ],
+          ),
         ),
-      ),
-    ],
-  );
+        const RibbonGroupDivider(),
+        RibbonGroup(
+          label: l10n.groupLinks,
+          child: RibbonBigButton(
+            icon: Icons.link,
+            label: l10n.link,
+            tooltip: '${l10n.insertLink} ($_mod${'K'})',
+            onPressed: widget.actions.editLink,
+          ),
+        ),
+        const RibbonGroupDivider(),
+        RibbonGroup(
+          label: l10n.groupPages,
+          child: RibbonBigButton(
+            icon: Icons.insert_page_break_outlined,
+            label: l10n.pageBreak,
+            tooltip: '${l10n.pageBreakTooltip} ($_mod${'Enter'})',
+            onPressed: () =>
+                _apply(session.activeController.value.insertPageBreak),
+          ),
+        ),
+        const RibbonGroupDivider(),
+        RibbonGroup(
+          label: l10n.groupHeaderFooter,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RibbonBigButton(
+                icon: Icons.web_asset_outlined,
+                label: l10n.headerFooter,
+                tooltip: l10n.headerFooterTooltip,
+                onPressed: widget.actions.editHeadersFooters,
+              ),
+              ListenableBuilder(
+                listenable: session,
+                builder: (context, _) {
+                  final stories = session.headersFooters;
+                  final current = pageNumberPosition(stories);
+                  return _MenuBigButton(
+                    icon: Icons.tag,
+                    label: l10n.pageNumber,
+                    items: [
+                      for (final position in PageNumberPosition.values)
+                        _MenuItem(
+                          _pageNumberLabel(l10n, position),
+                          checked: position == current,
+                          onTap: () => session.setHeadersFooters(
+                            withPageNumber(stories, position),
+                          ),
+                        ),
+                      _MenuItem(
+                        l10n.firstPageWithoutNumber,
+                        subtitle: l10n.forCoverPage,
+                        checked: stories.differentFirstPage,
+                        onTap: () => session.setHeadersFooters(
+                          stories.copyWith(
+                            differentFirstPage: !stories.differentFirstPage,
+                          ),
+                        ),
+                      ),
+                      if (current != null)
+                        _MenuItem(
+                          l10n.removePageNumbers,
+                          onTap: () => session.setHeadersFooters(
+                            withoutPageNumbers(stories),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _layoutTab() => ListenableBuilder(
     listenable: session,
     builder: (context, _) {
+      final l10n = context.l10n;
       final look = session.look;
       final landscape = look.isLandscape;
       final portraitWidth = landscape ? look.pageHeight : look.pageWidth;
@@ -589,18 +633,18 @@ class _RibbonState extends State<Ribbon> {
       return Row(
         children: [
           RibbonGroup(
-            label: 'Configurar página',
+            label: l10n.groupPageSetup,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 _MenuBigButton(
                   icon: Icons.border_outer,
-                  label: 'Margens',
+                  label: l10n.margins,
                   items: [
                     for (final preset in marginPresets)
                       _MenuItem(
-                        preset.name,
-                        subtitle: preset.description,
+                        _marginName(l10n, preset.name),
+                        subtitle: _marginDescription(l10n, preset.margins),
                         checked: preset.matches(look.margins),
                         onTap: () =>
                             session.setPageSetup(margins: preset.margins),
@@ -609,10 +653,10 @@ class _RibbonState extends State<Ribbon> {
                 ),
                 _MenuBigButton(
                   icon: Icons.screen_rotation_alt_outlined,
-                  label: 'Orientação',
+                  label: l10n.orientation,
                   items: [
                     _MenuItem(
-                      'Retrato',
+                      l10n.portrait,
                       checked: !landscape,
                       onTap: () {
                         session.setPageSetup(
@@ -622,7 +666,7 @@ class _RibbonState extends State<Ribbon> {
                       },
                     ),
                     _MenuItem(
-                      'Paisagem',
+                      l10n.landscape,
                       checked: landscape,
                       onTap: () {
                         session.setPageSetup(
@@ -635,12 +679,12 @@ class _RibbonState extends State<Ribbon> {
                 ),
                 _MenuBigButton(
                   icon: Icons.description_outlined,
-                  label: 'Tamanho',
+                  label: l10n.paperSize,
                   items: [
                     for (final paper in paperSizes)
                       _MenuItem(
-                        paper.name,
-                        subtitle: paper.description,
+                        _paperName(l10n, paper.name),
+                        subtitle: _paperDescription(l10n, paper),
                         checked: paper.matches(look.pageWidth, look.pageHeight),
                         onTap: () => session.setPageSetup(
                           width: landscape ? paper.height : paper.width,
@@ -658,6 +702,7 @@ class _RibbonState extends State<Ribbon> {
   );
 
   Widget _viewTab() {
+    final l10n = context.l10n;
     final zoom = widget.actions.zoom;
     final index = zoomLevels.indexWhere(
       (level) => (level - zoom).abs() < 0.001,
@@ -665,21 +710,21 @@ class _RibbonState extends State<Ribbon> {
     return Row(
       children: [
         RibbonGroup(
-          label: 'Modo de exibição',
+          label: l10n.groupViews,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               RibbonBigButton(
                 icon: Icons.auto_stories_outlined,
-                label: 'Páginas',
-                tooltip: 'Mostra o documento em páginas, como vai imprimir',
+                label: l10n.viewPages,
+                tooltip: l10n.viewPagesTooltip,
                 selected: widget.actions.pagesView,
                 onPressed: () => widget.actions.onPagesView(true),
               ),
               RibbonBigButton(
                 icon: Icons.view_day_outlined,
-                label: 'Contínuo',
-                tooltip: 'Texto corrido, sem divisão de páginas',
+                label: l10n.viewContinuous,
+                tooltip: l10n.viewContinuousTooltip,
                 selected: !widget.actions.pagesView,
                 onPressed: () => widget.actions.onPagesView(false),
               ),
@@ -688,13 +733,13 @@ class _RibbonState extends State<Ribbon> {
         ),
         const RibbonGroupDivider(),
         RibbonGroup(
-          label: 'Zoom',
+          label: l10n.groupZoom,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               RibbonIconButton(
                 icon: Icons.zoom_out,
-                tooltip: 'Diminuir zoom ($_mod-)',
+                tooltip: '${l10n.zoomOut} ($_mod-)',
                 onPressed: index > 0
                     ? () => widget.actions.onZoom(zoomLevels[index - 1])
                     : null,
@@ -709,7 +754,7 @@ class _RibbonState extends State<Ribbon> {
               ),
               RibbonIconButton(
                 icon: Icons.zoom_in,
-                tooltip: 'Aumentar zoom ($_mod=)',
+                tooltip: '${l10n.zoomIn} ($_mod=)',
                 onPressed: index < zoomLevels.length - 1
                     ? () => widget.actions.onZoom(zoomLevels[index + 1])
                     : null,
@@ -726,13 +771,13 @@ class _RibbonState extends State<Ribbon> {
         if (widget.spelling case final spelling?) ...[
           const RibbonGroupDivider(),
           RibbonGroup(
-            label: 'Revisão',
+            label: l10n.groupProofing,
             child: ListenableBuilder(
               listenable: spelling,
               builder: (context, _) => RibbonBigButton(
                 icon: Icons.spellcheck,
-                label: 'Ortografia',
-                tooltip: 'Sublinha em vermelho as palavras com erro',
+                label: l10n.spelling,
+                tooltip: l10n.spellingTooltip,
                 selected: spelling.enabled,
                 onPressed: () => spelling.enabled = !spelling.enabled,
               ),
@@ -744,6 +789,7 @@ class _RibbonState extends State<Ribbon> {
   }
 
   Widget _tableTab(TableCellRef cell) {
+    final l10n = context.l10n;
     final table = cell.table;
     final tables = session.tables;
     final merged = table.hasMergedCells;
@@ -757,22 +803,22 @@ class _RibbonState extends State<Ribbon> {
     return Row(
       children: [
         RibbonGroup(
-          label: 'Linhas e colunas',
+          label: l10n.groupRowsColumns,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               RibbonBigButton(
                 icon: Icons.vertical_align_top,
-                label: 'Acima',
-                tooltip: 'Inserir linha acima',
+                label: l10n.rowAbove,
+                tooltip: l10n.insertRowAbove,
                 onPressed: () => change(
                   () => tables.insertRow(table, cell.row, copyFrom: cell.row),
                 ),
               ),
               RibbonBigButton(
                 icon: Icons.vertical_align_bottom,
-                label: 'Abaixo',
-                tooltip: 'Inserir linha abaixo',
+                label: l10n.rowBelow,
+                tooltip: l10n.insertRowBelow,
                 onPressed: () => change(
                   () =>
                       tables.insertRow(table, cell.row + 1, copyFrom: cell.row),
@@ -780,10 +826,10 @@ class _RibbonState extends State<Ribbon> {
               ),
               RibbonBigButton(
                 icon: Icons.border_left,
-                label: 'À esquerda',
+                label: l10n.columnLeft,
                 tooltip: merged
-                    ? 'Indisponível em tabela com células mescladas'
-                    : 'Inserir coluna à esquerda',
+                    ? l10n.unavailableWithMergedCells
+                    : l10n.insertColumnLeft,
                 onPressed: merged
                     ? null
                     : () =>
@@ -791,10 +837,10 @@ class _RibbonState extends State<Ribbon> {
               ),
               RibbonBigButton(
                 icon: Icons.border_right,
-                label: 'À direita',
+                label: l10n.columnRight,
                 tooltip: merged
-                    ? 'Indisponível em tabela com células mescladas'
-                    : 'Inserir coluna à direita',
+                    ? l10n.unavailableWithMergedCells
+                    : l10n.insertColumnRight,
                 onPressed: merged
                     ? null
                     : () => change(
@@ -806,20 +852,20 @@ class _RibbonState extends State<Ribbon> {
         ),
         const RibbonGroupDivider(),
         RibbonGroup(
-          label: 'Excluir',
+          label: l10n.groupDelete,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               RibbonBigButton(
                 icon: Icons.table_rows_outlined,
-                label: 'Linha',
+                label: l10n.row,
                 onPressed: table.rows.length > 1
                     ? () => change(() => tables.removeRow(table, cell.row))
                     : null,
               ),
               RibbonBigButton(
                 icon: Icons.view_column_outlined,
-                label: 'Coluna',
+                label: l10n.column,
                 onPressed: merged || table.columnWidths.length <= 1
                     ? null
                     : () =>
@@ -827,7 +873,7 @@ class _RibbonState extends State<Ribbon> {
               ),
               RibbonBigButton(
                 icon: Icons.delete_outline,
-                label: 'Tabela',
+                label: l10n.table,
                 onPressed: widget.actions.removeTable,
               ),
             ],
@@ -863,7 +909,7 @@ class _TabButton extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           child: Text(
-            tab.label,
+            tab.label(context.l10n),
             style: (active ? RibbonText.activeTab : RibbonText.tab).copyWith(
               color: contextual && !active ? const Color(0xFFFFE08A) : null,
             ),
@@ -897,13 +943,13 @@ class _LineSpacingMenu extends StatelessWidget {
                   : Colors.transparent,
             ),
             child: Text(
-              value.toStringAsFixed(value == 1.15 ? 2 : 1).replaceAll('.', ','),
+              NumberFormat('0.0#', context.l10n.localeName).format(value),
             ),
           ),
       ],
       builder: (context, menu, _) => RibbonIconButton(
         icon: Icons.format_line_spacing,
-        tooltip: 'Espaçamento entre linhas',
+        tooltip: context.l10n.lineSpacing,
         onPressed: () => menu.isOpen ? menu.close() : menu.open(),
       ),
     );
@@ -971,7 +1017,7 @@ class _MenuBigButton extends StatelessWidget {
   }
 }
 
-/// Galeria de estilos com prévia "Abcd", como a do Word.
+/// Style gallery with an "Abcd" preview, like Word's.
 class _StyleGallery extends StatelessWidget {
   const _StyleGallery({
     required this.look,
@@ -985,7 +1031,11 @@ class _StyleGallery extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const names = ['Normal', 'Título 1', 'Título 2', 'Título 3'];
+    final l10n = context.l10n;
+    final names = [
+      l10n.styleNormal,
+      for (var level = 1; level <= 3; level++) l10n.styleHeading(level),
+    ];
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [

@@ -13,7 +13,7 @@ class TextLook {
     this.firstLine = 0,
   });
 
-  /// Pontos.
+  /// In points.
   final double fontSize;
   final String? fontFamily;
   final Color color;
@@ -23,11 +23,11 @@ class TextLook {
   final double spaceAfter;
   final double indentRight;
 
-  /// Negativo é recuo deslocado.
+  /// Negative means a hanging indent.
   final double firstLine;
 }
 
-/// Medidas da página e aparência base do documento, tudo em pontos.
+/// Page measurements and the document's base look, all in points.
 class DocumentLook {
   const DocumentLook({
     this.pageWidth = 595.3,
@@ -48,7 +48,7 @@ class DocumentLook {
   final TextLook body;
   final Map<int, TextLook> headings;
 
-  /// Múltiplo de linha simples.
+  /// Multiple of single line spacing.
   final double lineSpacing;
 
   double get contentWidth => pageWidth - margins.horizontal;
@@ -80,7 +80,7 @@ class DocumentLook {
       );
 }
 
-/// Proporção usada quando o documento não define estilos de título.
+/// Scale used when the document defines no heading styles.
 double headingScale(int level) => switch (level) {
   1 => 1.6,
   2 => 1.35,

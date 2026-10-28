@@ -15,7 +15,7 @@ const _mimeByExtension = {
   'svg': 'image/svg+xml',
 };
 
-/// Formatos que o Flutter consegue desenhar e o Word consegue abrir.
+/// Formats that Flutter can draw and Word can open.
 const insertableImageExtensions = ['png', 'jpg', 'jpeg', 'gif', 'bmp'];
 
 String mimeForPath(String path) {
@@ -66,7 +66,7 @@ String dataUriFromMime(Uint8List bytes, String mime) =>
   }
 }
 
-/// Tamanho em pixels lido do cabeçalho (PNG, JPEG, GIF e BMP).
+/// Size in pixels, read from the header (PNG, JPEG, GIF and BMP).
 ({int width, int height})? imagePixelSize(Uint8List bytes) {
   final data = ByteData.sublistView(bytes);
   if (bytes.length > 24 && bytes[0] == 0x89 && bytes[1] == 0x50) {

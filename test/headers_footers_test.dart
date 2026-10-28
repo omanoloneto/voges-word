@@ -15,85 +15,102 @@ const _gif = 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('número de página no topo vai para o arquivo e volta como campo', () {
-    final codec = DocxCodec(TableStore());
-    final blank = codec.createEmpty();
-    final stories = withPageNumber(
-      blank.headersFooters,
-      PageNumberPosition.topRight,
-    ).copyWith(differentFirstPage: true);
+  test(
+    'a page number at the top goes into the file and comes back as a field',
+    () {
+      final codec = DocxCodec(TableStore());
+      final blank = codec.createEmpty();
+      final stories = withPageNumber(
+        blank.headersFooters,
+        PageNumberPosition.topRight,
+      ).copyWith(differentFirstPage: true);
 
-    final bytes = codec.encode(
-      Delta()..insert('Texto\n'),
-      source: blank.source,
-      headersFooters: stories,
-    );
-    final package = DocxPackage.decode(bytes);
-    final document = package.text('word/document.xml')!;
-    expect(document, contains('<w:headerReference w:type="default"'));
-    expect(document, contains('<w:titlePg/>'));
-    expect(package.text('[Content_Types].xml'), contains('/word/header1.xml'));
-    expect(package.text('word/header1.xml'), contains(' PAGE '));
+      final bytes = codec.encode(
+        Delta()..insert('Texto\n'),
+        source: blank.source,
+        headersFooters: stories,
+      );
+      final package = DocxPackage.decode(bytes);
+      final document = package.text('word/document.xml')!;
+      expect(document, contains('<w:headerReference w:type="default"'));
+      expect(document, contains('<w:titlePg/>'));
+      expect(
+        package.text('[Content_Types].xml'),
+        contains('/word/header1.xml'),
+      );
+      expect(package.text('word/header1.xml'), contains(' PAGE '));
 
-    final reopened = codec.decode(bytes).headersFooters;
-    expect(reopened.differentFirstPage, isTrue);
-    expect(pageNumberPosition(reopened), PageNumberPosition.topRight);
-    expect(reopened.headers[PageVariant.normal]?.partPath, 'word/header1.xml');
-  });
+      final reopened = codec.decode(bytes).headersFooters;
+      expect(reopened.differentFirstPage, isTrue);
+      expect(pageNumberPosition(reopened), PageNumberPosition.topRight);
+      expect(
+        reopened.headers[PageVariant.normal]?.partPath,
+        'word/header1.xml',
+      );
+    },
+  );
 
-  test('mover o número para o rodapé tira do cabeçalho; remover tira tudo', () {
-    const empty = HeadersFooters();
-    final top = withPageNumber(empty, PageNumberPosition.topCenter);
-    final bottom = withPageNumber(top, PageNumberPosition.bottomRight);
+  test(
+    'moving the number to the footer takes it off the header; removing clears both',
+    () {
+      const empty = HeadersFooters();
+      final top = withPageNumber(empty, PageNumberPosition.topCenter);
+      final bottom = withPageNumber(top, PageNumberPosition.bottomRight);
 
-    expect(pageNumberPosition(bottom), PageNumberPosition.bottomRight);
-    final header = bottom.headers[PageVariant.normal]!.delta.toList();
-    expect(header.any(isPageNumberOperation), isFalse);
-    expect(pageNumberPosition(withoutPageNumbers(bottom)), isNull);
-  });
+      expect(pageNumberPosition(bottom), PageNumberPosition.bottomRight);
+      final header = bottom.headers[PageVariant.normal]!.delta.toList();
+      expect(header.any(isPageNumberOperation), isFalse);
+      expect(pageNumberPosition(withoutPageNumbers(bottom)), isNull);
+    },
+  );
 
-  test('só regrava o cabeçalho editado; os outros voltam iguais', () {
-    final codec = DocxCodec(TableStore());
-    final blank = codec.createEmpty();
-    HeaderFooterStory story(String text) =>
-        HeaderFooterStory(delta: Delta()..insert('$text\n'), edited: true);
-    final first = codec.encode(
-      Delta()..insert('Texto\n'),
-      source: blank.source,
-      headersFooters: blank.headersFooters.copyWith(
-        headers: {PageVariant.normal: story('Cabeçalho')},
-        footers: {PageVariant.normal: story('Rodapé')},
-      ),
-    );
-    final loaded = codec.decode(first);
-    final footerPath =
-        loaded.headersFooters.footers[PageVariant.normal]!.partPath!;
-    final footerBefore = DocxPackage.decode(first).parts[footerPath];
+  test(
+    'only the edited header is rewritten; the others come back unchanged',
+    () {
+      final codec = DocxCodec(TableStore());
+      final blank = codec.createEmpty();
+      HeaderFooterStory story(String text) =>
+          HeaderFooterStory(delta: Delta()..insert('$text\n'), edited: true);
+      final first = codec.encode(
+        Delta()..insert('Texto\n'),
+        source: blank.source,
+        headersFooters: blank.headersFooters.copyWith(
+          headers: {PageVariant.normal: story('Header')},
+          footers: {PageVariant.normal: story('Footer')},
+        ),
+      );
+      final loaded = codec.decode(first);
+      final footerPath =
+          loaded.headersFooters.footers[PageVariant.normal]!.partPath!;
+      final footerBefore = DocxPackage.decode(first).parts[footerPath];
 
-    final header = loaded.headersFooters.headers[PageVariant.normal]!;
-    final second = codec.encode(
-      loaded.delta,
-      source: loaded.source,
-      headersFooters: loaded.headersFooters.copyWith(
-        headers: {
-          PageVariant.normal: HeaderFooterStory(
-            delta: Delta()..insert('Novo cabeçalho\n'),
-            partPath: header.partPath,
-            edited: true,
-          ),
-        },
-      ),
-    );
-    final package = DocxPackage.decode(second);
-    expect(package.parts[footerPath], footerBefore);
-    expect(package.text(header.partPath!), contains('Novo cabeçalho'));
-    expect(
-      RegExp('headerReference').allMatches(package.text('word/document.xml')!),
-      hasLength(1),
-    );
-  });
+      final header = loaded.headersFooters.headers[PageVariant.normal]!;
+      final second = codec.encode(
+        loaded.delta,
+        source: loaded.source,
+        headersFooters: loaded.headersFooters.copyWith(
+          headers: {
+            PageVariant.normal: HeaderFooterStory(
+              delta: Delta()..insert('New header\n'),
+              partPath: header.partPath,
+              edited: true,
+            ),
+          },
+        ),
+      );
+      final package = DocxPackage.decode(second);
+      expect(package.parts[footerPath], footerBefore);
+      expect(package.text(header.partPath!), contains('New header'));
+      expect(
+        RegExp(
+          'headerReference',
+        ).allMatches(package.text('word/document.xml')!),
+        hasLength(1),
+      );
+    },
+  );
 
-  test('imagem nova não sobrescreve a de um salvamento anterior', () {
+  test('a new picture does not overwrite one from an earlier save', () {
     final codec = DocxCodec(TableStore());
     final blank = codec.createEmpty();
     final first = codec.encode(
@@ -126,7 +143,7 @@ void main() {
     expect(images.last, contains(_gif));
   });
 
-  test('cabeçalho alto empurra o texto, como no Word', () {
+  test('a tall header pushes the text down, as in Word', () {
     final codec = DocxCodec(TableStore());
     final look = codec.createEmpty().look;
     final lines = List.generate(8, (i) => 'Linha $i\n').join();
@@ -144,7 +161,7 @@ void main() {
     expect(painter.footerTop, 0);
   });
 
-  test('lê campos PAGE de cabeçalhos que vieram do Word', () {
+  test('reads PAGE fields of headers that came from Word', () {
     final xml =
         '<w:fldSimple xmlns:w="w" w:instr=" PAGE   \\* MERGEFORMAT"><w:r><w:t>3</w:t></w:r></w:fldSimple>';
     expect(fieldNameOf(xml), 'PAGE');

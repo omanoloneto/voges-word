@@ -29,9 +29,7 @@ class DocxReader {
     final x = WordXml(root);
     final body = x.child(root, 'body');
     if (body == null) {
-      throw const FormatException(
-        'O documento do Word está vazio ou danificado.',
-      );
+      throw DocumentProblemException(DocumentProblem.damaged);
     }
 
     final relationships = package.relationships(path);
@@ -224,7 +222,7 @@ class _ReadContext {
   final RunProps normalRun;
   final ParagraphProps normalParagraph;
   final String? listParagraphStyleId;
-  final notices = <String>{};
+  final notices = <DocumentNotice>{};
   var footnotes = 0;
 
   String textOf(XmlElement element) {
@@ -309,13 +307,13 @@ class _BlockReader {
           _ignoredMarkers.contains(element.name.local)) {
         continue;
       } else {
-        _opaqueBlock(element, label: 'Conteúdo especial');
+        _opaqueBlock(element, label: OpaqueLabels.special);
       }
     }
   }
 
   void _noteTrackedChanges() =>
-      c.notices.add('As alterações controladas do documento foram aceitas.');
+      c.notices.add(DocumentNotice.trackedChangesAccepted);
 
   void _paragraph(XmlElement paragraph) {
     final pPr = x.child(paragraph, 'pPr');
@@ -441,9 +439,9 @@ class _BlockReader {
       _opaqueBlock(
         sdt,
         label: switch (gallery) {
-          'Table of Contents' => 'Sumário',
-          'Cover Pages' => 'Capa',
-          'Bibliographies' => 'Bibliografia',
+          'Table of Contents' => OpaqueLabels.tableOfContents,
+          'Cover Pages' => OpaqueLabels.coverPage,
+          'Bibliographies' => OpaqueLabels.bibliography,
           _ => gallery,
         },
       );
@@ -627,10 +625,10 @@ class _InlineReader {
         x.isW(element, 'bdo')) {
       _read(element, link);
     } else if (x.isW(element, 'ins') || x.isW(element, 'moveTo')) {
-      c.notices.add('As alterações controladas do documento foram aceitas.');
+      c.notices.add(DocumentNotice.trackedChangesAccepted);
       _read(element, link);
     } else if (x.isW(element, 'del') || x.isW(element, 'moveFrom')) {
-      c.notices.add('As alterações controladas do documento foram aceitas.');
+      c.notices.add(DocumentNotice.trackedChangesAccepted);
     } else if (x.isW(element, 'sdt')) {
       final content = x.child(element, 'sdtContent');
       if (content != null) _read(content, link);
@@ -638,7 +636,7 @@ class _InlineReader {
       final bookmark = x.attr(element, 'name');
       if (bookmark != null && bookmark != '_GoBack') bookmarks.add(bookmark);
     } else if (x.isW(element, 'commentRangeStart')) {
-      c.notices.add('Os comentários do documento não aparecem no Voges Word.');
+      c.notices.add(DocumentNotice.commentsHidden);
     } else if (_ignoredMarkers.contains(name)) {
       return;
     } else if (x.isW(element, 'fldSimple')) {
@@ -706,7 +704,7 @@ class _InlineReader {
     if (run.childElements.any(
       (e) => x.isW(e, 'commentReference') || x.isW(e, 'annotationRef'),
     )) {
-      c.notices.add('Os comentários do documento não aparecem no Voges Word.');
+      c.notices.add(DocumentNotice.commentsHidden);
       return;
     }
 
@@ -763,7 +761,7 @@ class _InlineReader {
           _drawing(alternative, xml);
         } else if (x.isW(child, 'footnoteReference') ||
             x.isW(child, 'endnoteReference')) {
-          _opaque(xml, '${++c.footnotes}', label: 'nota');
+          _opaque(xml, '${++c.footnotes}', label: OpaqueLabels.note);
         } else {
           _opaque(
             xml,
@@ -826,12 +824,12 @@ class _InlineReader {
   String? _labelFor(XmlElement element, {String? fallback}) {
     for (final descendant in [element, ...element.descendantElements]) {
       final uri = descendant.getAttribute('uri') ?? '';
-      if (uri.endsWith('/chart')) return 'gráfico';
-      if (uri.endsWith('/diagram')) return 'diagrama';
-      if (descendant.name.local == 'txbxContent') return 'caixa de texto';
-      if (descendant.name.local == 'oMath') return 'equação';
+      if (uri.endsWith('/chart')) return OpaqueLabels.chart;
+      if (uri.endsWith('/diagram')) return OpaqueLabels.diagram;
+      if (descendant.name.local == 'txbxContent') return OpaqueLabels.textBox;
+      if (descendant.name.local == 'oMath') return OpaqueLabels.equation;
     }
-    return fallback == null ? 'objeto' : null;
+    return fallback == null ? OpaqueLabels.object : null;
   }
 
   Map<String, dynamic>? _attributes(

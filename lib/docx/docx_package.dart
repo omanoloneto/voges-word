@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 
+import '../document/document_codec.dart';
 import 'word_xml.dart';
 
 class Relationship {
@@ -32,7 +33,7 @@ abstract final class RelationshipTypes {
   static const footer = '$_base/footer';
 }
 
-/// Arquivo .docx aberto: todas as partes do zip, para salvar sem perder nada.
+/// An open .docx file: every part of the zip, so saving loses nothing.
 class DocxPackage {
   DocxPackage(Map<String, Uint8List> parts, {String? id})
     : parts = Map.of(parts),
@@ -43,16 +44,14 @@ class DocxPackage {
     try {
       archive = ZipDecoder().decodeBytes(bytes);
     } catch (_) {
-      throw const FormatException(
-        'O arquivo não é um documento do Word válido.',
-      );
+      throw DocumentProblemException(DocumentProblem.notWordDocument);
     }
     final declaredSize = archive.files.fold<int>(
       0,
       (sum, file) => sum + file.size,
     );
     if (declaredSize > _maxUncompressedBytes) {
-      throw const FormatException('O arquivo é grande demais para abrir.');
+      throw DocumentProblemException(DocumentProblem.tooLarge);
     }
     final parts = <String, Uint8List>{
       for (final file in archive.files)
@@ -60,16 +59,14 @@ class DocxPackage {
     };
     final package = DocxPackage(parts);
     if (!parts.containsKey(package.mainDocumentPath)) {
-      throw const FormatException(
-        'O arquivo não é um documento do Word válido.',
-      );
+      throw DocumentProblemException(DocumentProblem.notWordDocument);
     }
     return package;
   }
 
   static int _counter = 0;
 
-  /// Protege contra arquivos compactados que explodem na memória.
+  /// Guards against compressed files that blow up in memory.
   static const _maxUncompressedBytes = 512 * 1024 * 1024;
 
   final Map<String, Uint8List> parts;
@@ -139,7 +136,7 @@ class DocxPackage {
     return segments.join('/');
   }
 
-  /// Gera o zip com [Content_Types].xml primeiro, como o Word espera.
+  /// Builds the zip with [Content_Types].xml first, as Word expects.
   Uint8List encode() {
     final archive = Archive();
     const contentTypes = '[Content_Types].xml';

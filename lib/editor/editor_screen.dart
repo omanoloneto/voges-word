@@ -16,6 +16,8 @@ import '../files/recent_files.dart';
 import '../files/recovery.dart';
 import '../files/system_open.dart';
 import '../fonts/font_catalog.dart';
+import '../l10n/app_language.dart';
+import '../l10n/l10n.dart';
 import '../print/page_renderer.dart';
 import '../print/system_print.dart';
 import '../spell/spell_checker.dart';
@@ -40,6 +42,7 @@ class EditorScreen extends StatefulWidget {
     required this.recents,
     required this.fonts,
     required this.launchArguments,
+    required this.language,
     this.windowButtons = WindowButtonsLayout.right,
     this.recovery,
     this.spelling,
@@ -51,6 +54,7 @@ class EditorScreen extends StatefulWidget {
   final RecentFiles recents;
   final FontCatalog fonts;
   final List<String> launchArguments;
+  final AppLanguage language;
   final WindowButtonsLayout windowButtons;
   final RecoveryStore? recovery;
   final SpellChecker? spelling;
@@ -60,7 +64,7 @@ class EditorScreen extends StatefulWidget {
 }
 
 class _EditorScreenState extends State<EditorScreen> with WindowListener {
-  final _focusNode = FocusNode(debugLabel: 'documento');
+  final _focusNode = FocusNode(debugLabel: 'document');
   final _scrollController = ScrollController();
   final _editorKey = GlobalKey<EditorState>();
   final _pageInfo = ValueNotifier<(int, int)?>(null);
@@ -110,6 +114,23 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final l10n = context.l10n;
+    session.locale = SessionLocale.of(l10n);
+    session.files.titles = FileDialogTitles(
+      open: l10n.openDocument,
+      insertPicture: l10n.insertPicture,
+      saveAs: l10n.saveAs,
+      export: l10n.export,
+    );
+    widget.spelling?.language = spellingLanguage(
+      Localizations.localeOf(context),
+    );
+    _updateTitle();
+  }
+
+  @override
   void dispose() {
     session.removeListener(_onSessionChanged);
     _watchedController?.removeListener(_schedulePageInfo);
@@ -132,18 +153,21 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     final store = widget.recovery;
     final snapshot = await store?.load();
     if (store == null || snapshot == null || !mounted) return;
-    if (!await askToRecover(context, snapshot.name, snapshot.savedAt)) {
+    final name = snapshot.name.isEmpty
+        ? context.l10n.untitledDocument
+        : snapshot.name;
+    if (!await askToRecover(context, name, snapshot.savedAt)) {
       await store.clear();
       return;
     }
     try {
-      // No macOS o sandbox só deixa gravar no arquivo escolhido pelo usuário.
+      // On macOS the sandbox only allows writing to the file the user picked.
       session.restore(
         snapshot,
         keepPath: defaultTargetPlatform != TargetPlatform.macOS,
       );
     } catch (_) {
-      _showError('Não foi possível recuperar o documento.');
+      _showError((l10n) => l10n.recoverFailed);
       await store.clear();
       return;
     }
@@ -270,7 +294,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     try {
       file = await session.files.pickDocument();
     } catch (error) {
-      _showError('Não foi possível abrir o arquivo.');
+      _showError((l10n) => l10n.openFailed);
       return;
     }
     if (file != null) _load(file);
@@ -281,9 +305,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     try {
       _load(await widget.recents.open(recent));
     } catch (error) {
-      _showError(
-        '"${recent.name}" não foi encontrado. Ele pode ter sido movido ou apagado.',
-      );
+      _showError((l10n) => l10n.recentNotFound(recent.name));
       await widget.recents.forget(recent);
     }
   }
@@ -295,13 +317,11 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   void _load(OpenedFile file) {
     try {
       session.open(file);
-    } on UserFacingException catch (error) {
-      _showError(error.message);
+    } on DocumentProblemException catch (error) {
+      _showError((l10n) => _problemMessage(l10n, error.problem, file.name));
       return;
     } catch (error) {
-      _showError(
-        'Não foi possível abrir "${file.name}". O arquivo pode estar danificado.',
-      );
+      _showError((l10n) => l10n.problemDamaged(file.name));
       return;
     }
     final path = file.path;
@@ -310,7 +330,17 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     if (session.notices.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(session.notices.join('\n')),
+          content: Text(
+            [
+              for (final notice in session.notices)
+                switch (notice) {
+                  DocumentNotice.trackedChangesAccepted =>
+                    context.l10n.noticeTrackedChangesAccepted,
+                  DocumentNotice.commentsHidden =>
+                    context.l10n.noticeCommentsHidden,
+                },
+            ].join('\n'),
+          ),
           duration: const Duration(seconds: 6),
         ),
       );
@@ -343,25 +373,37 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       if (saved && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Salvo como ${session.name}'),
+            content: Text(context.l10n.savedAs(session.name)),
             duration: const Duration(seconds: 2),
           ),
         );
       }
       return saved;
     } catch (error) {
-      _showError(
-        'Não foi possível salvar. Verifique se o arquivo está aberto em outro programa.',
-      );
+      _showError((l10n) => l10n.saveFailed);
       return false;
     }
   }
 
-  void _showError(String message) {
+  String _problemMessage(
+    AppLocalizations l10n,
+    DocumentProblem problem,
+    String name,
+  ) {
+    return switch (problem) {
+      DocumentProblem.legacyDoc => l10n.problemLegacyDoc,
+      DocumentProblem.unsupportedFormat => l10n.problemUnsupportedFormat,
+      DocumentProblem.notWordDocument => l10n.problemNotWordDocument,
+      DocumentProblem.tooLarge => l10n.problemTooLarge,
+      DocumentProblem.damaged => l10n.problemDamaged(name),
+    };
+  }
+
+  void _showError(String Function(AppLocalizations l10n) message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
+        content: Text(message(context.l10n)),
         backgroundColor: Theme.of(context).colorScheme.error,
       ),
     );
@@ -378,15 +420,13 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     try {
       image = await session.files.pickImage();
     } catch (error) {
-      _showError('Não foi possível abrir a imagem.');
+      _showError((l10n) => l10n.pictureOpenFailed);
       return;
     }
     if (image == null) return;
     final pixels = imagePixelSize(image.bytes);
     if (pixels == null) {
-      _showError(
-        'Formato de imagem não reconhecido. Use PNG, JPG, GIF ou BMP.',
-      );
+      _showError((l10n) => l10n.pictureFormatUnknown);
       return;
     }
     var width = pixels.width * 0.75;
@@ -509,6 +549,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     context,
     session: session,
     recents: widget.recents,
+    language: widget.language,
     actions: FilePanelActions(
       open: _open,
       save: _save,
@@ -522,7 +563,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     ),
   );
 
-  /// Monta o PDF com as fontes do documento prontas e o andamento na tela.
+  /// Builds the PDF with the document's fonts ready and progress on screen.
   Future<Uint8List?> _buildPdf() async {
     final progress = ValueNotifier<(int, int)?>(null);
     showPdfProgress(context, progress);
@@ -535,7 +576,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
         onProgress: (value) => progress.value = value,
       );
     } catch (error) {
-      _showError('Não foi possível montar o PDF.');
+      _showError((l10n) => l10n.pdfFailed);
       return null;
     } finally {
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
@@ -550,12 +591,12 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     if (pdf == null) return;
     try {
       if (await session.files.export(pdf, _pdfName, 'pdf') && mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('PDF salvo: $_pdfName')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.pdfSaved(_pdfName))),
+        );
       }
     } catch (error) {
-      _showError('Não foi possível salvar o PDF.');
+      _showError((l10n) => l10n.pdfSaveFailed);
     }
   }
 
@@ -569,7 +610,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     try {
       await printPdf(pdf, session.baseName);
     } catch (error) {
-      _showError('Não foi possível abrir a impressão.');
+      _showError((l10n) => l10n.printFailed);
     }
   }
 
@@ -606,7 +647,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
         ),
       );
     } catch (error) {
-      _showError('Não foi possível compartilhar.');
+      _showError((l10n) => l10n.shareFailed);
     }
   }
 
@@ -717,8 +758,8 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     );
   }
 
-  /// Sem a barra do sistema, a janela precisa das bordas para redimensionar:
-  /// no Windows só falta a de cima; no Linux, sem moldura, faltam todas.
+  /// Without the system title bar the window needs resize edges: on Windows
+  /// only the top one is missing; on Linux, with no frame, all of them are.
   Widget _resizable(Widget child) {
     if (!isDesktopPlatform || defaultTargetPlatform == TargetPlatform.macOS) {
       return child;

@@ -15,6 +15,7 @@ import 'package:voges_word/files/document_files.dart';
 import 'package:voges_word/files/recent_files.dart';
 import 'package:voges_word/files/system_open.dart';
 import 'package:voges_word/fonts/font_catalog.dart';
+import 'package:voges_word/l10n/app_language.dart';
 import 'package:voges_word/print/page_renderer.dart';
 import 'package:voges_word/editor/editor_screen.dart';
 
@@ -28,8 +29,8 @@ const _systemSample = [
   'Comic Sans MS',
 ];
 
-/// Gera imagens da tela para conferência visual; só roda com VW_SCREENSHOTS.
-/// `VW_SCREENSHOTS=pasta-de-saida VW_SAMPLES=pasta-com-docx flutter test test/screenshots_test.dart`
+/// Renders screen images for a visual check; runs only with VW_SCREENSHOTS.
+/// `VW_SCREENSHOTS=output-folder VW_SAMPLES=docx-folder flutter test test/screenshots_test.dart`
 void main() {
   final output = Platform.environment['VW_SCREENSHOTS'];
   final samples = Platform.environment['VW_SAMPLES'];
@@ -88,7 +89,7 @@ void main() {
     });
   }
 
-  testWidgets('telas', (tester) async {
+  testWidgets('screens', (tester) async {
     if (output == null) return;
     await tester.runAsync(loadFonts);
     final width =
@@ -132,6 +133,7 @@ void main() {
             cacheDirectory: () async => null,
           ),
           launchArguments: const [],
+          language: AppLanguage(),
         ),
       ),
     );
@@ -148,20 +150,20 @@ void main() {
       await tester.tap(find.text(tab));
       await capture(tester, 'aba-${tab.toLowerCase()}');
       if (tab != 'Inserir') continue;
-      await tester.tap(find.text('Número de página'));
+      await tester.tap(find.text('Page number'));
       await capture(tester, 'numero-pagina');
-      await tester.tap(find.text('No rodapé, à direita'));
+      await tester.tap(find.text('Bottom, right'));
       await tester.pumpAndSettle();
       await tester.tap(
-        find.byTooltip('Editar o texto do topo e da base das páginas'),
+        find.byTooltip('Edit the text at the top and bottom of the pages'),
       );
       await capture(tester, 'cabecalho-rodape');
-      await tester.tap(find.text('Cancelar'));
+      await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
     }
-    await tester.tap(find.text('Início'));
+    await tester.tap(find.text('Home'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Fonte'));
+    await tester.tap(find.byTooltip('Font'));
     await capture(tester, 'fontes');
     await tester.enterText(find.byType(TextField), 'ro');
     await capture(tester, 'fontes-busca');
@@ -169,7 +171,7 @@ void main() {
     await capture(tester, 'fontes-adicionar');
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Arquivo').first);
+    await tester.tap(find.text('File').first);
     await capture(tester, 'arquivo');
     await tester.tapAt(const Offset(10, 840));
     await tester.pumpAndSettle();

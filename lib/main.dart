@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -14,6 +16,8 @@ import 'files/recent_files.dart';
 import 'files/recovery.dart';
 import 'files/system_open.dart';
 import 'fonts/font_catalog.dart';
+import 'l10n/app_language.dart';
+import 'l10n/l10n.dart';
 import 'spell/spell_checker.dart';
 
 Future<void> main(List<String> arguments) async {
@@ -38,6 +42,10 @@ Future<void> main(List<String> arguments) async {
     );
   }
 
+  final language = AppLanguage();
+  await language.load();
+  final locale = language.resolve(PlatformDispatcher.instance.locales);
+
   final tables = TableStore();
   final docx = DocxCodec(tables);
   final files = DocumentFiles();
@@ -46,6 +54,7 @@ Future<void> main(List<String> arguments) async {
     plainText: PlainTextCodec(look: docx.createEmpty().look, tables: tables),
     files: files,
     tables: tables,
+    locale: SessionLocale.of(lookupAppLocalizations(locale)),
   );
 
   final recents = RecentFiles(files);
@@ -53,7 +62,11 @@ Future<void> main(List<String> arguments) async {
   final windowButtons = await WindowButtonsLayout.forPlatform();
   final fonts = FontCatalog()..load().ignore();
   final backend = platformSpellBackend();
-  final spelling = backend == null ? null : (SpellChecker(backend)..load());
+  final spelling = backend == null
+      ? null
+      : (SpellChecker(backend)
+          ..language = spellingLanguage(locale)
+          ..load());
 
   runApp(
     VogesWordApp(
@@ -62,6 +75,7 @@ Future<void> main(List<String> arguments) async {
       recents: recents,
       fonts: fonts,
       launchArguments: arguments,
+      language: language,
       windowButtons: windowButtons,
       recovery: RecoveryStore(),
       spelling: spelling,

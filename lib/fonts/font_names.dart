@@ -7,7 +7,7 @@ const _collectionTag = 0x74746366;
 const _nameTag = 0x6E616D65;
 const _fontExtensions = {'.ttf', '.otf', '.ttc', '.otc'};
 
-/// Famílias de todos os arquivos de fonte das pastas, em ordem alfabética.
+/// Families of every font file in the folders, in alphabetical order.
 List<String> fontFamiliesIn(Iterable<String> directories) {
   final families = <String>{};
   for (final path in directories) {
@@ -42,7 +42,7 @@ List<String> fontFamiliesIn(Iterable<String> directories) {
     ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
 }
 
-/// Nome da família de cada fonte do arquivo (.ttf, .otf ou coleção .ttc).
+/// Family name of each font in the file (.ttf, .otf or a .ttc collection).
 Set<String> familyNamesOf(ByteReader read) {
   final header = ByteData.sublistView(read(0, 12));
   if (header.getUint32(0) != _collectionTag) return {?_familyAt(read, 0)};
@@ -65,7 +65,8 @@ String? _familyAt(ByteReader read, int offset) {
   return null;
 }
 
-/// Prefere o nome tipográfico (id 16) ao antigo (id 1), e o inglês.
+/// Prefers the typographic name (id 16) over the old one (id 1), and the
+/// English name.
 String? _familyIn(Uint8List table) {
   final data = ByteData.sublistView(table);
   final count = data.getUint16(2);

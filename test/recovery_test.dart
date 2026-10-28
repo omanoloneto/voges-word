@@ -16,6 +16,7 @@ import 'package:voges_word/files/recent_files.dart';
 import 'package:voges_word/files/recovery.dart';
 import 'package:voges_word/files/system_open.dart';
 import 'package:voges_word/fonts/font_catalog.dart';
+import 'package:voges_word/l10n/app_language.dart';
 
 class _MemoryRecovery extends RecoveryStore {
   RecoverySnapshot? stored;
@@ -64,6 +65,7 @@ Future<void> _pump(
         readGoogleCatalog: () async => '',
       ),
       launchArguments: const [],
+      language: AppLanguage(),
       recovery: recovery,
     ),
   );
@@ -73,8 +75,8 @@ Future<void> _pump(
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('guarda, confere e apaga a cópia de recuperação', () async {
-    final folder = Directory.systemTemp.createTempSync('recuperacao');
+  test('saves, checks and deletes the recovery copy', () async {
+    final folder = Directory.systemTemp.createTempSync('recovery');
     addTearDown(() {
       if (folder.existsSync()) folder.deleteSync(recursive: true);
     });
@@ -82,8 +84,8 @@ void main() {
     final savedAt = DateTime(2026, 10, 27, 21, 30);
     await store.save(
       RecoverySnapshot(
-        name: 'contrato.docx',
-        path: '/tmp/contrato.docx',
+        name: 'contract.docx',
+        path: '/tmp/contract.docx',
         format: DocumentFormat.docx,
         bytes: Uint8List.fromList([1, 2, 3]),
         savedAt: savedAt,
@@ -91,8 +93,8 @@ void main() {
     );
 
     final loaded = await store.load();
-    expect(loaded?.name, 'contrato.docx');
-    expect(loaded?.path, '/tmp/contrato.docx');
+    expect(loaded?.name, 'contract.docx');
+    expect(loaded?.path, '/tmp/contract.docx');
     expect(loaded?.bytes, [1, 2, 3]);
     expect(loaded?.savedAt, savedAt);
 
@@ -103,9 +105,7 @@ void main() {
     expect(await store.load(), isNull);
   });
 
-  testWidgets('guarda uma cópia enquanto há alterações não salvas', (
-    tester,
-  ) async {
+  testWidgets('keeps a copy while there are unsaved changes', (tester) async {
     final session = _session();
     final recovery = _MemoryRecovery();
     await _pump(tester, session, recovery);
@@ -113,27 +113,27 @@ void main() {
     session.controller.replaceText(
       0,
       0,
-      'Texto novo',
-      const TextSelection.collapsed(offset: 10),
+      'New text',
+      const TextSelection.collapsed(offset: 8),
     );
     await tester.pump(const Duration(seconds: 16));
 
     final stored = recovery.stored;
     expect(stored, isNotNull);
     final reopened = DocxCodec(TableStore()).decode(stored!.bytes);
-    expect(Document.fromDelta(reopened.delta).toPlainText(), 'Texto novo\n');
+    expect(Document.fromDelta(reopened.delta).toPlainText(), 'New text\n');
   });
 
-  testWidgets('oferece recuperar ao abrir e reabre como não salvo', (
+  testWidgets('offers recovery on launch and reopens as unsaved', (
     tester,
   ) async {
     final tables = TableStore();
     final bytes = DocxCodec(
       tables,
-    ).encode(Delta()..insert('Parecer pela metade\n'));
+    ).encode(Delta()..insert('Half-written report\n'));
     final recovery = _MemoryRecovery()
       ..stored = RecoverySnapshot(
-        name: 'parecer.docx',
+        name: 'report.docx',
         format: DocumentFormat.docx,
         bytes: bytes,
         savedAt: DateTime(2026, 10, 27, 21, 30),
@@ -141,19 +141,19 @@ void main() {
     final session = _session();
     await _pump(tester, session, recovery);
 
-    expect(find.text('Recuperar documento?'), findsOneWidget);
-    await tester.tap(find.text('Recuperar'));
+    expect(find.text('Recover document?'), findsOneWidget);
+    await tester.tap(find.text('Recover'));
     await tester.pumpAndSettle();
 
-    expect(session.name, 'parecer.docx');
+    expect(session.name, 'report.docx');
     expect(session.dirty, isTrue);
-    expect(session.controller.document.toPlainText(), 'Parecer pela metade\n');
+    expect(session.controller.document.toPlainText(), 'Half-written report\n');
   });
 
-  testWidgets('descartar a recuperação apaga a cópia', (tester) async {
+  testWidgets('discarding the recovery deletes the copy', (tester) async {
     final recovery = _MemoryRecovery()
       ..stored = RecoverySnapshot(
-        name: 'rascunho.docx',
+        name: 'draft.docx',
         format: DocumentFormat.docx,
         bytes: DocxCodec(TableStore()).encode(Delta()..insert('x\n')),
         savedAt: DateTime(2026, 10, 27),
@@ -161,7 +161,7 @@ void main() {
     final session = _session();
     await _pump(tester, session, recovery);
 
-    await tester.tap(find.text('Descartar'));
+    await tester.tap(find.text('Discard'));
     await tester.pumpAndSettle();
 
     expect(recovery.stored, isNull);

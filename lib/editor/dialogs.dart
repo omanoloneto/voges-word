@@ -1,27 +1,29 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
+
 enum UnsavedChoice { save, discard, cancel }
 
 Future<UnsavedChoice> askToSave(BuildContext context, String name) async {
   final choice = await showDialog<UnsavedChoice>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Salvar alterações?'),
-      content: Text('Deseja salvar as alterações em "$name"?'),
+      title: Text(context.l10n.saveChangesTitle),
+      content: Text(context.l10n.saveChangesMessage(name)),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context, UnsavedChoice.cancel),
-          child: const Text('Cancelar'),
+          child: Text(context.l10n.cancel),
         ),
         TextButton(
           onPressed: () => Navigator.pop(context, UnsavedChoice.discard),
-          child: const Text('Não salvar'),
+          child: Text(context.l10n.dontSave),
         ),
         FilledButton(
           autofocus: true,
           onPressed: () => Navigator.pop(context, UnsavedChoice.save),
-          child: const Text('Salvar'),
+          child: Text(context.l10n.save),
         ),
       ],
     ),
@@ -29,34 +31,30 @@ Future<UnsavedChoice> askToSave(BuildContext context, String name) async {
   return choice ?? UnsavedChoice.cancel;
 }
 
-/// Verdadeiro para recuperar a cópia; falso para descartá-la.
+/// True to recover the copy; false to discard it.
 Future<bool> askToRecover(
   BuildContext context,
   String name,
   DateTime savedAt,
 ) async {
   final localizations = MaterialLocalizations.of(context);
-  final when =
-      '${localizations.formatShortDate(savedAt)} às '
-      '${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(savedAt))}';
+  final date = localizations.formatShortDate(savedAt);
+  final time = localizations.formatTimeOfDay(TimeOfDay.fromDateTime(savedAt));
   final recover = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
     builder: (context) => AlertDialog(
-      title: const Text('Recuperar documento?'),
-      content: Text(
-        '"$name" foi fechado sem salvar. Há uma cópia de $when. '
-        'Deseja recuperá-la?',
-      ),
+      title: Text(context.l10n.recoverTitle),
+      content: Text(context.l10n.recoverMessage(name, date, time)),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context, false),
-          child: const Text('Descartar'),
+          child: Text(context.l10n.discard),
         ),
         FilledButton(
           autofocus: true,
           onPressed: () => Navigator.pop(context, true),
-          child: const Text('Recuperar'),
+          child: Text(context.l10n.recover),
         ),
       ],
     ),
@@ -70,29 +68,29 @@ Future<ShareFormat?> askShareFormat(BuildContext context) =>
     showDialog<ShareFormat>(
       context: context,
       builder: (context) => SimpleDialog(
-        title: const Text('Compartilhar como'),
+        title: Text(context.l10n.shareAs),
         children: [
           SimpleDialogOption(
             onPressed: () => Navigator.pop(context, ShareFormat.docx),
-            child: const ListTile(
-              leading: Icon(Icons.description_outlined),
-              title: Text('Documento do Word (.docx)'),
-              subtitle: Text('Quem receber pode editar'),
+            child: ListTile(
+              leading: const Icon(Icons.description_outlined),
+              title: Text(context.l10n.shareWordDocument),
+              subtitle: Text(context.l10n.shareWordDocumentHint),
             ),
           ),
           SimpleDialogOption(
             onPressed: () => Navigator.pop(context, ShareFormat.pdf),
-            child: const ListTile(
-              leading: Icon(Icons.picture_as_pdf_outlined),
-              title: Text('PDF'),
-              subtitle: Text('Fica igual em qualquer aparelho'),
+            child: ListTile(
+              leading: const Icon(Icons.picture_as_pdf_outlined),
+              title: Text(context.l10n.sharePdf),
+              subtitle: Text(context.l10n.sharePdfHint),
             ),
           ),
         ],
       ),
     );
 
-/// Janela com o andamento enquanto o PDF é montado.
+/// Dialog showing the progress while the PDF is built.
 void showPdfProgress(
   BuildContext context,
   ValueListenable<(int, int)?> progress,
@@ -115,8 +113,8 @@ void showPdfProgress(
               Expanded(
                 child: Text(
                   value == null
-                      ? 'Preparando o PDF…'
-                      : 'Montando o PDF: página ${value.$1} de ${value.$2}',
+                      ? context.l10n.preparingPdf
+                      : context.l10n.buildingPdfPage(value.$1, value.$2),
                 ),
               ),
             ],
@@ -130,7 +128,7 @@ void showPdfProgress(
 class LinkRequest {
   const LinkRequest({required this.url, this.text});
 
-  /// Nulo remove o link.
+  /// Null removes the link.
   final String? url;
   final String? text;
 }
@@ -168,7 +166,7 @@ class _LinkDialogState extends State<_LinkDialog> {
     super.dispose();
   }
 
-  /// Endereço sem protocolo vira https; e-mail vira mailto.
+  /// An address without a protocol becomes https; an email becomes mailto.
   static String normalize(String value) {
     final url = value.trim();
     if (url.isEmpty ||
@@ -195,7 +193,11 @@ class _LinkDialogState extends State<_LinkDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.currentUrl == null ? 'Inserir link' : 'Editar link'),
+      title: Text(
+        widget.currentUrl == null
+            ? context.l10n.insertLink
+            : context.l10n.editLink,
+      ),
       content: SizedBox(
         width: 380,
         child: Column(
@@ -204,7 +206,7 @@ class _LinkDialogState extends State<_LinkDialog> {
             if (widget.needsText) ...[
               TextField(
                 controller: _text,
-                decoration: const InputDecoration(labelText: 'Texto exibido'),
+                decoration: InputDecoration(labelText: context.l10n.linkText),
               ),
               const SizedBox(height: 12),
             ],
@@ -212,9 +214,7 @@ class _LinkDialogState extends State<_LinkDialog> {
               controller: _url,
               autofocus: true,
               keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                labelText: 'Endereço (site ou e-mail)',
-              ),
+              decoration: InputDecoration(labelText: context.l10n.linkAddress),
               onSubmitted: (_) => _submit(),
             ),
           ],
@@ -225,13 +225,13 @@ class _LinkDialogState extends State<_LinkDialog> {
           TextButton(
             onPressed: () =>
                 Navigator.pop(context, const LinkRequest(url: null)),
-            child: const Text('Remover link'),
+            child: Text(context.l10n.removeLink),
           ),
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancelar'),
+          child: Text(context.l10n.cancel),
         ),
-        FilledButton(onPressed: _submit, child: const Text('OK')),
+        FilledButton(onPressed: _submit, child: Text(context.l10n.ok)),
       ],
     );
   }

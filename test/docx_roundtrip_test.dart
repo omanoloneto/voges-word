@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter_quill/flutter_quill.dart' show Document;
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter/painting.dart' show EdgeInsets;
+import 'package:flutter/widgets.dart' show Locale;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voges_word/docx/docx_codec.dart';
 import 'package:voges_word/docx/docx_package.dart';
@@ -13,9 +14,11 @@ import 'package:voges_word/docx/word_xml.dart';
 import 'package:voges_word/document/embeds.dart';
 import 'package:voges_word/document/plain_text_codec.dart';
 import 'package:voges_word/document/tables.dart';
+import 'package:voges_word/editor/template_content.dart';
+import 'package:voges_word/l10n/l10n.dart';
 import 'package:xml/xml.dart';
 
-// PNG 1x1 transparente.
+// Transparent 1x1 PNG.
 final _pixel = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
 );
@@ -73,7 +76,7 @@ void _expectValidPackage(Uint8List bytes) {
   for (final match in RegExp(
     r'r:(?:id|embed)="([^"]+)"',
   ).allMatches(package.text(package.mainDocumentPath)!)) {
-    expect(ids, contains(match[1]), reason: 'relação ${match[1]}');
+    expect(ids, contains(match[1]), reason: 'relationship ${match[1]}');
   }
 }
 
@@ -86,7 +89,7 @@ void main() {
     codec = DocxCodec(tables);
   });
 
-  test('documento novo usa o modelo padrão', () {
+  test('a new document uses the default template', () {
     final document = codec.createEmpty();
     expect(document.delta.toList().single.data, '\n');
     expect(document.look.body.fontFamily, 'Arial');
@@ -94,7 +97,7 @@ void main() {
     expect(document.look.headings[1]?.bold, isTrue);
   });
 
-  test('formatação sobrevive a salvar e abrir de novo', () {
+  test('formatting survives saving and opening again', () {
     final table = tables.createEmpty(rows: 2, columns: 2, totalWidth: 9000);
     table.rows[0].cells[0].controller.document.insert(0, 'Nome');
     table.rows[1].cells[1].controller.document.insert(0, 'Valor');
@@ -173,7 +176,7 @@ void main() {
     expect(visible, expected);
   });
 
-  test('salvar de novo preserva o xml original do que não é editado', () {
+  test('saving again keeps the original XML of what is not edited', () {
     final first = codec.encode(
       Delta()
         ..insert('Antes ')
@@ -189,10 +192,10 @@ void main() {
     final media = package.parts.keys.where(
       (name) => name.startsWith('word/media/'),
     );
-    expect(media.length, 1, reason: 'a imagem original é reaproveitada');
+    expect(media.length, 1, reason: 'the original picture is reused');
   });
 
-  test('documentos reais abrem e salvam sem erro', () {
+  test('real documents open and save without errors', () {
     final folder = Platform.environment['VW_SAMPLES'];
     if (folder == null) return;
     for (final file in Directory(folder).listSync().whereType<File>()) {
@@ -215,29 +218,32 @@ void main() {
     }
   });
 
-  test('tamanho, orientação e margens da aba Layout vão para o arquivo', () {
-    final document = codec.createEmpty();
-    final landscape = document.look.copyWith(
-      pageWidth: 841.9,
-      pageHeight: 595.3,
-      margins: const EdgeInsets.fromLTRB(85.05, 85.05, 56.7, 56.7),
-    );
-    final bytes = codec.encode(
-      document.delta,
-      source: document.source,
-      pageSetup: landscape,
-    );
-    _expectValidPackage(bytes);
-    final xml = DocxPackage.decode(bytes).text('word/document.xml')!;
-    expect(xml, contains('w:orient="landscape"'));
-    final reopened = codec.decode(bytes).look;
-    expect(reopened.pageWidth, closeTo(841.9, 0.1));
-    expect(reopened.pageHeight, closeTo(595.3, 0.1));
-    expect(reopened.margins.left, closeTo(85.05, 0.1));
-    expect(reopened.margins.bottom, closeTo(56.7, 0.1));
-  });
+  test(
+    'size, orientation and margins from the Layout tab go into the file',
+    () {
+      final document = codec.createEmpty();
+      final landscape = document.look.copyWith(
+        pageWidth: 841.9,
+        pageHeight: 595.3,
+        margins: const EdgeInsets.fromLTRB(85.05, 85.05, 56.7, 56.7),
+      );
+      final bytes = codec.encode(
+        document.delta,
+        source: document.source,
+        pageSetup: landscape,
+      );
+      _expectValidPackage(bytes);
+      final xml = DocxPackage.decode(bytes).text('word/document.xml')!;
+      expect(xml, contains('w:orient="landscape"'));
+      final reopened = codec.decode(bytes).look;
+      expect(reopened.pageWidth, closeTo(841.9, 0.1));
+      expect(reopened.pageHeight, closeTo(595.3, 0.1));
+      expect(reopened.margins.left, closeTo(85.05, 0.1));
+      expect(reopened.margins.bottom, closeTo(56.7, 0.1));
+    },
+  );
 
-  test('modelos de documento novo abrem com o estilo certo', () {
+  test('new document templates open with the right style', () {
     for (final template in DocumentTemplate.values) {
       final document = codec.create(template);
       _expectValidPackage(
@@ -249,9 +255,21 @@ void main() {
       closeTo(1.5, 0.01),
     );
     expect(codec.create(DocumentTemplate.singleSpaced).look.body.spaceAfter, 0);
-    expect(
-      codec.create(DocumentTemplate.resume).delta.toList().length,
-      greaterThan(10),
+    final resume = codec.create(
+      DocumentTemplate.resume,
+      content: resumeContent(lookupAppLocalizations(const Locale('es'))),
     );
+    expect(resume.delta.toList().length, greaterThan(10));
+    expect(
+      Document.fromDelta(resume.delta).toPlainText(),
+      contains('Experiencia'),
+    );
+  });
+
+  test('new documents carry the language for Word’s spell check', () {
+    final document = codec.create(DocumentTemplate.blank, language: 'pt-BR');
+    final bytes = codec.encode(document.delta, source: document.source);
+    final styles = DocxPackage.decode(bytes).text('word/styles.xml')!;
+    expect(styles, contains('<w:lang w:val="pt-BR"'));
   });
 }

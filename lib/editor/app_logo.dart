@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Faixas do ícone, do azul claro (topo) ao escuro (base).
+/// The icon's bands, from light blue (top) to dark (bottom).
 const logoBands = [
   Color(0xFF6BA9F3),
   Color(0xFF5290E8),
@@ -14,7 +14,7 @@ class AppLogo extends StatelessWidget {
 
   final double size;
 
-  /// Contorno claro para o ícone não sumir sobre o azul da faixa.
+  /// Light outline so the icon does not vanish against the blue ribbon.
   final bool outlined;
 
   @override

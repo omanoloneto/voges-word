@@ -3,19 +3,20 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 
+import '../l10n/l10n.dart';
 import 'spell_checker.dart';
 
 const _wavyColor = Color(0xFFE53935);
 
-/// Texto do parágrafo como o corretor recebe; embutidos viram espaço para as
-/// posições continuarem batendo.
+/// Paragraph text as the spell checker gets it; embeds become spaces so the
+/// offsets still match.
 String spellingTextOf(Line line) {
   final text = line.toPlainText();
   return (text.endsWith('\n') ? text.substring(0, text.length - 1) : text)
       .replaceAll('￼', ' ');
 }
 
-/// Sublinha em vermelho ondulado as palavras com erro.
+/// Underlines misspelled words with a wavy red line.
 TextSpanBuilder spellingSpanBuilder(SpellChecker checker) =>
     (context, node, nodeOffset, text, style, recognizer) {
       final line = node.parent;
@@ -74,7 +75,7 @@ TextSpanBuilder spellingSpanBuilder(SpellChecker checker) =>
       return TextSpan(style: style, children: children);
     };
 
-/// Menu do botão direito (ou do toque longo) com as sugestões da palavra.
+/// Right-click (or long-press) menu with suggestions for the word.
 QuillEditorContextMenuBuilder spellingContextMenu(SpellChecker checker) =>
     (context, state) {
       final items = [...state.contextMenuButtonItems];
@@ -97,7 +98,7 @@ QuillEditorContextMenuBuilder spellingContextMenu(SpellChecker checker) =>
               },
             ),
           ContextMenuButtonItem(
-            label: 'Ignorar "${word.text}"',
+            label: context.l10n.ignoreWord(word.text),
             onPressed: () {
               checker.ignore(word.text);
               state.hideToolbar();

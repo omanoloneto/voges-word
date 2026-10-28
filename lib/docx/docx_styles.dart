@@ -45,15 +45,15 @@ class RunProps {
   final bool underline;
   final bool strike;
 
-  /// Tamanho em pontos.
+  /// Size in points.
   final double size;
   final String? font;
 
-  /// RRGGBB; nulo significa automático.
+  /// RRGGBB; null means automatic.
   final String? color;
   final String? background;
 
-  /// 'super' ou 'sub'.
+  /// 'super' or 'sub'.
   final String? script;
 
   RunProps copyWith({
@@ -150,20 +150,20 @@ class ParagraphProps {
 
   final String align;
 
-  /// Múltiplo de linha simples (240 = 1,0).
+  /// Multiple of single line spacing (240 = 1.0).
   final double lineSpacing;
   final bool exactLineSpacing;
 
-  /// Espaços em pontos.
+  /// Spacing in points.
   final double spaceBefore;
   final double spaceAfter;
 
-  /// Recuos em twips; [firstLine] negativo é recuo deslocado.
+  /// Indents in twips; a negative [firstLine] is a hanging indent.
   final double indentLeft;
   final double indentRight;
   final double firstLine;
 
-  /// Sem espaço entre parágrafos do mesmo estilo.
+  /// No space between paragraphs of the same style.
   final bool contextualSpacing;
   final int? numId;
   final int level;
@@ -412,7 +412,7 @@ class DocxStyles {
     return props;
   }
 
-  /// Tabelas sem bordas próprias nem de estilo aparecem só com guias.
+  /// Tables with no borders of their own or from a style show only gridlines.
   bool tableStyleHasBorders(String? styleId) => _chain(
     styleId,
   ).any((style) => hasVisibleBorders(_x.child(style.element, 'tblPr')));

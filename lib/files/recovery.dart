@@ -23,8 +23,8 @@ class RecoverySnapshot {
   final DateTime savedAt;
 }
 
-/// Cópia do documento com alterações não salvas, guardada na pasta do app.
-/// Nunca escreve no arquivo do usuário: um erro na conversão estragaria o
+/// Copy of the document with unsaved changes, kept in the app's folder.
+/// It never writes to the user's file: a conversion error would ruin the
 /// original.
 class RecoveryStore {
   RecoveryStore({Future<Directory?> Function()? directory})
@@ -51,7 +51,7 @@ class RecoveryStore {
     );
   }
 
-  /// Nulo se não há cópia ou se ela ficou pela metade.
+  /// Null if there is no copy or it was left half-written.
   Future<RecoverySnapshot?> load() async {
     try {
       final directory = await _directory();
@@ -95,5 +95,7 @@ class RecoveryStore {
 Future<Directory?> _defaultDirectory() async {
   if (kIsWeb) return null;
   final support = await getApplicationSupportDirectory();
+  // This folder and its documento.bin and documento.json files are stored on
+  // the user's device; renaming any of them loses their data.
   return Directory('${support.path}/recuperacao');
 }

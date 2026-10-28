@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'document_files.dart';
 
-/// Arquivos que o sistema mandou abrir (duplo clique, "Abrir com").
+/// Files the system asked to open (double-click, "Open With").
 class SystemOpen {
   SystemOpen(this._files);
 
@@ -51,7 +51,7 @@ class SystemOpen {
     final bytes = item['bytes'] as Uint8List?;
     if (bytes != null) {
       return OpenedFile(
-        name: item['name'] as String? ?? 'Documento.docx',
+        name: item['name'] as String? ?? 'Document.docx',
         bytes: bytes,
       );
     }

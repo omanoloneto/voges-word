@@ -10,7 +10,7 @@ import 'header_footer_painter.dart';
 
 const pageGap = 24.0;
 
-/// Cabeçalho ou rodapé mais alto que a margem empurra o texto, como no Word.
+/// A header or footer taller than the margin pushes the text, as in Word.
 QuillPageLayout pageLayoutFor(
   DocumentLook look,
   double scale, {
@@ -47,7 +47,7 @@ bool _startsWithPageBreak(Node node) =>
     node.children.length > 1 &&
     _embedAt(node, first: true)?.value.type == EmbedTypes.pageBreak;
 
-/// Quebra de seção contínua não muda de página.
+/// A continuous section break does not start a new page.
 bool _endsWithPageBreak(Node node) {
   final embed = _embedAt(node, first: false);
   return switch (embed?.value.type) {
@@ -64,8 +64,8 @@ bool _isTableLine(Node node) =>
     node.children.length == 1 &&
     _embedAt(node, first: true)?.value.type == EmbedTypes.table;
 
-/// Linhas de tabela empilhadas; com páginas, a linha que não cabe vai
-/// inteira para a página seguinte, como no Word.
+/// Stacked table rows; with pages, a row that does not fit moves whole to the
+/// next page, as in Word.
 class PagedRows extends MultiChildRenderObjectWidget {
   const PagedRows({super.children, this.padding = 4, super.key});
 

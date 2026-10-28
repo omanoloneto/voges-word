@@ -51,7 +51,7 @@ class MainFlutterWindow: NSWindow {
     center.addObserver(forName: NSView.frameDidChangeNotification, object: container, queue: .main, using: place)
   }
 
-  /// Centraliza os botões de fechar, minimizar e zoom na faixa azul do app.
+  /// Centers the close, minimize and zoom buttons in the app's blue ribbon.
   private func placeWindowButtons() {
     guard titleBarHeight > 0, !placingButtons, !styleMask.contains(.fullScreen),
       let close = standardWindowButton(.closeButton),
