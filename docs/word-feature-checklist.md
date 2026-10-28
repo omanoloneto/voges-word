@@ -1,155 +1,155 @@
-# Checklist: as funções mais usadas do Word
+# Checklist: Word's most used features
 
-O Word tem mais de mil comandos, mas o uso se concentra em poucos. Os dados públicos da Microsoft vêm do Programa de Aperfeiçoamento da Experiência do Usuário, com todos os usuários do Word 2003 que aceitaram participar:
+Word has more than a thousand commands, but usage is concentrated in a few. Microsoft's public data comes from the Customer Experience Improvement Program, covering all Word 2003 users who agreed to take part:
 
-- Colar, Salvar, Copiar, Desfazer e Negrito, nessa ordem, somam cerca de **32%** de todos os comandos usados.
-- Colar sozinho passa de **11%**, mais que o dobro de Salvar, o segundo.
-- Depois dos 10 primeiros, a curva fica quase plana. O 11º é "Alterar o tamanho da fonte", o 100º é "Aceitar alteração" (controle de alterações) e o 400º é "Redefinir imagem".
-- Com esses dados a Microsoft montou a guia Página Inicial do Office 2007, onde ficam os comandos mais usados.
+- Paste, Save, Copy, Undo and Bold, in that order, add up to about **32%** of all commands used.
+- Paste alone is over **11%**, more than twice Save, the second one.
+- After the top 10, the curve is almost flat. Number 11 is "Change Font Size", number 100 is "Accept Change" (Track Changes) and number 400 is "Reset Picture".
+- With this data Microsoft built the Home tab of Office 2007, where the most used commands live.
 
-A Microsoft não publicou a lista completa. A ordem abaixo é uma estimativa feita a partir desses números e da organização da faixa de opções do Word:
+Microsoft did not publish the full list. The order below is an estimate based on these numbers and on how Word's ribbon is organized:
 
-1. a barra de acesso rápido e a guia Página Inicial;
-2. depois Inserir, Layout, Referências, Revisão e Exibir.
+1. the Quick Access Toolbar and the Home tab;
+2. then Insert, Layout, References, Review and View.
 
-Os "20%" são o princípio de Pareto: as poucas funções que cobrem quase todo o uso, e não uma conta exata.
+The "20%" is the Pareto principle: the few features that cover almost all usage, not an exact count.
 
-**Legenda:**
+**Legend:**
 
-- `[x]`: já temos.
-- `[ ]`: falta.
-- `[ ]` com **Parcial**: existe em parte; a nota diz o que falta.
+- `[x]`: done.
+- `[ ]`: missing.
+- `[ ]` with **Partial**: partly done; the note says what is missing.
 
-Situação em 28/10/2026, versão 1.0.0:
+Status as of October 28, 2026, version 1.0.0:
 
-| Situação | Itens |
+| Status | Items |
 | --- | --- |
-| Já temos | 39 |
-| Parcial | 8 |
-| Falta | 30 |
+| Done | 39 |
+| Partial | 8 |
+| Missing | 30 |
 | **Total** | **77** |
 
-## 1. O núcleo: os comandos mais usados
+## 1. The core: the most used commands
 
-- [x] **Colar** (Ctrl+V). É o comando mais usado do Word. Cola texto com a formatação de outros programas (negrito, cores, tamanho, fonte, links) e cola imagens.
-- [x] **Salvar** (Ctrl+S), em `.docx` (padrão) ou `.txt`.
-- [x] **Copiar** (Ctrl+C).
-- [x] **Desfazer e refazer** (Ctrl+Z e Ctrl+Y).
-- [x] **Negrito** (Ctrl+B).
-- [x] **Recortar** (Ctrl+X).
-- [x] **Itálico e sublinhado** (Ctrl+I e Ctrl+U).
-- [x] **Tamanho da fonte**, com os botões de aumentar e diminuir.
-- [x] **Fonte**, com busca: as fontes instaladas e 630 do Google Fonts. As outras do Google aparecem na busca.
-- [x] **Alinhamento**: à esquerda, centralizado, à direita e justificado (Ctrl+L, E, R, J).
-- [x] **Abrir** (Ctrl+O) e **arquivos recentes**.
-- [x] **Novo documento** (Ctrl+N), com os modelos em branco, espaçamento simples, trabalho escolar na ABNT e currículo.
-- [x] **Salvar como** (Ctrl+Shift+S).
-- [x] **Imprimir** (Ctrl+P). No Mac e no Android abre a janela de impressão do sistema; no Windows e no Linux abre o PDF no visualizador, e a impressão é feita por lá.
-- [x] **Selecionar tudo** (Ctrl+A).
+- [x] **Paste** (Ctrl+V). It is Word's most used command. Pastes text with formatting from other programs (bold, colors, size, font, links) and pastes images.
+- [x] **Save** (Ctrl+S), as `.docx` (default) or `.txt`.
+- [x] **Copy** (Ctrl+C).
+- [x] **Undo and Redo** (Ctrl+Z and Ctrl+Y).
+- [x] **Bold** (Ctrl+B).
+- [x] **Cut** (Ctrl+X).
+- [x] **Italic and Underline** (Ctrl+I and Ctrl+U).
+- [x] **Font Size**, with the Increase Font Size and Decrease Font Size buttons.
+- [x] **Font**, with search: the installed fonts and 630 from Google Fonts. The other Google fonts show up in search.
+- [x] **Alignment**: Align Left, Center, Align Right and Justify (Ctrl+L, E, R, J).
+- [x] **Open** (Ctrl+O) and **Recent files**.
+- [x] **New document** (Ctrl+N), with the blank, single spacing, school paper (ABNT, the Brazilian standard for academic papers) and résumé templates.
+- [x] **Save As** (Ctrl+Shift+S).
+- [x] **Print** (Ctrl+P). On Mac and Android it opens the system print dialog; on Windows and Linux it opens the PDF in the viewer, and you print from there.
+- [x] **Select All** (Ctrl+A).
 
-## 2. Formatação do texto
+## 2. Text formatting
 
-- [x] Cor da fonte.
-- [x] Realce.
-- [x] Tachado, sobrescrito e subscrito.
-- [x] Limpar formatação.
-- [ ] **Pincel de formatação**: copiar a formatação de um trecho e aplicar em outro.
-- [ ] **Maiúsculas e minúsculas**: o Shift+F3 do Word e o menu "Aa".
-- [ ] Janela "Fonte" completa: espaçamento entre letras, versalete, sublinhado duplo e outros tipos de sublinhado.
+- [x] Font Color.
+- [x] Text Highlight Color.
+- [x] Strikethrough, Superscript and Subscript.
+- [x] Clear All Formatting.
+- [ ] **Format Painter**: copy the formatting of one passage and apply it to another.
+- [ ] **Change Case**: Word's Shift+F3 and the "Aa" menu.
+- [ ] Full "Font" dialog: character spacing, small caps, double underline and other underline styles.
 
-## 3. Parágrafo
+## 3. Paragraph
 
-- [x] Marcadores e numeração.
-- [x] Listas em níveis: Tab no começo do item desce um nível e Shift+Tab sobe.
-- [x] Aumentar e diminuir recuo.
-- [x] Espaçamento entre linhas.
-- [ ] **Parcial: espaço antes e depois do parágrafo.** Aparece igual ao arquivo, mas não dá para mudar.
-- [ ] **Parcial: recuo da primeira linha.** Aparece igual ao arquivo, e o modelo de trabalho escolar já vem com 1,25 cm. Não há como ajustar na tela.
-- [ ] **Lista automática ao digitar** "- " ou "1. ". O editor de texto já suporta; falta ligar.
-- [ ] **Régua**, com recuos e tabulações ajustáveis. Hoje o Tab insere uma tabulação, mas as posições não podem ser mudadas.
-- [ ] Mostrar marcas de formatação (¶).
-- [ ] Bordas e sombreamento do parágrafo.
+- [x] Bullets and Numbering.
+- [x] Multilevel lists: Tab at the start of an item moves it down a level and Shift+Tab moves it up.
+- [x] Increase Indent and Decrease Indent.
+- [x] Line Spacing.
+- [ ] **Partial: spacing before and after the paragraph.** Shown as in the file, but it cannot be changed.
+- [ ] **Partial: first-line indent.** Shown as in the file, and the school paper template already comes with 1.25 cm. There is no way to adjust it on screen.
+- [ ] **Automatic lists while typing** "- " or "1. ". The text editor already supports it; it just needs to be turned on.
+- [ ] **Ruler**, with adjustable indents and tab stops. Today Tab inserts a tab, but the tab stop positions cannot be changed.
+- [ ] Show formatting marks (¶).
+- [ ] Paragraph borders and shading.
 
-## 4. Estilos
+## 4. Styles
 
-- [x] Galeria de estilos com Normal, Título 1, Título 2 e Título 3.
-- [ ] Mais estilos na galeria: Título, Subtítulo, Citação e os estilos do próprio documento.
-- [ ] Modificar um estilo e atualizar o estilo a partir da seleção.
+- [x] Style gallery with Normal, Heading 1, Heading 2 and Heading 3.
+- [ ] More styles in the gallery: Title, Subtitle, Quote and the document's own styles.
+- [ ] Modify a style and update a style to match the selection.
 
-## 5. Inserir
+## 5. Insert
 
-- [x] **Tabela**, com linhas e colunas novas e exclusão de linha, coluna ou tabela.
-- [x] **Imagem**, do arquivo (Ctrl+G) ou colada.
+- [x] **Table**, with new rows and columns and deleting a row, column or table.
+- [x] **Picture**, from a file (Ctrl+G) or pasted.
 - [x] **Link** (Ctrl+K).
-- [x] **Quebra de página** (Ctrl+Enter).
-- [x] **Cabeçalho e rodapé**, com primeira página diferente para a capa.
-- [x] **Número de página.**
-- [ ] **Parcial: mesclar e dividir células.** Células mescladas que vêm do Word aparecem e podem ser editadas, mas não dá para mesclar nem dividir.
-- [ ] **Parcial: bordas e cor das células.** Aparecem como no arquivo, mas não dá para mudar.
-- [ ] **Redimensionar e posicionar a imagem**, inclusive a quebra de texto em volta dela.
-- [ ] **Símbolos e caracteres especiais.**
-- [ ] Data e hora.
-- [ ] Caixa de texto, formas, WordArt, SmartArt e gráficos. Os que vêm do Word são preservados ao salvar, mas não podem ser editados.
-- [ ] Equações. As que vêm do Word são preservadas.
+- [x] **Page Break** (Ctrl+Enter).
+- [x] **Header and Footer**, with a different first page for the cover.
+- [x] **Page Number.**
+- [ ] **Partial: Merge Cells and Split Cells.** Merged cells that come from Word are shown and can be edited, but cells cannot be merged or split.
+- [ ] **Partial: cell borders and shading.** Shown as in the file, but they cannot be changed.
+- [ ] **Resize and position the picture**, including text wrapping around it.
+- [ ] **Symbols and special characters.**
+- [ ] Date & Time.
+- [ ] Text Box, Shapes, WordArt, SmartArt and Charts. The ones that come from Word are kept when saving, but cannot be edited.
+- [ ] Equations. The ones that come from Word are kept.
 
-## 6. Revisão
+## 6. Review
 
-- [x] **Localizar e substituir** (Ctrl+F e Ctrl+H).
-- [x] **Contagem de palavras**, na barra de status.
-- [ ] **Parcial: ortografia.** Funciona no Mac, no Android e no iPhone. Falta no Windows, no Linux e na web.
-- [ ] **Controlar alterações**: marcar o que mudou e aceitar ou rejeitar. "Aceitar alteração" é o 100º comando mais usado do Word. É o que o professor usa para corrigir e o que um grupo usa para revisar um trabalho.
-- [ ] **Comentários.**
-- [ ] Gramática.
-- [ ] Sinônimos.
-- [ ] Ler em voz alta e ditado.
+- [x] **Find and Replace** (Ctrl+F and Ctrl+H).
+- [x] **Word Count**, in the status bar.
+- [ ] **Partial: Spelling.** Works on Mac, Android and iPhone. Missing on Windows, Linux and the web.
+- [ ] **Track Changes**: mark what changed and accept or reject it. "Accept Change" is Word's 100th most used command. It is what teachers use to correct work and what a group uses to review a paper.
+- [ ] **Comments.**
+- [ ] Grammar.
+- [ ] Thesaurus.
+- [ ] Read Aloud and Dictate.
 
-## 7. Referências
+## 7. References
 
-- [ ] **Parcial: sumário.** O sumário que vem do Word aparece e é preservado, mas não pode ser criado nem atualizado.
-- [ ] **Parcial: notas de rodapé.** As que vêm do Word são preservadas, mas não dá para inserir nem editar.
-- [ ] Citações e referências bibliográficas no padrão da ABNT.
+- [ ] **Partial: Table of Contents.** A table of contents that comes from Word is shown and kept, but it cannot be created or updated.
+- [ ] **Partial: Footnotes.** The ones that come from Word are kept, but they cannot be inserted or edited.
+- [ ] Citations and bibliography following ABNT.
 
-## 8. Layout da página
+## 8. Page layout
 
-- [x] Margens: Normal, ABNT, Estreita, Moderada e Larga.
-- [x] Orientação: retrato ou paisagem.
-- [x] Tamanho do papel: A4, Carta, Ofício e A5.
-- [ ] Colunas e quebras de seção. As do Word são preservadas.
-- [ ] Hifenização.
-- [ ] Marca d'água, cor e bordas da página.
+- [x] Margins: Normal, ABNT, Narrow, Moderate and Wide.
+- [x] Orientation: Portrait or Landscape.
+- [x] Paper size: A4, Letter, Legal and A5.
+- [ ] Columns and section breaks. The ones from Word are kept.
+- [ ] Hyphenation.
+- [ ] Watermark, Page Color and Page Borders.
 
-## 9. Exibir
+## 9. View
 
-- [x] Zoom de 50% a 200% (Ctrl+= e Ctrl+-).
-- [x] Modos de exibição: páginas, como vai sair na impressão, e contínuo, com texto corrido.
-- [ ] Painel de navegação pelos títulos.
-- [ ] Modo de leitura ou de foco.
+- [x] Zoom from 50% to 200% (Ctrl+= and Ctrl+-).
+- [x] Views: pages, as it will look when printed, and continuous, with flowing text.
+- [ ] Navigation Pane by headings.
+- [ ] Read Mode or Focus.
 
-## 10. Arquivo e segurança
+## 10. File and security
 
-- [x] **Exportar PDF**, igual à tela e com texto pesquisável.
-- [x] **Recuperação**: se o app fecha sem salvar, oferece recuperar o documento ao abrir de novo.
-- [ ] **Parcial: compartilhar** como `.docx` ou PDF. Funciona em todos os sistemas, menos no Linux.
-- [ ] **Abrir `.doc`** (Word 97–2003), **`.odt`** e **`.rtf`**.
-- [ ] Salvar em `.odt`, `.rtf` ou HTML.
-- [ ] Salvamento automático no próprio arquivo. Hoje o app guarda só uma cópia de recuperação e nunca grava no arquivo do usuário sozinho, por decisão do projeto.
-- [ ] Proteger o documento com senha.
-- [ ] Nuvem e edição em conjunto, como OneDrive e coautoria.
+- [x] **Export PDF**, matching the screen and with searchable text.
+- [x] **Recovery**: if the app closes without saving, it offers to recover the document the next time it opens.
+- [ ] **Partial: Share** as `.docx` or PDF. Works on every system except Linux.
+- [ ] **Open `.doc`** (Word 97–2003), **`.odt`** and **`.rtf`**.
+- [ ] Save as `.odt`, `.rtf` or HTML.
+- [ ] AutoSave to the file itself. Today the app only keeps a recovery copy and never writes to the user's file on its own, by design.
+- [ ] Protect the document with a password.
+- [ ] Cloud and collaborative editing, such as OneDrive and co-authoring.
 
-## Prioridade sugerida
+## Suggested priority
 
-A ordem considera o uso estimado e quem usa o Voges Word (estudantes e trabalho do dia a dia):
+The order takes into account the estimated usage and who uses Voges Word (students and everyday work):
 
-1. Ortografia no Windows e no Linux.
-2. Pincel de formatação e maiúsculas e minúsculas.
-3. Redimensionar imagem.
-4. Controlar alterações e comentários.
-5. Espaço antes e depois do parágrafo e régua com recuos.
-6. Sumário automático e notas de rodapé, os dois que mais pesam num trabalho na ABNT.
-7. Mesclar células, símbolos e lista automática ao digitar.
-8. Abrir `.doc`, `.odt` e `.rtf`.
+1. Spelling on Windows and Linux.
+2. Format Painter and Change Case.
+3. Resize pictures.
+4. Track Changes and Comments.
+5. Spacing before and after the paragraph, and a ruler with indents.
+6. Automatic table of contents and footnotes, the two that matter most in an ABNT paper.
+7. Merge cells, symbols and automatic lists while typing.
+8. Open `.doc`, `.odt` and `.rtf`.
 
-## Fontes
+## Sources
 
-- Jensen Harris (Microsoft), [No Distaste for Paste (Why the UI, Part 7)](https://learn.microsoft.com/en-us/archive/blogs/jensenh/no-distaste-for-paste-why-the-ui-part-7), 2006: os cinco comandos mais usados do Word 2003, os 32%, Colar acima de 11%, e os comandos 11, 100 e 400.
-- Jensen Harris (Microsoft), [Inside Deep Thought (Why the UI, Part 6)](https://learn.microsoft.com/en-us/archive/blogs/jensenh/inside-deep-thought-why-the-ui-part-6-2), 2005: como os dados de uso do Office foram coletados.
+- Jensen Harris (Microsoft), [No Distaste for Paste (Why the UI, Part 7)](https://learn.microsoft.com/en-us/archive/blogs/jensenh/no-distaste-for-paste-why-the-ui-part-7), 2006: Word 2003's five most used commands, the 32%, Paste above 11%, and commands 11, 100 and 400.
+- Jensen Harris (Microsoft), [Inside Deep Thought (Why the UI, Part 6)](https://learn.microsoft.com/en-us/archive/blogs/jensenh/inside-deep-thought-why-the-ui-part-6-2), 2005: how the Office usage data was collected.
