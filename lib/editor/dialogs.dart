@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 enum UnsavedChoice { save, discard, cancel }
@@ -61,6 +62,69 @@ Future<bool> askToRecover(
     ),
   );
   return recover ?? false;
+}
+
+enum ShareFormat { docx, pdf }
+
+Future<ShareFormat?> askShareFormat(BuildContext context) =>
+    showDialog<ShareFormat>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Compartilhar como'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, ShareFormat.docx),
+            child: const ListTile(
+              leading: Icon(Icons.description_outlined),
+              title: Text('Documento do Word (.docx)'),
+              subtitle: Text('Quem receber pode editar'),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, ShareFormat.pdf),
+            child: const ListTile(
+              leading: Icon(Icons.picture_as_pdf_outlined),
+              title: Text('PDF'),
+              subtitle: Text('Fica igual em qualquer aparelho'),
+            ),
+          ),
+        ],
+      ),
+    );
+
+/// Janela com o andamento enquanto o PDF é montado.
+void showPdfProgress(
+  BuildContext context,
+  ValueListenable<(int, int)?> progress,
+) {
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => PopScope(
+      canPop: false,
+      child: AlertDialog(
+        content: ValueListenableBuilder(
+          valueListenable: progress,
+          builder: (context, value, _) => Row(
+            children: [
+              const SizedBox.square(
+                dimension: 24,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
+              const SizedBox(width: 18),
+              Expanded(
+                child: Text(
+                  value == null
+                      ? 'Preparando o PDF…'
+                      : 'Montando o PDF: página ${value.$1} de ${value.$2}',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class LinkRequest {

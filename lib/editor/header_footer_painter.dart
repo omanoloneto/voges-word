@@ -14,8 +14,11 @@ import 'paper_styles.dart';
 /// página e imagens (logos ancorados na posição que o Word usa).
 class HeaderFooterPainter extends ChangeNotifier {
   HeaderFooterPainter(this.stories, this.look) {
-    _decodeImages();
+    ready = _decodeImages();
   }
+
+  /// Completa quando as imagens do cabeçalho e do rodapé estão prontas.
+  late final Future<void> ready;
 
   final HeadersFooters stories;
   final DocumentLook look;

@@ -17,6 +17,9 @@ class FilePanelActions {
     required this.newDocument,
     required this.openRecent,
     required this.findAndReplace,
+    required this.exportPdf,
+    required this.print,
+    this.share,
   });
 
   final VoidCallback open;
@@ -25,6 +28,11 @@ class FilePanelActions {
   final ValueChanged<DocumentTemplate> newDocument;
   final ValueChanged<RecentFile> openRecent;
   final VoidCallback findAndReplace;
+  final VoidCallback exportPdf;
+  final VoidCallback print;
+
+  /// Nulo onde o sistema não compartilha arquivos.
+  final VoidCallback? share;
 }
 
 /// Painel "Arquivo": ações, documento novo a partir de modelos e recentes.
@@ -162,6 +170,22 @@ class _FilePanel extends StatelessWidget {
                         () => actions.saveAs(DocumentFormat.plainText),
                       ),
                     ),
+                    _PanelAction(
+                      Icons.picture_as_pdf_outlined,
+                      'PDF',
+                      () => _run(context, actions.exportPdf),
+                    ),
+                    _PanelAction(
+                      Icons.print_outlined,
+                      'Imprimir',
+                      () => _run(context, actions.print),
+                    ),
+                    if (actions.share case final share?)
+                      _PanelAction(
+                        Icons.ios_share,
+                        'Compartilhar',
+                        () => _run(context, share),
+                      ),
                     _PanelAction(
                       Icons.find_replace,
                       'Substituir',

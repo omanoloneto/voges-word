@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart' show Rect;
+import 'package:share_plus/share_plus.dart';
 
 import '../docx/image_formats.dart';
 import '../document/document_codec.dart';
@@ -82,6 +84,46 @@ class DocumentFiles {
 
   Future<void> write(String path, Uint8List bytes) =>
       File(path).writeAsBytes(bytes, flush: true);
+
+  /// O share_plus no Linux só manda texto por e-mail, não arquivos.
+  bool get canShare => kIsWeb || !Platform.isLinux;
+
+  Future<void> share(
+    Uint8List bytes, {
+    required String name,
+    required String mime,
+    required Rect origin,
+  }) => SharePlus.instance.share(
+    ShareParams(
+      files: [XFile.fromData(bytes, mimeType: mime, name: name)],
+      fileNameOverrides: [name],
+      sharePositionOrigin: origin,
+    ),
+  );
+
+  /// Grava uma cópia em outro formato (PDF); falso se o usuário cancelar.
+  Future<bool> export(Uint8List bytes, String name, String extension) async {
+    if (!canSaveInPlace) {
+      final path = await FilePicker.saveFile(
+        dialogTitle: 'Exportar',
+        fileName: name,
+        type: FileType.custom,
+        allowedExtensions: [extension],
+        bytes: bytes,
+      );
+      return kIsWeb || path != null;
+    }
+    var path = await FilePicker.saveFile(
+      dialogTitle: 'Exportar',
+      fileName: name,
+      type: FileType.custom,
+      allowedExtensions: [extension],
+    );
+    if (path == null) return false;
+    if (!path.toLowerCase().endsWith('.$extension')) path = '$path.$extension';
+    await write(path, bytes);
+    return true;
+  }
 
   /// Celular e web: o sistema grava (ou baixa) o arquivo.
   Future<bool> saveCopy(

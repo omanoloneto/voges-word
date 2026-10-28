@@ -938,6 +938,32 @@ class RenderEditableTextLine extends RenderEditableBox {
     return breaks;
   }
 
+  /// Voges Word: retângulo (como desenhado, já com as quebras de página) e
+  /// trecho do texto de cada linha visual.
+  List<(Rect, TextRange)> visualTextLines() {
+    if (line.length <= 1) return const [];
+    final rects = <Rect>[];
+    for (final box in _getBoxes(
+        TextSelection(baseOffset: 0, extentOffset: line.length - 1))) {
+      final rect = box.toRect();
+      if (rects.isNotEmpty && rect.top < rects.last.bottom - 1) {
+        rects.add(rects.removeLast().expandToInclude(rect));
+      } else {
+        rects.add(rect);
+      }
+    }
+    return [
+      for (final rect in rects)
+        (
+          rect,
+          TextRange(
+            start: getPositionForOffset(rect.centerLeft.translate(1, 0)).offset,
+            end: getPositionForOffset(rect.centerRight.translate(-1, 0)).offset,
+          ),
+        ),
+    ];
+  }
+
   /// Linhas visuais do corpo, de cima para baixo, como (topo, base).
   List<(double, double)> _visualLines() {
     final boxes = line.length <= 1
@@ -1811,4 +1837,28 @@ class _PageBreak {
 
   /// Espaço vertical acrescentado antes dessa linha.
   final double gap;
+}
+
+/// Voges Word: texto de cada linha visual sob [root], com o retângulo nas
+/// coordenadas de [root] (camada de texto do PDF).
+List<(Rect, String)> visualTextLines(RenderObject root) {
+  final result = <(Rect, String)>[];
+  void visit(RenderObject node) {
+    if (node is RenderEditableTextLine && node.attached) {
+      final text = node.line.toPlainText();
+      final transform = node.getTransformTo(root);
+      for (final (rect, range) in node.visualTextLines()) {
+        final start = math.min(range.start, text.length);
+        final end = math.min(math.max(range.end, start), text.length);
+        final content =
+            text.substring(start, end).replaceAll('\uFFFC', '').trim();
+        if (content.isEmpty) continue;
+        result.add((MatrixUtils.transformRect(transform, rect), content));
+      }
+    }
+    node.visitChildren(visit);
+  }
+
+  visit(root);
+  return result;
 }

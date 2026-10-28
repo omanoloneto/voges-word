@@ -54,6 +54,14 @@ class EmbeddedImage extends StatelessWidget {
 
   static final _cache = <String, ({Uint8List bytes, String mime})?>{};
 
+  /// Decodifica antes de desenhar fora da tela (PDF e impressão); usa os
+  /// mesmos bytes que o widget, então o Image acha a imagem no cache.
+  static Future<void> precache(String source, BuildContext context) async {
+    final decoded = _decode(source);
+    if (decoded == null || !isDisplayable(decoded.mime)) return;
+    await precacheImage(MemoryImage(decoded.bytes), context);
+  }
+
   static ({Uint8List bytes, String mime})? _decode(String source) {
     if (_cache.containsKey(source)) {
       final cached = _cache.remove(source);
@@ -62,7 +70,7 @@ class EmbeddedImage extends StatelessWidget {
     }
     final decoded = decodeDataUri(source);
     _cache[source] = decoded;
-    if (_cache.length > 48) _cache.remove(_cache.keys.first);
+    if (_cache.length > 128) _cache.remove(_cache.keys.first);
     return decoded;
   }
 

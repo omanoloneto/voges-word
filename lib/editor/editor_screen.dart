@@ -16,6 +16,8 @@ import '../files/recent_files.dart';
 import '../files/recovery.dart';
 import '../files/system_open.dart';
 import '../fonts/font_catalog.dart';
+import '../print/page_renderer.dart';
+import '../print/system_print.dart';
 import 'dialogs.dart';
 import 'document_commands.dart';
 import 'editor_factory.dart';
@@ -511,8 +513,99 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       newDocument: _newDocument,
       openRecent: _openRecent,
       findAndReplace: () => _openFind(replace: true),
+      exportPdf: _exportPdf,
+      print: _print,
+      share: session.files.canShare ? _share : null,
     ),
   );
+
+  /// Monta o PDF com as fontes do documento prontas e o andamento na tela.
+  Future<Uint8List?> _buildPdf() async {
+    final progress = ValueNotifier<(int, int)?>(null);
+    showPdfProgress(context, progress);
+    try {
+      await Future.wait(session.fontsInUse().map(widget.fonts.ensureLoaded));
+      if (!mounted) return null;
+      return await documentPdf(
+        context,
+        session,
+        onProgress: (value) => progress.value = value,
+      );
+    } catch (error) {
+      _showError('Não foi possível montar o PDF.');
+      return null;
+    } finally {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      progress.dispose();
+    }
+  }
+
+  String get _pdfName => '${safeFileName(session.baseName)}.pdf';
+
+  Future<void> _exportPdf() async {
+    final pdf = await _buildPdf();
+    if (pdf == null) return;
+    try {
+      if (await session.files.export(pdf, _pdfName, 'pdf') && mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('PDF salvo: $_pdfName')));
+      }
+    } catch (error) {
+      _showError('Não foi possível salvar o PDF.');
+    }
+  }
+
+  Future<void> _print() async {
+    if (!printsWithDialog && !printsFromViewer) {
+      if (session.files.canShare && !kIsWeb) return _shareAs(ShareFormat.pdf);
+      return _exportPdf();
+    }
+    final pdf = await _buildPdf();
+    if (pdf == null) return;
+    try {
+      await printPdf(pdf, session.baseName);
+    } catch (error) {
+      _showError('Não foi possível abrir a impressão.');
+    }
+  }
+
+  Future<void> _share() async {
+    final format = await askShareFormat(context);
+    if (format != null) await _shareAs(format);
+  }
+
+  Future<void> _shareAs(ShareFormat format) async {
+    final Uint8List? bytes;
+    final String name;
+    final String mime;
+    if (format == ShareFormat.pdf) {
+      bytes = await _buildPdf();
+      name = _pdfName;
+      mime = 'application/pdf';
+    } else {
+      bytes = session.encode(DocumentFormat.docx);
+      name = '${safeFileName(session.baseName)}.docx';
+      mime =
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    }
+    if (bytes == null || !mounted) return;
+    final size = MediaQuery.sizeOf(context);
+    try {
+      await session.files.share(
+        bytes,
+        name: name,
+        mime: mime,
+        origin: Rect.fromCenter(
+          center: Offset(size.width / 2, 60),
+          width: 1,
+          height: 1,
+        ),
+      );
+    } catch (error) {
+      _showError('Não foi possível compartilhar.');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -531,6 +624,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
             shortcut(LogicalKeyboardKey.keyS, shift: true): () =>
                 _saveAs(DocumentFormat.docx),
             shortcut(LogicalKeyboardKey.keyF): _openFind,
+            shortcut(LogicalKeyboardKey.keyP): _print,
             shortcut(LogicalKeyboardKey.keyH): () => _openFind(replace: true),
             shortcut(LogicalKeyboardKey.equal): () => _stepZoom(1),
             shortcut(LogicalKeyboardKey.minus): () => _stepZoom(-1),

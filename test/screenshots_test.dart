@@ -15,6 +15,8 @@ import 'package:voges_word/files/document_files.dart';
 import 'package:voges_word/files/recent_files.dart';
 import 'package:voges_word/files/system_open.dart';
 import 'package:voges_word/fonts/font_catalog.dart';
+import 'package:voges_word/print/page_renderer.dart';
+import 'package:voges_word/editor/editor_screen.dart';
 
 const _systemSample = [
   'Georgia',
@@ -171,6 +173,15 @@ void main() {
     await capture(tester, 'arquivo');
     await tester.tapAt(const Offset(10, 840));
     await tester.pumpAndSettle();
+
+    final pdfPath = Platform.environment['VW_PDF'];
+    if (pdfPath != null) {
+      final context = tester.element(find.byType(EditorScreen));
+      final watch = Stopwatch()..start();
+      final pdf = await tester.runAsync(() => documentPdf(context, session));
+      File(pdfPath).writeAsBytesSync(pdf!);
+      debugPrint('PDF ${pdf.length} bytes em ${watch.elapsedMilliseconds} ms');
+    }
 
     final offsets = (Platform.environment['VW_OFFSETS'] ?? '700')
         .split(',')

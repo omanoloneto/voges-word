@@ -1,5 +1,6 @@
 import Cocoa
 import FlutterMacOS
+import PDFKit
 
 @main
 class AppDelegate: FlutterAppDelegate {
@@ -48,6 +49,31 @@ class AppDelegate: FlutterAppDelegate {
         return
       }
       result(NSFontManager.shared.availableFontFamilies.filter { !$0.hasPrefix(".") })
+    }
+
+    let printing = FlutterMethodChannel(
+      name: "voges_word/print",
+      binaryMessenger: controller.engine.binaryMessenger)
+    printing.setMethodCallHandler { call, result in
+      guard call.method == "print",
+        let arguments = call.arguments as? [String: Any],
+        let bytes = arguments["bytes"] as? FlutterStandardTypedData,
+        let document = PDFDocument(data: bytes.data),
+        let operation = document.printOperation(
+          for: NSPrintInfo.shared, scalingMode: .pageScaleToFit, autoRotate: true)
+      else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      operation.jobTitle = arguments["name"] as? String ?? "Documento"
+      operation.showsPrintPanel = true
+      operation.showsProgressPanel = true
+      if let window = NSApp.mainWindow ?? NSApp.windows.first {
+        operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+      } else {
+        operation.run()
+      }
+      result(nil)
     }
 
     let bookmarks = FlutterMethodChannel(
