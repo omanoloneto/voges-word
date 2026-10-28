@@ -91,7 +91,8 @@ class TableView extends StatelessWidget {
           for (final twips in table.columnWidths) scaler.scale(twips / 20),
         ];
         final total = widths.fold<double>(0, (sum, width) => sum + width);
-        final fit = total > maxWidth && total > 0 ? maxWidth / total : 1.0;
+        final available = _CellWidth.maybeOf(context) ?? maxWidth;
+        final fit = total > available && total > 0 ? available / total : 1.0;
         final padding = scaler.scale(5.4);
         final lineColor = table.bordered
             ? const Color(0xFF000000)
@@ -138,11 +139,14 @@ class TableView extends StatelessWidget {
                             horizontal: padding,
                             vertical: 1,
                           ),
-                          child: _CellEditor(
-                            key: ObjectKey(cell.controller),
-                            cell: TableCellRef(table, r, c),
-                            builder: cellEditor,
-                            onFocused: onCellFocused,
+                          child: _CellWidth(
+                            width: width * fit - 2 * padding,
+                            child: _CellEditor(
+                              key: ObjectKey(cell.controller),
+                              cell: TableCellRef(table, r, c),
+                              builder: cellEditor,
+                              onFocused: onCellFocused,
+                            ),
                           ),
                         ),
                 ),
@@ -176,6 +180,19 @@ class TableView extends StatelessWidget {
     }
     return false;
   }
+}
+
+/// Largura útil da célula, para tabelas dentro dela caberem.
+class _CellWidth extends InheritedWidget {
+  const _CellWidth({required this.width, required super.child});
+
+  final double width;
+
+  static double? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_CellWidth>()?.width;
+
+  @override
+  bool updateShouldNotify(_CellWidth oldWidget) => width != oldWidget.width;
 }
 
 class _CellEditor extends StatefulWidget {
