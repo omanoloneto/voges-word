@@ -83,69 +83,80 @@ class _StatusBarState extends State<StatusBar> {
     final small = theme.textTheme.bodySmall;
     final session = widget.session;
 
-    return Container(
-      height: 32,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+    return ColoredBox(
       color: theme.colorScheme.surfaceContainer,
-      child: Row(
-        children: [
-          ValueListenableBuilder(
-            valueListenable: widget.pageInfo,
-            builder: (context, info, _) => info == null
-                ? const SizedBox.shrink()
-                : Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: Text(
-                      'Página ${info.$1} de ${info.$2}',
-                      style: small,
+      child: SafeArea(
+        top: false,
+        child: Container(
+          height: 32,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              ValueListenableBuilder(
+                valueListenable: widget.pageInfo,
+                builder: (context, info, _) => info == null
+                    ? const SizedBox.shrink()
+                    : Padding(
+                        padding: const EdgeInsets.only(right: 12),
+                        child: Text(
+                          'Página ${info.$1} de ${info.$2}',
+                          style: small,
+                        ),
+                      ),
+              ),
+              Flexible(
+                child: Text(
+                  '$_words ${_words == 1 ? 'palavra' : 'palavras'} · $_characters caracteres',
+                  style: small,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (session.format == DocumentFormat.plainText) ...[
+                const SizedBox(width: 12),
+                Tooltip(
+                  message:
+                      'Arquivos .txt guardam só o texto. Use "Salvar como" para manter a formatação.',
+                  child: Text(
+                    'Texto simples',
+                    style: small?.copyWith(color: theme.colorScheme.error),
+                  ),
+                ),
+              ],
+              const Spacer(),
+              SizedBox(
+                width: 140,
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 2,
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 6,
+                    ),
+                    overlayShape: const RoundSliderOverlayShape(
+                      overlayRadius: 12,
                     ),
                   ),
-          ),
-          Flexible(
-            child: Text(
-              '$_words ${_words == 1 ? 'palavra' : 'palavras'} · $_characters caracteres',
-              style: small,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (session.format == DocumentFormat.plainText) ...[
-            const SizedBox(width: 12),
-            Tooltip(
-              message:
-                  'Arquivos .txt guardam só o texto. Use "Salvar como" para manter a formatação.',
-              child: Text(
-                'Texto simples',
-                style: small?.copyWith(color: theme.colorScheme.error),
+                  child: Slider(
+                    min: 0.5,
+                    max: 2,
+                    divisions: 30,
+                    value: widget.zoom.clamp(0.5, 2),
+                    label: '${(widget.zoom * 100).round()}%',
+                    semanticFormatterCallback: (value) =>
+                        'Zoom ${(value * 100).round()}%',
+                    onChanged: widget.onZoomChanged,
+                  ),
+                ),
               ),
-            ),
-          ],
-          const Spacer(),
-          SizedBox(
-            width: 140,
-            child: SliderTheme(
-              data: SliderTheme.of(context).copyWith(
-                trackHeight: 2,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              TextButton(
+                onPressed: () => widget.onZoomChanged(1),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: Text('${(widget.zoom * 100).round()}%', style: small),
               ),
-              child: Slider(
-                min: 0.5,
-                max: 2,
-                divisions: 30,
-                value: widget.zoom.clamp(0.5, 2),
-                label: '${(widget.zoom * 100).round()}%',
-                semanticFormatterCallback: (value) =>
-                    'Zoom ${(value * 100).round()}%',
-                onChanged: widget.onZoomChanged,
-              ),
-            ),
+            ],
           ),
-          TextButton(
-            onPressed: () => widget.onZoomChanged(1),
-            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-            child: Text('${(widget.zoom * 100).round()}%', style: small),
-          ),
-        ],
+        ),
       ),
     );
   }

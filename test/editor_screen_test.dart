@@ -189,4 +189,16 @@ void main() {
       expect((got - target).abs(), lessThanOrEqualTo(1));
     },
   );
+
+  testWidgets('barra de status fica acima da barra de navegação do celular', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+    tester.view.padding = const FakeViewPadding(bottom: 48);
+    tester.view.viewPadding = const FakeViewPadding(bottom: 48);
+    await tester.pumpAndSettle();
+
+    final words = tester.getRect(find.textContaining('palavras'));
+    expect(words.bottom, lessThanOrEqualTo(900 - 48));
+  });
 }
