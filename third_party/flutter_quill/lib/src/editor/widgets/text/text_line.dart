@@ -55,7 +55,7 @@ class TextLine extends StatefulWidget {
   final List<String> customLinkPrefixes;
   final TextRange composingRange;
 
-  /// Voges Word: recuo da primeira linha do parágrafo.
+  /// Voges Word: first-line indent of the paragraph.
   final LineFormatBuilder? lineFormat;
 
   @override
@@ -178,8 +178,8 @@ class _TextLineState extends State<TextLine> {
     final strutStyle =
         StrutStyle.fromTextStyle(textSpan.style ?? const TextStyle());
     final textAlign = _getTextAlign();
-    // Voges Word: o recuo da primeira linha é um espaço vazio no começo do
-    // texto; o proxy desconta esse caractere das posições.
+    // Voges Word: the first-line indent is an empty space at the start of the
+    // text; the proxy subtracts that character from the positions.
     final firstLine = widget.lineFormat?.call(widget.line)?.firstLine ?? 0;
     final indented = firstLine > 0;
     if (indented) {
@@ -860,9 +860,9 @@ class RenderEditableTextLine extends RenderEditableBox {
   BoxDecoration? decoration;
   final Map<TextLineSlot, RenderBox> children = <TextLineSlot, RenderBox>{};
 
-  // Voges Word: quebras de página dentro do parágrafo. Cada quebra empurra
-  // para baixo, pelo tamanho do espaço até a página seguinte, as linhas
-  // visuais que começam a partir de [_PageBreak.bodyY].
+  // Voges Word: page breaks inside the paragraph. Each break pushes down the
+  // visual lines that start from [_PageBreak.bodyY] on, by the size of the
+  // gap to the next page.
   List<_PageBreak> _pageBreaks = const [];
 
   bool get startsOnNextPage =>
@@ -880,7 +880,7 @@ class RenderEditableTextLine extends RenderEditableBox {
     return shift;
   }
 
-  /// Converte um ponto da linha (como aparece na tela) para o corpo do texto.
+  /// Converts a point in the line (as shown on screen) to the text body.
   Offset _lineToBody(Offset position) {
     final bodyOffset = (_body!.parentData as BoxParentData).offset;
     var y = position.dy - bodyOffset.dy;
@@ -922,7 +922,7 @@ class RenderEditableTextLine extends RenderEditableBox {
       var breakAt = index;
       final linesOnPage = breakAt - pageStart;
       final remaining = lines.length - breakAt;
-      // Como o Word: não deixa uma linha sozinha no pé nem no topo da página.
+      // Like Word: no single line left alone at the bottom or top of a page.
       if (pageStart == 0 && linesOnPage == 1 && breaks.isEmpty) {
         breakAt = 0;
       } else if (remaining == 1 && linesOnPage >= 3) {
@@ -938,8 +938,8 @@ class RenderEditableTextLine extends RenderEditableBox {
     return breaks;
   }
 
-  /// Voges Word: retângulo (como desenhado, já com as quebras de página) e
-  /// trecho do texto de cada linha visual.
+  /// Voges Word: rectangle (as drawn, with the page breaks applied) and text
+  /// range of each visual line.
   List<(Rect, TextRange)> visualTextLines() {
     if (line.length <= 1) return const [];
     final rects = <Rect>[];
@@ -964,7 +964,7 @@ class RenderEditableTextLine extends RenderEditableBox {
     ];
   }
 
-  /// Linhas visuais do corpo, de cima para baixo, como (topo, base).
+  /// Visual lines of the body, from top to bottom, as (top, bottom).
   List<(double, double)> _visualLines() {
     final boxes = line.length <= 1
         ? const <TextBox>[]
@@ -1437,8 +1437,8 @@ class RenderEditableTextLine extends RenderEditableBox {
       return;
     }
     final deflated = constraints.deflate(_resolvedPadding!);
-    // Voges Word: tabelas se dividem sozinhas entre páginas; o texto é
-    // dividido aqui, por linha visual.
+    // Voges Word: tables split across pages on their own; text is split
+    // here, by visual line.
     final paged = constraints;
     final flows = paged is PagedBoxConstraints &&
         (paged.pages.flowsAcrossPages?.call(line) ?? false);
@@ -1828,19 +1828,19 @@ class _TextLineElement extends RenderObjectElement {
   }
 }
 
-/// Voges Word: quebra de página dentro de um parágrafo.
+/// Voges Word: page break inside a paragraph.
 class _PageBreak {
   const _PageBreak(this.bodyY, this.gap);
 
-  /// Topo, no corpo do texto, da primeira linha visual da página seguinte.
+  /// Top, in the text body, of the first visual line on the next page.
   final double bodyY;
 
-  /// Espaço vertical acrescentado antes dessa linha.
+  /// Vertical space added before that line.
   final double gap;
 }
 
-/// Voges Word: texto de cada linha visual sob [root], com o retângulo nas
-/// coordenadas de [root] (camada de texto do PDF).
+/// Voges Word: text of each visual line under [root], with its rectangle in
+/// the coordinates of [root] (PDF text layer).
 List<(Rect, String)> visualTextLines(RenderObject root) {
   final result = <(Rect, String)>[];
   void visit(RenderObject node) {

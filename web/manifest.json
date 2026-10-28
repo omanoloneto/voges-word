@@ -5,7 +5,7 @@
     "display": "standalone",
     "background_color": "#3D6FD8",
     "theme_color": "#3D6FD8",
-    "description": "Editor de documentos leve e simples.",
+    "description": "A lightweight, simple document editor.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

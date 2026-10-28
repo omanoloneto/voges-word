@@ -150,7 +150,8 @@ class RichTextProxy extends SingleChildRenderObjectWidget {
     super.key,
   });
 
-  /// Voges Word: caracteres no começo do texto que não existem no documento.
+  /// Voges Word: characters at the start of the text that are not in the
+  /// document.
   final int leadingPlaceholders;
 
   final TextStyle textStyle;
@@ -277,8 +278,8 @@ class RenderParagraphProxy extends RenderProxyBox
   @override
   RenderParagraph? get child => super.child as RenderParagraph?;
 
-  /// Voges Word: posições do documento ficam deslocadas desse tanto no texto
-  /// desenhado (recuo da primeira linha).
+  /// Voges Word: document positions are shifted by this much in the drawn
+  /// text (first-line indent).
   int _leading = 0;
 
   set leadingPlaceholders(int value) {

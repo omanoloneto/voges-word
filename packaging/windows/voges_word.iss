@@ -6,6 +6,7 @@
 
 [Setup]
 AppId={{237302D4-CF82-4A6D-B1A5-F3E8C553542A}
+ShowLanguageDialog=auto
 AppName=Voges Word
 AppVersion={#AppVersion}
 AppPublisher=omanoloneto
@@ -30,7 +31,14 @@ SolidCompression=yes
 WizardStyle=modern
 
 [Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
+
+[CustomMessages]
+english.DocumentTypeName=Voges Word Document
+brazilianportuguese.DocumentTypeName=Documento do Voges Word
+spanish.DocumentTypeName=Documento de Voges Word
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -43,8 +51,8 @@ Name: "{autoprograms}\Voges Word"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\Voges Word"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Registry]
-; entra no "Abrir com" do .docx e do .txt sem virar o programa padrão
-Root: HKA; Subkey: "Software\Classes\{#ProgId}"; ValueType: string; ValueData: "Documento do Voges Word"; Flags: uninsdeletekey
+; adds the app to "Open with" for .docx and .txt without making it the default program
+Root: HKA; Subkey: "Software\Classes\{#ProgId}"; ValueType: string; ValueData: "{cm:DocumentTypeName}"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\{#ProgId}\DefaultIcon"; ValueType: string; ValueData: "{app}\{#AppExe},0"
 Root: HKA; Subkey: "Software\Classes\{#ProgId}\shell\open\command"; ValueType: string; ValueData: """{app}\{#AppExe}"" ""%1"""
 Root: HKA; Subkey: "Software\Classes\.docx\OpenWithProgids"; ValueType: string; ValueName: "{#ProgId}"; ValueData: ""; Flags: uninsdeletevalue

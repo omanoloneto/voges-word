@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${1:?versão, como 1.0.0}"
-bundle="${2:?pasta build/linux/x64/release/bundle}"
-output="${3:?arquivo .deb de saída}"
+version="${1:?version, such as 1.0.0}"
+bundle="${2:?build/linux/x64/release/bundle folder}"
+output="${3:?output .deb file}"
 
 here="$(cd "$(dirname "$0")" && pwd)"
 app_id=com.omanoloneto.voges_word
@@ -19,8 +19,8 @@ install -m 644 "$here/$app_id.desktop" "$root/usr/share/applications/"
 convert "$here/../../assets/icon/icon_rounded.png" -resize 256x256 \
   "$root/usr/share/icons/hicolor/256x256/apps/$app_id.png"
 
-# fontconfig lista as fontes, xdg-utils abre o PDF para imprimir e o zenity
-# (ou kdialog) é a janela de abrir e salvar do file_picker
+# fontconfig lists the fonts, xdg-utils opens the PDF for printing and zenity
+# (or kdialog) provides the open and save dialogs for file_picker
 cat > "$root/DEBIAN/control" <<CONTROL
 Package: voges-word
 Version: $version
@@ -30,10 +30,9 @@ Architecture: amd64
 Depends: libgtk-3-0t64 | libgtk-3-0, fontconfig, xdg-utils, zenity | kdialog
 Maintainer: omanoloneto <mano.afonso93@gmail.com>
 Homepage: https://omanoloneto.pro/voges/word/
-Description: editor de documentos leve, com .docx
- O Voges Word abre, edita e salva documentos do Word (.docx) e texto
- simples, com páginas como as do Word, cabeçalho e rodapé, PDF e
- impressão.
+Description: lightweight document editor with .docx support
+ Voges Word opens, edits and saves Word documents (.docx) and plain
+ text, with pages like Word's, headers and footers, PDF and printing.
 CONTROL
 
 dpkg-deb --build --root-owner-group "$root" "$output"

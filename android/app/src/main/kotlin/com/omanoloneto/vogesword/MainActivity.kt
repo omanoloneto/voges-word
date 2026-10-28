@@ -41,7 +41,7 @@ class MainActivity : FlutterActivity() {
                 result.notImplemented()
                 return@setMethodCallHandler
             }
-            val name = call.argument<String>("name") ?: "Documento"
+            val name = call.argument<String>("name") ?: "Document"
             val manager = getSystemService(Context.PRINT_SERVICE) as PrintManager
             manager.print(name, PdfPrintAdapter(bytes, name), PrintAttributes.Builder().build())
             result.success(null)
@@ -71,11 +71,11 @@ class MainActivity : FlutterActivity() {
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) return cursor.getString(0)
         }
-        return uri.lastPathSegment ?: "Documento.docx"
+        return uri.lastPathSegment ?: "Document.docx"
     }
 }
 
-/** Entrega ao serviço de impressão o PDF que o app já montou. */
+/** Hands the PDF the app already built to the print service. */
 private class PdfPrintAdapter(private val bytes: ByteArray, private val name: String) : PrintDocumentAdapter() {
     override fun onLayout(
         oldAttributes: PrintAttributes?,

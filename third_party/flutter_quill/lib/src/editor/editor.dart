@@ -840,7 +840,7 @@ class RenderEditor extends RenderEditableContainerBox
     markNeedsLayout();
   }
 
-  // Voges Word: paginação.
+  // Voges Word: pagination.
   QuillPageLayout? _pageLayout;
   int _pageCount = 1;
 
@@ -1815,8 +1815,8 @@ class RenderEditableContainerBox extends RenderBox
       return lastChild!;
     }
 
-    // Voges Word: com páginas há espaços entre os filhos; vale o primeiro
-    // filho que termina abaixo do ponto.
+    // Voges Word: with pages there are gaps between the children; take the
+    // first child that ends below the point.
     var child = firstChild;
     while (child != null) {
       final top = (child.parentData as BoxParentData).offset.dy;
@@ -1958,8 +1958,8 @@ class RenderEditableContainerBox extends RenderBox
   }
 }
 
-/// Voges Word: lê a página só quando o filho atravessa a margem inferior;
-/// assim as linhas que cabem não refazem o layout a cada tecla.
+/// Voges Word: reads the page only when the child crosses the bottom margin,
+/// so lines that fit do not redo the layout on every keystroke.
 void layoutPagedChild(
   RenderEditableBox child,
   BoxConstraints constraints,

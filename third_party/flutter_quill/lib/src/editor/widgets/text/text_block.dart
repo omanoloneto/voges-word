@@ -117,7 +117,7 @@ class EditableTextBlock extends StatelessWidget {
   final List<String> customLinkPrefixes;
   final TextRange composingRange;
 
-  /// Voges Word: espaçamento e recuos de cada parágrafo.
+  /// Voges Word: spacing and indents of each paragraph.
   final LineFormatBuilder? lineFormat;
 
   @override

@@ -1,6 +1,6 @@
 name: Release
 
-# só a tag publica a release; PR e disparo manual montam os instaladores para conferir
+# only a tag publishes the release; pull requests and manual runs build the installers to check them
 on:
   push:
     tags: ['v*']
@@ -19,18 +19,18 @@ env:
 
 jobs:
   version:
-    name: Versão
+    name: Version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.pubspec.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - id: pubspec
-        name: Versão do pubspec
+        name: Version from pubspec
         run: |
           VERSION=$(sed -n 's/^version: *\([0-9.]*\).*/\1/p' pubspec.yaml)
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::pubspec.yaml diz $VERSION, a tag é $GITHUB_REF_NAME"
+            echo "::error::pubspec.yaml says $VERSION, but the tag is $GITHUB_REF_NAME"
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -38,18 +38,18 @@ jobs:
   linux:
     name: Linux
     needs: version
-    # o binário exige a glibc de onde foi compilado: no 22.04 o .deb roda no Debian 12 e no Mint 21
+    # the binary needs the glibc of the system it was built on: built on 22.04, the .deb runs on Debian 12 and Mint 21
     runs-on: ubuntu-22.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - name: Dependências do build
+      - name: Build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config \
             libgtk-3-dev liblzma-dev libstdc++-12-dev imagemagick
-      - name: Instalar o Flutter
+      - name: Install Flutter
         run: |
           git clone --depth 1 --branch "$FLUTTER_VERSION" \
             https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
@@ -60,7 +60,7 @@ jobs:
       - run: |
           flutter build linux --release \
             --build-name "$VERSION" --build-number "$GITHUB_RUN_NUMBER"
-      - name: Montar o .deb
+      - name: Build the .deb
         run: |
           packaging/linux/build_deb.sh "$VERSION" \
             build/linux/x64/release/bundle voges-word-linux-amd64.deb
@@ -78,7 +78,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - name: Instalar o Flutter
+      - name: Install Flutter
         run: |
           git clone --depth 1 --branch "$FLUTTER_VERSION" \
             https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
@@ -87,7 +87,7 @@ jobs:
       - run: |
           flutter build macos --release \
             --build-name "$VERSION" --build-number "$GITHUB_RUN_NUMBER"
-      - name: Montar o .dmg
+      - name: Build the .dmg
         run: |
           app="build/macos/Build/Products/Release/Voges Word.app"
           codesign --verify --deep --strict "$app"
@@ -106,7 +106,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - name: Instalar o Flutter
+      - name: Install Flutter
         shell: pwsh
         run: |
           git clone --depth 1 --branch $env:FLUTTER_VERSION `
@@ -118,14 +118,14 @@ jobs:
         run: |
           flutter build windows --release `
             --build-name $env:VERSION --build-number $env:GITHUB_RUN_NUMBER
-      # o Windows recém-instalado não tem o runtime do Visual C++
-      - name: Runtime do Visual C++
+      # a fresh Windows install does not have the Visual C++ runtime
+      - name: Visual C++ runtime
         shell: pwsh
         run: |
           foreach ($dll in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
             Copy-Item "$env:SystemRoot\System32\$dll" build\windows\x64\runner\Release\
           }
-      - name: Montar o instalador
+      - name: Build the installer
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
@@ -139,7 +139,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Publicar
+    name: Publish
     if: github.ref_type == 'tag'
     needs: [version, linux, macos, windows]
     runs-on: ubuntu-latest
@@ -154,13 +154,13 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: SHA-256 dos arquivos
+      - name: SHA-256 of the files
         working-directory: dist
         run: |
           sha256sum VogesWord-macos.dmg VogesWord-windows-setup.exe \
             voges-word-linux-amd64.deb > SHA256SUMS.txt
           cat SHA256SUMS.txt
-      - name: Criar a release
+      - name: Create the release
         run: |
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --title "Voges Word $VERSION" --notes-file packaging/release-notes.md \
