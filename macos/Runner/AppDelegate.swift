@@ -51,6 +51,44 @@ class AppDelegate: FlutterAppDelegate {
       result(NSFontManager.shared.availableFontFamilies.filter { !$0.hasPrefix(".") })
     }
 
+    let spelling = FlutterMethodChannel(
+      name: "voges_word/spell",
+      binaryMessenger: controller.engine.binaryMessenger)
+    let spellTag = NSSpellChecker.uniqueSpellDocumentTag()
+    spelling.setMethodCallHandler { call, result in
+      guard call.method == "check", let texts = call.arguments as? [String] else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let checker = NSSpellChecker.shared
+      let languages = checker.availableLanguages
+      let language =
+        languages.first { $0 == "pt_BR" } ?? languages.first { $0.hasPrefix("pt") }
+      result(
+        texts.map { text -> [[String: Any]] in
+          var found: [[String: Any]] = []
+          var start = 0
+          let length = (text as NSString).length
+          while start < length {
+            let range = checker.checkSpelling(
+              of: text, startingAt: start, language: language, wrap: false,
+              inSpellDocumentWithTag: spellTag, wordCount: nil)
+            if range.location == NSNotFound || range.length == 0 { break }
+            let guesses =
+              checker.guesses(
+                forWordRange: range, in: text, language: language,
+                inSpellDocumentWithTag: spellTag) ?? []
+            found.append([
+              "start": range.location,
+              "end": range.location + range.length,
+              "suggestions": Array(guesses.prefix(5)),
+            ])
+            start = range.location + range.length
+          }
+          return found
+        })
+    }
+
     let printing = FlutterMethodChannel(
       name: "voges_word/print",
       binaryMessenger: controller.engine.binaryMessenger)

@@ -14,6 +14,7 @@ import 'files/recent_files.dart';
 import 'files/recovery.dart';
 import 'files/system_open.dart';
 import 'fonts/font_catalog.dart';
+import 'spell/spell_checker.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -51,6 +52,8 @@ Future<void> main(List<String> arguments) async {
   await recents.load();
   final windowButtons = await WindowButtonsLayout.forPlatform();
   final fonts = FontCatalog()..load().ignore();
+  final backend = platformSpellBackend();
+  final spelling = backend == null ? null : (SpellChecker(backend)..load());
 
   runApp(
     VogesWordApp(
@@ -61,6 +64,7 @@ Future<void> main(List<String> arguments) async {
       launchArguments: arguments,
       windowButtons: windowButtons,
       recovery: RecoveryStore(),
+      spelling: spelling,
     ),
   );
 }

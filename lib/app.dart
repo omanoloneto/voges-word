@@ -9,6 +9,7 @@ import 'files/recent_files.dart';
 import 'files/recovery.dart';
 import 'files/system_open.dart';
 import 'fonts/font_catalog.dart';
+import 'spell/spell_checker.dart';
 
 const brandColor = Color(0xFF3D6FD8);
 
@@ -21,6 +22,7 @@ class VogesWordApp extends StatelessWidget {
     required this.launchArguments,
     this.windowButtons = WindowButtonsLayout.right,
     this.recovery,
+    this.spelling,
     super.key,
   });
 
@@ -31,6 +33,7 @@ class VogesWordApp extends StatelessWidget {
   final List<String> launchArguments;
   final WindowButtonsLayout windowButtons;
   final RecoveryStore? recovery;
+  final SpellChecker? spelling;
 
   ThemeData _theme(Brightness brightness) => ThemeData(
     colorScheme: ColorScheme.fromSeed(
@@ -66,6 +69,7 @@ class VogesWordApp extends StatelessWidget {
         launchArguments: launchArguments,
         windowButtons: windowButtons,
         recovery: recovery,
+        spelling: spelling,
       ),
     );
   }

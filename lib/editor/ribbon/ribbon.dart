@@ -4,6 +4,7 @@ import 'package:flutter_quill/flutter_quill.dart';
 import '../../document/document_look.dart';
 import '../../document/page_setup.dart';
 import '../../fonts/font_catalog.dart';
+import '../../spell/spell_checker.dart';
 import '../document_commands.dart';
 import '../editor_factory.dart';
 import '../editor_session.dart';
@@ -124,12 +125,14 @@ class Ribbon extends StatefulWidget {
     required this.session,
     required this.fonts,
     required this.actions,
+    this.spelling,
     super.key,
   });
 
   final EditorSession session;
   final FontCatalog fonts;
   final RibbonActions actions;
+  final SpellChecker? spelling;
 
   @override
   State<Ribbon> createState() => _RibbonState();
@@ -720,6 +723,22 @@ class _RibbonState extends State<Ribbon> {
             ],
           ),
         ),
+        if (widget.spelling case final spelling?) ...[
+          const RibbonGroupDivider(),
+          RibbonGroup(
+            label: 'Revisão',
+            child: ListenableBuilder(
+              listenable: spelling,
+              builder: (context, _) => RibbonBigButton(
+                icon: Icons.spellcheck,
+                label: 'Ortografia',
+                tooltip: 'Sublinha em vermelho as palavras com erro',
+                selected: spelling.enabled,
+                onPressed: () => spelling.enabled = !spelling.enabled,
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }

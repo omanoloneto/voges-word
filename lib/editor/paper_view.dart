@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 
+import '../spell/spell_checker.dart';
 import 'editor_factory.dart';
 import 'editor_session.dart';
 import 'header_footer_painter.dart';
@@ -21,6 +22,7 @@ class PaperView extends StatefulWidget {
     required this.onInsertImage,
     required this.onEditLink,
     required this.onPageCountChanged,
+    this.spelling,
     super.key,
   });
 
@@ -34,6 +36,7 @@ class PaperView extends StatefulWidget {
   final VoidCallback onInsertImage;
   final VoidCallback onEditLink;
   final ValueChanged<int> onPageCountChanged;
+  final SpellChecker? spelling;
 
   @override
   State<PaperView> createState() => _PaperViewState();
@@ -73,6 +76,7 @@ class _PaperViewState extends State<PaperView> {
       widget.session.look,
       widget.zoom,
       contentWidth,
+      widget.spelling,
     );
     if (_factory == null || _factoryKey != key) {
       _factoryKey = key;
@@ -86,6 +90,7 @@ class _PaperViewState extends State<PaperView> {
         onInsertImage: widget.onInsertImage,
         onEditLink: widget.onEditLink,
         cellFocusParent: _paperFocus,
+        spelling: widget.spelling,
       );
     }
     return _factory!;
@@ -108,6 +113,15 @@ class _PaperViewState extends State<PaperView> {
 
   @override
   Widget build(BuildContext context) {
+    final spelling = widget.spelling;
+    if (spelling == null) return _paper(context);
+    return ListenableBuilder(
+      listenable: spelling,
+      builder: (context, _) => _paper(context),
+    );
+  }
+
+  Widget _paper(BuildContext context) {
     final look = widget.session.look;
     final scale = pointsToPixels * widget.zoom;
     final colors = Theme.of(context).colorScheme;

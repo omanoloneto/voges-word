@@ -6,6 +6,8 @@ import 'package:flutter_quill/flutter_quill.dart';
 import '../document/document_look.dart';
 import '../document/embeds.dart';
 import '../document/tables.dart';
+import '../spell/spell_checker.dart';
+import '../spell/spelling_editor.dart';
 import 'document_commands.dart';
 import 'embeds/embed_builders.dart';
 import 'embeds/table_embed.dart';
@@ -59,6 +61,7 @@ class EditorFactory {
     required this.onInsertImage,
     required this.onEditLink,
     required this.cellFocusParent,
+    this.spelling,
   });
 
   final DocumentLook look;
@@ -73,6 +76,9 @@ class EditorFactory {
   /// Células não ficam sob o foco do editor principal; senão ele acha que
   /// ainda tem o foco quando o usuário clica de volta no texto.
   final FocusNode cellFocusParent;
+
+  /// Nulo onde não há corretor e no PDF.
+  final SpellChecker? spelling;
 
   double get scale => pointsToPixels * zoom;
 
@@ -128,6 +134,12 @@ class EditorFactory {
       editorKey: editorKey,
       customStyles: styles,
       lineFormat: (line) => paragraphFormat(line, look),
+      textSpanBuilder: spelling == null
+          ? defaultSpanBuilder
+          : spellingSpanBuilder(spelling!),
+      contextMenuBuilder: spelling == null
+          ? null
+          : spellingContextMenu(spelling!),
       embedBuilders: embedBuilders,
       unknownEmbedBuilder: const UnknownEmbedBuilder(),
       customStyleBuilder: lineHeightStyle,

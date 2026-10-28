@@ -18,6 +18,7 @@ import '../files/system_open.dart';
 import '../fonts/font_catalog.dart';
 import '../print/page_renderer.dart';
 import '../print/system_print.dart';
+import '../spell/spell_checker.dart';
 import 'dialogs.dart';
 import 'document_commands.dart';
 import 'editor_factory.dart';
@@ -41,6 +42,7 @@ class EditorScreen extends StatefulWidget {
     required this.launchArguments,
     this.windowButtons = WindowButtonsLayout.right,
     this.recovery,
+    this.spelling,
     super.key,
   });
 
@@ -51,6 +53,7 @@ class EditorScreen extends StatefulWidget {
   final List<String> launchArguments;
   final WindowButtonsLayout windowButtons;
   final RecoveryStore? recovery;
+  final SpellChecker? spelling;
 
   @override
   State<EditorScreen> createState() => _EditorScreenState();
@@ -650,6 +653,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
                           Ribbon(
                             session: session,
                             fonts: widget.fonts,
+                            spelling: widget.spelling,
                             actions: RibbonActions(
                               insertImage: _insertImage,
                               editLink: _editLink,
@@ -681,6 +685,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
                           onInsertImage: _insertImage,
                           onEditLink: _editLink,
                           onPageCountChanged: (_) => _schedulePageInfo(),
+                          spelling: widget.spelling,
                         ),
                         if (_findOpen)
                           Positioned(
