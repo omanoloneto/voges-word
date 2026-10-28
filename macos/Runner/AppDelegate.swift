@@ -56,14 +56,20 @@ class AppDelegate: FlutterAppDelegate {
       binaryMessenger: controller.engine.binaryMessenger)
     let spellTag = NSSpellChecker.uniqueSpellDocumentTag()
     spelling.setMethodCallHandler { call, result in
-      guard call.method == "check", let texts = call.arguments as? [String] else {
+      guard call.method == "check",
+        let arguments = call.arguments as? [String: Any],
+        let texts = arguments["texts"] as? [String],
+        let wanted = arguments["language"] as? String
+      else {
         result(FlutterMethodNotImplemented)
         return
       }
       let checker = NSSpellChecker.shared
       let languages = checker.availableLanguages
+      let base = wanted.split(separator: "_").first.map(String.init) ?? wanted
       let language =
-        languages.first { $0 == "pt_BR" } ?? languages.first { $0.hasPrefix("pt") }
+        languages.first { $0 == wanted } ?? languages.first { $0 == base }
+        ?? languages.first { $0.hasPrefix(base + "_") }
       result(
         texts.map { text -> [[String: Any]] in
           var found: [[String: Any]] = []
@@ -103,7 +109,7 @@ class AppDelegate: FlutterAppDelegate {
         result(FlutterMethodNotImplemented)
         return
       }
-      operation.jobTitle = arguments["name"] as? String ?? "Documento"
+      operation.jobTitle = arguments["name"] as? String ?? "Document"
       operation.showsPrintPanel = true
       operation.showsProgressPanel = true
       if let window = NSApp.mainWindow ?? NSApp.windows.first {

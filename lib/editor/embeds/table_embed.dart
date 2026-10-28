@@ -5,6 +5,7 @@ import 'package:flutter_quill/flutter_quill.dart';
 
 import '../../document/embeds.dart';
 import '../../document/tables.dart';
+import '../../l10n/l10n.dart';
 import '../pagination.dart';
 
 class TableCellRef {
@@ -38,7 +39,7 @@ class TableEmbedBuilder extends EmbedBuilder {
   final TableStore tables;
   final CellEditorBuilder cellEditor;
 
-  /// Largura útil da página em pixels; tabelas maiores são reduzidas.
+  /// Usable page width in pixels; wider tables are scaled down.
   final double maxWidth;
   final CellFocusCallback onCellFocused;
 
@@ -52,9 +53,9 @@ class TableEmbedBuilder extends EmbedBuilder {
   Widget build(BuildContext context, EmbedContext embedContext) {
     final table = tables[tableIdOf(embedContext.node.value.data)];
     if (table == null) {
-      return const Text(
-        '[tabela indisponível]',
-        style: TextStyle(color: Color(0xFF9E9E9E)),
+      return Text(
+        context.l10n.tableUnavailable,
+        style: const TextStyle(color: Color(0xFF9E9E9E)),
       );
     }
     return TableView(
@@ -182,7 +183,7 @@ class TableView extends StatelessWidget {
   }
 }
 
-/// Largura útil da célula, para tabelas dentro dela caberem.
+/// Usable cell width, so tables inside it fit.
 class _CellWidth extends InheritedWidget {
   const _CellWidth({required this.width, required super.child});
 

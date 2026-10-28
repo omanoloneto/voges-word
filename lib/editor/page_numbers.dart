@@ -4,26 +4,21 @@ import '../document/embeds.dart';
 import '../document/headers_footers.dart';
 
 enum PageNumberPosition {
-  topRight('No topo, à direita', header: true, align: 'right'),
-  topCenter('No topo, centralizado', header: true, align: 'center'),
-  bottomRight('No rodapé, à direita', header: false, align: 'right'),
-  bottomCenter('No rodapé, centralizado', header: false, align: 'center');
+  topRight(header: true, align: 'right'),
+  topCenter(header: true, align: 'center'),
+  bottomRight(header: false, align: 'right'),
+  bottomCenter(header: false, align: 'center');
 
-  const PageNumberPosition(
-    this.label, {
-    required this.header,
-    required this.align,
-  });
+  const PageNumberPosition({required this.header, required this.align});
 
-  final String label;
   final bool header;
   final String align;
 }
 
 typedef _Line = ({List<Operation> content, Map<String, dynamic>? attributes});
 
-/// Número no cabeçalho ou rodapé das páginas; sai do outro lugar para não
-/// aparecer duas vezes.
+/// Page number in the header or footer; it is removed from the other one so
+/// it does not appear twice.
 HeadersFooters withPageNumber(
   HeadersFooters current,
   PageNumberPosition position,
@@ -46,7 +41,7 @@ HeadersFooters withoutPageNumbers(HeadersFooters current) => current.copyWith(
   footers: _withoutNumbers(current.footers),
 );
 
-/// Onde está o número das páginas comuns, para marcar no menu.
+/// Where the page number sits on regular pages, to mark it in the menu.
 PageNumberPosition? pageNumberPosition(HeadersFooters current) {
   for (final header in [true, false]) {
     final story = (header

@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+
+import '../../l10n/l10n.dart';
 
 import 'ribbon_style.dart';
 
@@ -17,7 +20,7 @@ class RibbonIconButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final bool selected;
 
-  /// Substitui o ícone (ex.: ícone com barrinha de cor).
+  /// Replaces the icon (e.g. an icon with a small color bar).
   final Widget? child;
 
   @override
@@ -58,7 +61,7 @@ class RibbonIconButton extends StatelessWidget {
   }
 }
 
-/// Botão grande (ícone em cima, nome embaixo) das abas Inserir, Layout e Exibir.
+/// Big button (icon on top, label below) of the Insert, Layout and View tabs.
 class RibbonBigButton extends StatelessWidget {
   const RibbonBigButton({
     required this.icon,
@@ -110,7 +113,7 @@ class RibbonBigButton extends StatelessWidget {
   }
 }
 
-/// Grupo da faixa: conteúdo em cima e nome embaixo, como no Word.
+/// Ribbon group: content on top and label below, as in Word.
 class RibbonGroup extends StatelessWidget {
   const RibbonGroup({required this.label, required this.child, super.key});
 
@@ -149,7 +152,7 @@ class RibbonOption<T> {
   final TextStyle? style;
 }
 
-/// Campo com lista (fonte, tamanho, espaçamento…).
+/// Field with a drop-down list (font, size, spacing…).
 class RibbonDropdown<T> extends StatelessWidget {
   const RibbonDropdown({
     required this.tooltip,
@@ -247,7 +250,7 @@ class RibbonField extends StatelessWidget {
   }
 }
 
-/// Tamanho da fonte com − e +, e lista ao tocar no número.
+/// Font size with − and +, and a list when the number is tapped.
 class SizeStepper extends StatelessWidget {
   const SizeStepper({
     required this.label,
@@ -278,6 +281,7 @@ class SizeStepper extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final smaller = _neighbor(-1);
     final larger = _neighbor(1);
     return RibbonField(
@@ -286,7 +290,7 @@ class SizeStepper extends StatelessWidget {
         children: [
           _StepButton(
             icon: Icons.remove,
-            tooltip: 'Diminuir fonte',
+            tooltip: l10n.decreaseFontSize,
             onPressed: smaller == null ? null : () => onSelected(smaller),
           ),
           MenuAnchor(
@@ -296,7 +300,10 @@ class SizeStepper extends StatelessWidget {
                 MenuItemButton(
                   style: ribbonMenuItemStyle(),
                   onPressed: () => onSelected(size),
-                  child: Text(_format(size), style: RibbonText.control),
+                  child: Text(
+                    formatRibbonNumber(size, l10n.localeName),
+                    style: RibbonText.control,
+                  ),
                 ),
             ],
             builder: (context, menu, _) => InkWell(
@@ -313,17 +320,13 @@ class SizeStepper extends StatelessWidget {
           ),
           _StepButton(
             icon: Icons.add,
-            tooltip: 'Aumentar fonte',
+            tooltip: l10n.increaseFontSize,
             onPressed: larger == null ? null : () => onSelected(larger),
           ),
         ],
       ),
     );
   }
-
-  static String _format(num value) => value == value.roundToDouble()
-      ? '${value.toInt()}'
-      : '$value'.replaceAll('.', ',');
 }
 
 class _StepButton extends StatelessWidget {
@@ -358,11 +361,58 @@ class _StepButton extends StatelessWidget {
   }
 }
 
+String formatRibbonNumber(num value, String locale) =>
+    NumberFormat.decimalPattern(locale).format(value);
+
+enum ColorName {
+  black,
+  darkGray,
+  lightGray,
+  gray,
+  darkRed,
+  red,
+  orange,
+  gold,
+  yellow,
+  brightGreen,
+  green,
+  olive,
+  turquoise,
+  lightBlue,
+  blue,
+  darkBlue,
+  purple,
+  violet,
+  pink;
+
+  String label(AppLocalizations l10n) => switch (this) {
+    black => l10n.colorBlack,
+    darkGray => l10n.colorDarkGray,
+    lightGray => l10n.colorLightGray,
+    gray => l10n.colorGray,
+    darkRed => l10n.colorDarkRed,
+    red => l10n.colorRed,
+    orange => l10n.colorOrange,
+    gold => l10n.colorGold,
+    yellow => l10n.colorYellow,
+    brightGreen => l10n.colorBrightGreen,
+    green => l10n.colorGreen,
+    olive => l10n.colorOlive,
+    turquoise => l10n.colorTurquoise,
+    lightBlue => l10n.colorLightBlue,
+    blue => l10n.colorBlue,
+    darkBlue => l10n.colorDarkBlue,
+    purple => l10n.colorPurple,
+    violet => l10n.colorViolet,
+    pink => l10n.colorPink,
+  };
+}
+
 class ColorChoice {
   const ColorChoice(this.hex, this.name);
 
   final String hex;
-  final String name;
+  final ColorName name;
 
   Color get color => colorOfHex(hex);
 }
@@ -370,7 +420,7 @@ class ColorChoice {
 Color colorOfHex(String hex) =>
     Color(int.parse('FF${hex.replaceFirst('#', '')}', radix: 16));
 
-/// Botão de cor + bolinhas rápidas + paleta completa no ▾.
+/// Color button + quick swatches + full palette under ▾.
 class ColorRow extends StatelessWidget {
   const ColorRow({
     required this.icon,
@@ -414,7 +464,7 @@ class ColorRow extends StatelessWidget {
         const SizedBox(width: 2),
         for (final choice in quick)
           Tooltip(
-            message: choice.name,
+            message: choice.name.label(context.l10n),
             child: InkWell(
               customBorder: const CircleBorder(),
               onTap: () => onSelected(choice.hex),
@@ -456,7 +506,7 @@ class ColorRow extends StatelessWidget {
                   children: [
                     for (final choice in palette)
                       Tooltip(
-                        message: choice.name,
+                        message: choice.name.label(context.l10n),
                         child: Builder(
                           builder: (context) => InkWell(
                             onTap: () {
@@ -486,7 +536,7 @@ class ColorRow extends StatelessWidget {
             ),
           ],
           builder: (context, menu, _) => Tooltip(
-            message: 'Mais cores',
+            message: context.l10n.moreColors,
             child: InkWell(
               onTap: () => menu.isOpen ? menu.close() : menu.open(),
               child: const Padding(
@@ -505,7 +555,7 @@ class ColorRow extends StatelessWidget {
   }
 }
 
-/// Grade para escolher linhas × colunas de uma tabela nova.
+/// Grid to pick rows × columns for a new table.
 class TableSizePicker extends StatefulWidget {
   const TableSizePicker({required this.onSelected, super.key});
 
@@ -527,7 +577,10 @@ class _TableSizePickerState extends State<TableSizePicker> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('Tabela $_rows × $_columns', style: RibbonText.control),
+          Text(
+            context.l10n.tableSize(_rows, _columns),
+            style: RibbonText.control,
+          ),
           const SizedBox(height: 8),
           for (var r = 1; r <= _max; r++)
             Row(

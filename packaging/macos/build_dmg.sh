@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-app="${1:?caminho do Voges Word.app}"
-output="${2:?arquivo .dmg de saída}"
+app="${1:?path to Voges Word.app}"
+output="${2:?output .dmg file}"
 
 staging="$(mktemp -d)"
 trap 'rm -rf "$staging"' EXIT
 ditto "$app" "$staging/$(basename "$app")"
 ln -s /Applications "$staging/Applications"
 
-# o hdiutil dos runners do GitHub às vezes falha com "Resource busy"
+# hdiutil on the GitHub runners sometimes fails with "Resource busy"
 for attempt in 1 2 3; do
   if hdiutil create -volname "Voges Word" -srcfolder "$staging" -fs HFS+ \
     -format UDZO -ov "$output"; then

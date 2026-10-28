@@ -6,13 +6,12 @@ import 'document_look.dart';
 import 'headers_footers.dart';
 
 enum DocumentFormat {
-  docx('docx', 'Documento do Word'),
-  plainText('txt', 'Texto simples');
+  docx('docx'),
+  plainText('txt');
 
-  const DocumentFormat(this.extension, this.label);
+  const DocumentFormat(this.extension);
 
   final String extension;
-  final String label;
 
   static DocumentFormat? fromFileName(String name) {
     final lower = name.toLowerCase();
@@ -22,6 +21,24 @@ enum DocumentFormat {
     return null;
   }
 }
+
+/// Why a file could not be opened; the screen shows it in the user's language.
+enum DocumentProblem {
+  legacyDoc,
+  unsupportedFormat,
+  notWordDocument,
+  tooLarge,
+  damaged,
+}
+
+class DocumentProblemException extends FormatException {
+  DocumentProblemException(this.problem) : super(problem.name);
+
+  final DocumentProblem problem;
+}
+
+/// What was adjusted when the document was opened.
+enum DocumentNotice { trackedChangesAccepted, commentsHidden }
 
 class LoadedDocument {
   const LoadedDocument({
@@ -36,11 +53,10 @@ class LoadedDocument {
   final DocumentLook look;
   final HeadersFooters headersFooters;
 
-  /// Contexto do formato de origem, usado para salvar sem perder conteúdo.
+  /// Context from the source format, used to save without losing content.
   final Object? source;
 
-  /// Avisos para o usuário sobre o que foi ajustado ao abrir.
-  final List<String> notices;
+  final List<DocumentNotice> notices;
 }
 
 abstract interface class DocumentCodec {
@@ -48,7 +64,8 @@ abstract interface class DocumentCodec {
 
   LoadedDocument decode(Uint8List bytes);
 
-  /// [pageSetup] só vem quando o usuário mudou tamanho, orientação ou margens.
+  /// [pageSetup] is only passed when the user changed the size, orientation
+  /// or margins.
   Uint8List encode(
     Delta delta, {
     Object? source,

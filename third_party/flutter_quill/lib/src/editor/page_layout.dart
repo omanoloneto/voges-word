@@ -5,10 +5,10 @@ import 'package:flutter/rendering.dart';
 
 import '../document/nodes/node.dart';
 
-/// Voges Word: geometria das páginas. Com ela o editor desenha folhas
-/// separadas e empurra para a página seguinte o que não cabe na atual.
+/// Voges Word: page geometry. With it the editor draws separate sheets and
+/// pushes whatever does not fit on the current page to the next one.
 ///
-/// Todas as medidas são em pixels lógicos, no espaço do editor.
+/// All measurements are in logical pixels, in the editor's space.
 @immutable
 class QuillPageLayout {
   const QuillPageLayout({
@@ -36,17 +36,17 @@ class QuillPageLayout {
   final Color pageColor;
   final Color shadowColor;
 
-  /// Linhas que começam numa página nova (quebra de página no início).
+  /// Lines that start on a new page (page break before them).
   final bool Function(Node node)? breaksBefore;
 
-  /// Linhas depois das quais o conteúdo continua na página seguinte.
+  /// Lines after which the content continues on the next page.
   final bool Function(Node node)? breaksAfter;
 
-  /// Linhas que não ficam sozinhas no pé da página (títulos).
+  /// Lines that are not left alone at the bottom of a page (headings).
   final bool Function(Node node)? keepsWithNext;
 
-  /// Linhas que se dividem entre páginas por conta própria (tabelas); elas
-  /// recebem [PagedBoxConstraints] com a posição em que começam.
+  /// Lines that split across pages on their own (tables); they receive
+  /// [PagedBoxConstraints] with the position where they start.
   final bool Function(Node node)? flowsAcrossPages;
 
   final ValueChanged<int>? onPageCountChanged;
@@ -65,9 +65,9 @@ class QuillPageLayout {
 
   int pageAt(double y) => math.max(0, ((y - firstPageTop) / stride).floor());
 
-  /// Onde começa um trecho de altura [height] que chegou em [y]: pula a área
-  /// fora do texto e vai para a próxima página se não couber nesta. Trechos
-  /// maiores que uma página inteira ficam onde estão.
+  /// Where a block of height [height] that reached [y] starts: skips the area
+  /// outside the text and moves to the next page if it does not fit on this
+  /// one. Blocks taller than a whole page stay where they are.
   double place(double y, double height) {
     var page = pageAt(y);
     var top = math.max(y, contentTop(page));
@@ -85,7 +85,7 @@ class QuillPageLayout {
 
   bool isAtPageTop(double y) => y <= contentTop(pageAt(y)) + _epsilon;
 
-  /// Início da página seguinte à que contém o fim de um trecho em [y].
+  /// Start of the page after the one that holds the end of a block at [y].
   double nextPage(double y) => contentTop(pageAt(y - _epsilon) + 1);
 
   int pageCountFor(double end) =>
@@ -94,11 +94,11 @@ class QuillPageLayout {
   double totalHeight(int pageCount) =>
       pageTop(math.max(pageCount, 1) - 1) + pageHeight + firstPageTop;
 
-  /// Desenha cabeçalho e rodapé sobre a folha [index] de [count].
+  /// Paints the header and footer over sheet [index] of [count].
   final void Function(Canvas canvas, Rect page, int index, int count)?
       paintPage;
 
-  /// Avisa quando [paintPage] precisa desenhar de novo.
+  /// Notifies when [paintPage] needs to paint again.
   final Listenable? repaint;
 
   bool sameGeometry(QuillPageLayout? other) =>
@@ -123,8 +123,8 @@ class QuillPageLayout {
       firstPageTop, pageColor, shadowColor, paintPage, repaint);
 }
 
-/// Restrições de layout que levam a posição vertical do filho no documento,
-/// para ele decidir onde quebrar entre páginas.
+/// Layout constraints that carry the child's vertical position in the
+/// document, so it can decide where to break across pages.
 class PagedBoxConstraints extends BoxConstraints {
   const PagedBoxConstraints({
     required this.pages,

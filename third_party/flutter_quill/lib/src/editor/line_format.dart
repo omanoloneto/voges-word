@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart';
 
 import '../document/nodes/line.dart';
 
-/// Voges Word: espaçamento e recuos próprios de um parágrafo, nas mesmas
-/// unidades do texto (o editor aplica o TextScaler).
+/// Voges Word: a paragraph's own spacing and indents, in the same units as
+/// the text (the editor applies the TextScaler).
 @immutable
 class LineFormat {
   const LineFormat({
@@ -17,7 +17,7 @@ class LineFormat {
   final double spaceAfter;
   final double indentRight;
 
-  /// Recuo da primeira linha; só valores positivos são desenhados.
+  /// First-line indent; only positive values are drawn.
   final double firstLine;
 }
 

@@ -4,7 +4,7 @@ import 'package:flutter_quill/quill_delta.dart';
 
 import '../document/embeds.dart';
 
-/// Conteúdo colado de fora mantém só a formatação que o Voges Word salva.
+/// Content pasted from elsewhere keeps only the formatting Voges Word saves.
 Delta sanitizePastedDelta(Delta delta) {
   final result = Delta();
   for (final operation in delta.toList()) {

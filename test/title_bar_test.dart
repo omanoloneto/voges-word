@@ -7,6 +7,7 @@ import 'package:voges_word/editor/editor_session.dart';
 import 'package:voges_word/editor/title_bar.dart';
 import 'package:voges_word/editor/window_buttons.dart';
 import 'package:voges_word/files/document_files.dart';
+import 'package:voges_word/l10n/l10n.dart';
 
 Future<void> _pumpTitleBar(
   WidgetTester tester, {
@@ -25,6 +26,8 @@ Future<void> _pumpTitleBar(
   );
   await tester.pumpWidget(
     MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: AppTitleBar(
           session: session,
@@ -40,48 +43,48 @@ Future<void> _pumpTitleBar(
 double _x(WidgetTester tester, String tooltip) =>
     tester.getCenter(find.byTooltip(tooltip)).dx;
 
-double _pill(WidgetTester tester) => tester.getCenter(find.text('Arquivo')).dx;
+double _pill(WidgetTester tester) => tester.getCenter(find.text('File')).dx;
 
 void main() {
   testWidgets(
-    'no Mac os botões da janela são os do sistema e os atalhos ficam à direita',
+    'on the Mac the window buttons are the system ones and the shortcuts sit on the right',
     (tester) async {
       await _pumpTitleBar(tester);
 
-      expect(_x(tester, 'Desfazer (⌘Z)'), greaterThan(_pill(tester)));
-      expect(find.byTooltip('Fechar'), findsNothing);
+      expect(_x(tester, 'Undo (⌘Z)'), greaterThan(_pill(tester)));
+      expect(find.byTooltip('Close'), findsNothing);
     },
     variant: TargetPlatformVariant.only(TargetPlatform.macOS),
   );
 
   testWidgets(
-    'no Windows os botões da janela ficam à direita e os atalhos à esquerda',
+    'on Windows the window buttons sit on the right and the shortcuts on the left',
     (tester) async {
       await _pumpTitleBar(tester);
 
-      expect(_x(tester, 'Desfazer (Ctrl+Z)'), lessThan(_pill(tester)));
-      expect(_x(tester, 'Minimizar'), lessThan(_x(tester, 'Maximizar')));
-      expect(_x(tester, 'Fechar'), greaterThan(1150));
+      expect(_x(tester, 'Undo (Ctrl+Z)'), lessThan(_pill(tester)));
+      expect(_x(tester, 'Minimize'), lessThan(_x(tester, 'Maximize')));
+      expect(_x(tester, 'Close'), greaterThan(1150));
     },
     variant: TargetPlatformVariant.only(TargetPlatform.windows),
   );
 
   testWidgets(
-    'no Linux os botões seguem o lado configurado no sistema',
+    'on Linux the buttons follow the side set in the system',
     (tester) async {
       await _pumpTitleBar(
         tester,
         layout: WindowButtonsLayout.parse("'close,minimize,maximize:appmenu'"),
       );
 
-      expect(_x(tester, 'Fechar'), lessThan(_x(tester, 'Minimizar')));
-      expect(_x(tester, 'Maximizar'), lessThan(_pill(tester)));
-      expect(_x(tester, 'Desfazer (Ctrl+Z)'), greaterThan(_pill(tester)));
+      expect(_x(tester, 'Close'), lessThan(_x(tester, 'Minimize')));
+      expect(_x(tester, 'Maximize'), lessThan(_pill(tester)));
+      expect(_x(tester, 'Undo (Ctrl+Z)'), greaterThan(_pill(tester)));
     },
     variant: TargetPlatformVariant.only(TargetPlatform.linux),
   );
 
-  test('lê o button-layout do GNOME', () {
+  test('reads the GNOME button-layout', () {
     const all = [
       WindowButton.minimize,
       WindowButton.maximize,

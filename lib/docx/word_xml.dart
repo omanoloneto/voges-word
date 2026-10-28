@@ -45,7 +45,7 @@ abstract final class Namespaces {
   };
 }
 
-/// Resolve nomes com namespace usando as declarações da raiz da parte.
+/// Resolves namespaced names using the declarations on the part's root.
 class WordXml {
   WordXml(XmlElement root) {
     for (final attribute in root.attributes) {
@@ -90,7 +90,7 @@ class WordXml {
   String? childVal(XmlElement? parent, String local) =>
       val(child(parent, local));
 
-  /// Propriedade liga/desliga do OOXML: presente sem valor significa ligada.
+  /// OOXML on/off property: present with no value means on.
   bool? onOff(XmlElement? element) {
     if (element == null) return null;
     final value = val(element);
@@ -125,7 +125,7 @@ final _invalidXmlChars = RegExp(
 String stripInvalidXmlChars(String text) =>
     text.replaceAll(_invalidXmlChars, '');
 
-/// Ordem exigida pelo schema dentro de w:pPr.
+/// Order the schema requires inside w:pPr.
 const paragraphPropertyOrder = [
   'pStyle',
   'keepNext',
@@ -165,7 +165,7 @@ const paragraphPropertyOrder = [
   'pPrChange',
 ];
 
-/// Ordem exigida pelo schema dentro de w:rPr.
+/// Order the schema requires inside w:rPr.
 const runPropertyOrder = [
   'rStyle',
   'rFonts',
@@ -209,8 +209,8 @@ const runPropertyOrder = [
   'rPrChange',
 ];
 
-/// Ordena filhos de propriedades; elementos de extensões (w14 etc.) vão para o
-/// fim, como o Word grava.
+/// Sorts property children; extension elements (w14 etc.) go last, as Word
+/// writes them.
 List<XmlElement> sortProperties(List<XmlElement> elements, List<String> order) {
   int rank(XmlElement element) {
     final prefix = element.name.prefix;
@@ -227,5 +227,5 @@ List<XmlElement> sortProperties(List<XmlElement> elements, List<String> order) {
   return [for (final entry in indexed) entry.$2];
 }
 
-/// Faz o parse de um fragmento guardado (prefixos sem declaração são aceitos).
+/// Parses a stored fragment (undeclared prefixes are accepted).
 XmlElement parseFragment(String xml) => XmlDocument.parse(xml).rootElement;

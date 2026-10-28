@@ -660,7 +660,7 @@ class QuillRawEditorState extends EditorState
       composingRange: composingRange.value,
       lineFormat: widget.config.lineFormat,
     );
-    // Voges Word: espaçamento e recuo à direita do próprio parágrafo.
+    // Voges Word: the paragraph's own spacing and right indent.
     final format = widget.config.lineFormat?.call(node);
     final scaler = MediaQuery.textScalerOf(context);
     final horizontal = _getHorizontalSpacingForLine(node, _styles);

@@ -285,10 +285,10 @@ class QuillRawEditorConfig {
   /// horizontally centered. This is mostly useful on devices with wide screens.
   final double? maxContentWidth;
 
-  /// Voges Word: paginação (ver [QuillPageLayout]).
+  /// Voges Word: pagination (see [QuillPageLayout]).
   final QuillPageLayout? pageLayout;
 
-  /// Voges Word: espaçamento e recuos de cada parágrafo.
+  /// Voges Word: spacing and indents of each paragraph.
   final LineFormatBuilder? lineFormat;
 
   /// Allows to override [DefaultStyles].

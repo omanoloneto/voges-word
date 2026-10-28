@@ -19,7 +19,7 @@ class TableCellModel {
 
   final QuillController controller;
 
-  /// w:tcPr original.
+  /// Original w:tcPr.
   String? propertiesXml;
   int gridSpan;
   VerticalMerge verticalMerge;
@@ -31,7 +31,7 @@ class TableRowModel {
 
   final List<TableCellModel> cells;
 
-  /// w:trPr original.
+  /// Original w:trPr.
   final String? propertiesXml;
 }
 
@@ -49,10 +49,10 @@ class TableModel extends ChangeNotifier {
   final String? packageId;
   final List<TableRowModel> rows;
 
-  /// Larguras da grade em twips.
+  /// Grid column widths in twips.
   final List<double> columnWidths;
 
-  /// w:tblPr original.
+  /// Original w:tblPr.
   final String? propertiesXml;
   final bool bordered;
 
@@ -65,13 +65,13 @@ class TableModel extends ChangeNotifier {
   void changed() => notifyListeners();
 }
 
-/// Guarda as tabelas do documento; o texto do editor só referencia o id.
+/// Holds the document's tables; the editor's text only references their id.
 class TableStore {
   final _tables = <String, TableModel>{};
   final _edits = StreamController<void>.broadcast();
   var _counter = 0;
 
-  /// Avisa a cada edição feita dentro de qualquer célula.
+  /// Emits on every edit made inside any cell.
   Stream<void> get edits => _edits.stream;
 
   TableModel? operator [](String id) => _tables[id];

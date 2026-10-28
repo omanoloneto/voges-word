@@ -66,7 +66,7 @@ extension DocumentCommands on QuillController {
     formatSelection(Attribute.clone(Attribute.script, null));
   }
 
-  /// Quebra de linha dentro do mesmo parágrafo (Shift+Enter do Word).
+  /// Line break within the same paragraph (Word's Shift+Enter).
   void insertLineBreak() {
     final start = selection.start;
     replaceText(
@@ -120,7 +120,7 @@ extension DocumentCommands on QuillController {
     );
   }
 
-  /// Tabelas ficam sozinhas na linha, como no Word.
+  /// Tables sit on a line of their own, as in Word.
   void insertTable(String tableId) {
     final text = document.toPlainText();
     final start = selection.start;

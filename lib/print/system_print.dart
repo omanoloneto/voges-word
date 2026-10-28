@@ -6,8 +6,8 @@ import 'package:path_provider/path_provider.dart';
 
 const _channel = MethodChannel('voges_word/print');
 
-/// macOS e Android abrem a janela de impressão do sistema; Windows e Linux
-/// abrem o PDF no visualizador padrão, de onde se imprime.
+/// macOS and Android open the system print dialog; Windows and Linux open the
+/// PDF in the default viewer, to print from there.
 bool get printsWithDialog =>
     !kIsWeb && (Platform.isMacOS || Platform.isAndroid);
 
@@ -19,7 +19,7 @@ Future<void> printPdf(Uint8List pdf, String name) async {
     await _channel.invokeMethod<void>('print', {'bytes': pdf, 'name': name});
     return;
   }
-  if (!printsFromViewer) throw UnsupportedError('Impressão indisponível');
+  if (!printsFromViewer) throw UnsupportedError('Printing is not available');
   final directory = await getTemporaryDirectory();
   final file = File(
     '${directory.path}${Platform.pathSeparator}${safeFileName(name)}.pdf',

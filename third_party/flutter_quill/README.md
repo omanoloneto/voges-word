@@ -1,5 +1,5 @@
-# flutter_quill (cópia do Voges Word)
+# flutter_quill (Voges Word copy)
 
-Cópia do [flutter_quill](https://pub.dev/packages/flutter_quill) 11.5.0 (licença MIT, ver `LICENSE`) com uma única mudança: paginação, para o editor mostrar o documento em páginas como o Word.
+A copy of [flutter_quill](https://pub.dev/packages/flutter_quill) 11.5.0 (MIT license, see `LICENSE`) with a single change: pagination, so the editor shows the document in pages like Word.
 
-As alterações estão marcadas com o comentário `Voges Word:`. Para atualizar o pacote, copie a versão nova por cima e reaplique esses trechos.
+The changes are marked with the comment `Voges Word:`. To update the package, copy the new version over it and reapply those parts.

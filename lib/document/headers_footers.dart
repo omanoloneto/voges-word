@@ -1,18 +1,18 @@
 import 'package:flutter_quill/quill_delta.dart';
 
-/// Variantes do Word: todas as páginas, primeira página e páginas pares.
+/// Word's variants: all pages, first page and even pages.
 enum PageVariant { normal, first, even }
 
-/// Texto de um cabeçalho ou rodapé e a parte do pacote de onde veio.
+/// Text of a header or footer and the package part it came from.
 class HeaderFooterStory {
   HeaderFooterStory({required this.delta, this.partPath, this.edited = false});
 
   final Delta delta;
 
-  /// Parte original (ex.: word/header1.xml); nula quando foi criado aqui.
+  /// Original part (e.g. word/header1.xml); null when it was created here.
   final String? partPath;
 
-  /// Só as partes editadas são regravadas; as outras voltam como vieram.
+  /// Only edited parts are rewritten; the others are saved as they came.
   final bool edited;
 
   bool get isEmpty => delta.toList().every(
@@ -20,7 +20,7 @@ class HeaderFooterStory {
   );
 }
 
-/// Cabeçalhos e rodapés da última seção do documento.
+/// Headers and footers of the document's last section.
 class HeadersFooters {
   const HeadersFooters({
     this.headers = const {},
@@ -36,7 +36,7 @@ class HeadersFooters {
   final bool differentFirstPage;
   final bool differentOddEven;
 
-  /// Distância em pontos da borda da folha até o cabeçalho e o rodapé.
+  /// Distance in points from the page edge to the header and the footer.
   final double headerDistance;
   final double footerDistance;
 

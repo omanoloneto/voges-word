@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../document/document_codec.dart';
+import '../l10n/l10n.dart';
 import 'editor_session.dart';
 
 class StatusBar extends StatefulWidget {
@@ -17,7 +18,7 @@ class StatusBar extends StatefulWidget {
 
   final EditorSession session;
 
-  /// (página atual, total) quando o documento aparece em páginas.
+  /// (current page, total) when the document is shown as pages.
   final ValueListenable<(int, int)?> pageInfo;
   final double zoom;
   final ValueChanged<double> onZoomChanged;
@@ -79,6 +80,7 @@ class _StatusBarState extends State<StatusBar> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final theme = Theme.of(context);
     final small = theme.textTheme.bodySmall;
     final session = widget.session;
@@ -99,14 +101,14 @@ class _StatusBarState extends State<StatusBar> {
                     : Padding(
                         padding: const EdgeInsets.only(right: 12),
                         child: Text(
-                          'Página ${info.$1} de ${info.$2}',
+                          l10n.pageOf(info.$1, info.$2),
                           style: small,
                         ),
                       ),
               ),
               Flexible(
                 child: Text(
-                  '$_words ${_words == 1 ? 'palavra' : 'palavras'} · $_characters caracteres',
+                  '${l10n.wordCount(_words)} · ${l10n.characterCount(_characters)}',
                   style: small,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -114,10 +116,9 @@ class _StatusBarState extends State<StatusBar> {
               if (session.format == DocumentFormat.plainText) ...[
                 const SizedBox(width: 12),
                 Tooltip(
-                  message:
-                      'Arquivos .txt guardam só o texto. Use "Salvar como" para manter a formatação.',
+                  message: l10n.plainTextWarning,
                   child: Text(
-                    'Texto simples',
+                    l10n.plainText,
                     style: small?.copyWith(color: theme.colorScheme.error),
                   ),
                 ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 
+import '../l10n/l10n.dart';
 import '../spell/spell_checker.dart';
 import 'editor_factory.dart';
 import 'editor_session.dart';
@@ -8,8 +9,8 @@ import 'header_footer_painter.dart';
 import 'pagination.dart';
 import 'paper_styles.dart';
 
-/// Documento em páginas separadas, como o Word; em telas estreitas (ou no
-/// modo contínuo) vira uma folha só que acompanha a largura.
+/// The document as separate pages, like Word; on narrow screens (or in
+/// continuous mode) it becomes a single sheet that follows the width.
 class PaperView extends StatefulWidget {
   const PaperView({
     required this.session,
@@ -187,7 +188,7 @@ class _PaperViewState extends State<PaperView> {
                       scrollable: true,
                       expands: true,
                       autoFocus: true,
-                      placeholder: 'Comece a escrever…',
+                      placeholder: context.l10n.startWriting,
                       editorKey: widget.editorKey,
                       pageLayout: paged ? _pageLayoutFor(scale) : null,
                     ),

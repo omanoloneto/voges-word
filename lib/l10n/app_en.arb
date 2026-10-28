@@ -1,0 +1,447 @@
+{
+  "@@locale": "en",
+  "tabHome": "Home",
+  "tabInsert": "Insert",
+  "tabLayout": "Layout",
+  "tabView": "View",
+  "tabTable": "Table",
+  "groupFont": "Font",
+  "groupColor": "Color",
+  "groupParagraph": "Paragraph",
+  "groupStyles": "Styles",
+  "groupIllustrations": "Illustrations",
+  "groupTables": "Tables",
+  "groupLinks": "Links",
+  "groupPages": "Pages",
+  "groupHeaderFooter": "Header & Footer",
+  "groupPageSetup": "Page Setup",
+  "groupViews": "Views",
+  "groupZoom": "Zoom",
+  "groupProofing": "Proofing",
+  "groupRowsColumns": "Rows & Columns",
+  "groupDelete": "Delete",
+  "bold": "Bold",
+  "italic": "Italic",
+  "underline": "Underline",
+  "strikethrough": "Strikethrough",
+  "superscript": "Superscript",
+  "subscript": "Subscript",
+  "clearFormatting": "Clear formatting",
+  "decreaseFontSize": "Decrease font size",
+  "increaseFontSize": "Increase font size",
+  "fontColor": "Font color",
+  "automaticColor": "Automatic",
+  "highlightColor": "Highlight color",
+  "noHighlight": "No highlight",
+  "moreColors": "More colors",
+  "alignLeft": "Align left",
+  "alignCenter": "Center",
+  "alignRight": "Align right",
+  "justify": "Justify",
+  "decreaseIndent": "Decrease indent",
+  "increaseIndent": "Increase indent",
+  "bullets": "Bullets",
+  "numbering": "Numbering",
+  "lineSpacing": "Line spacing",
+  "pageBreak": "Page break",
+  "pageBreakTooltip": "Start a new page",
+  "picture": "Picture",
+  "insertPicture": "Insert picture",
+  "table": "Table",
+  "tableSize": "Table {rows} × {columns}",
+  "@tableSize": {
+    "placeholders": {
+      "rows": {
+        "type": "int"
+      },
+      "columns": {
+        "type": "int"
+      }
+    }
+  },
+  "link": "Link",
+  "insertLink": "Insert link",
+  "headerFooter": "Header & Footer",
+  "headerFooterTooltip": "Edit the text at the top and bottom of the pages",
+  "pageNumber": "Page number",
+  "pageNumberTopRight": "Top, right",
+  "pageNumberTopCenter": "Top, centered",
+  "pageNumberBottomRight": "Bottom, right",
+  "pageNumberBottomCenter": "Bottom, centered",
+  "firstPageWithoutNumber": "First page without number",
+  "forCoverPage": "For a cover page",
+  "removePageNumbers": "Remove page numbers",
+  "margins": "Margins",
+  "marginsNormal": "Normal",
+  "marginsAbnt": "ABNT",
+  "marginsNarrow": "Narrow",
+  "marginsModerate": "Moderate",
+  "marginsWide": "Wide",
+  "marginsAllSides": "{size} cm on all sides",
+  "@marginsAllSides": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "marginsTopBottomSides": "Top and bottom {vertical} cm · left and right {horizontal} cm",
+  "@marginsTopBottomSides": {
+    "placeholders": {
+      "vertical": {
+        "type": "String"
+      },
+      "horizontal": {
+        "type": "String"
+      }
+    }
+  },
+  "marginsTopLeftBottomRight": "Top and left {topLeft} cm · bottom and right {bottomRight} cm",
+  "@marginsTopLeftBottomRight": {
+    "placeholders": {
+      "topLeft": {
+        "type": "String"
+      },
+      "bottomRight": {
+        "type": "String"
+      }
+    }
+  },
+  "marginsEachSide": "Top {top} · bottom {bottom} · left {left} · right {right} cm",
+  "@marginsEachSide": {
+    "placeholders": {
+      "top": {
+        "type": "String"
+      },
+      "bottom": {
+        "type": "String"
+      },
+      "left": {
+        "type": "String"
+      },
+      "right": {
+        "type": "String"
+      }
+    }
+  },
+  "orientation": "Orientation",
+  "portrait": "Portrait",
+  "landscape": "Landscape",
+  "paperSize": "Size",
+  "paperLetter": "Letter",
+  "paperLegal": "Legal",
+  "viewPages": "Pages",
+  "viewPagesTooltip": "Show the document in pages, as it will print",
+  "viewContinuous": "Continuous",
+  "viewContinuousTooltip": "Flowing text, without page breaks",
+  "zoomOut": "Zoom out",
+  "zoomIn": "Zoom in",
+  "spelling": "Spelling",
+  "spellingTooltip": "Underline misspelled words in red",
+  "rowAbove": "Above",
+  "insertRowAbove": "Insert row above",
+  "rowBelow": "Below",
+  "insertRowBelow": "Insert row below",
+  "columnLeft": "Left",
+  "insertColumnLeft": "Insert column to the left",
+  "columnRight": "Right",
+  "insertColumnRight": "Insert column to the right",
+  "unavailableWithMergedCells": "Not available in tables with merged cells",
+  "row": "Row",
+  "column": "Column",
+  "styleNormal": "Normal",
+  "styleHeading": "Heading {level}",
+  "@styleHeading": {
+    "placeholders": {
+      "level": {
+        "type": "int"
+      }
+    }
+  },
+  "fontDownloadFailed": "Couldn’t download the font “{family}”. Check your internet connection.",
+  "@fontDownloadFailed": {
+    "placeholders": {
+      "family": {
+        "type": "String"
+      }
+    }
+  },
+  "colorBlack": "Black",
+  "colorDarkGray": "Dark gray",
+  "colorLightGray": "Light gray",
+  "colorGray": "Gray",
+  "colorDarkRed": "Dark red",
+  "colorRed": "Red",
+  "colorOrange": "Orange",
+  "colorGold": "Gold",
+  "colorYellow": "Yellow",
+  "colorBrightGreen": "Bright green",
+  "colorGreen": "Green",
+  "colorOlive": "Olive",
+  "colorTurquoise": "Turquoise",
+  "colorLightBlue": "Light blue",
+  "colorBlue": "Blue",
+  "colorDarkBlue": "Dark blue",
+  "colorPurple": "Purple",
+  "colorViolet": "Violet",
+  "colorPink": "Pink",
+  "saveChangesTitle": "Save changes?",
+  "saveChangesMessage": "Do you want to save the changes to “{name}”?",
+  "@saveChangesMessage": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cancel": "Cancel",
+  "dontSave": "Don’t save",
+  "save": "Save",
+  "recoverTitle": "Recover document?",
+  "recoverMessage": "“{name}” was closed without saving. There is a copy from {date} at {time}. Do you want to recover it?",
+  "@recoverMessage": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "date": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "discard": "Discard",
+  "recover": "Recover",
+  "shareAs": "Share as",
+  "shareWordDocument": "Word document (.docx)",
+  "shareWordDocumentHint": "Whoever receives it can edit it",
+  "sharePdf": "PDF",
+  "sharePdfHint": "Looks the same on any device",
+  "preparingPdf": "Preparing the PDF…",
+  "buildingPdfPage": "Building the PDF: page {page} of {total}",
+  "@buildingPdfPage": {
+    "placeholders": {
+      "page": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "editLink": "Edit link",
+  "linkText": "Text to display",
+  "linkAddress": "Address (website or email)",
+  "removeLink": "Remove link",
+  "ok": "OK",
+  "unsupportedImage": "{format} picture: it shows in Word but not here. It is kept when you save.",
+  "@unsupportedImage": {
+    "placeholders": {
+      "format": {
+        "type": "String"
+      }
+    }
+  },
+  "sectionBreak": "Section break",
+  "protectedContentTooltip": "Word content kept as is when you save",
+  "keptAsIs": "{label} · kept as is when you save",
+  "@keptAsIs": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "unsupportedPastedContent": "Pasted content that Voges Word doesn’t save",
+  "contentSpecial": "Special content",
+  "contentTableOfContents": "Table of contents",
+  "contentCoverPage": "Cover page",
+  "contentBibliography": "Bibliography",
+  "contentNote": "note",
+  "contentChart": "chart",
+  "contentDiagram": "diagram",
+  "contentTextBox": "text box",
+  "contentEquation": "equation",
+  "contentObject": "object",
+  "tableUnavailable": "[table unavailable]",
+  "startWriting": "Start writing…",
+  "untitledDocument": "Untitled document",
+  "untitledFileName": "Document",
+  "openDocument": "Open document",
+  "saveAs": "Save as",
+  "export": "Export",
+  "problemLegacyDoc": "Old .doc files aren’t supported. Open the file in Word and save it as .docx.",
+  "problemUnsupportedFormat": "Voges Word opens .docx and .txt files.",
+  "problemNotWordDocument": "The file isn’t a valid Word document.",
+  "problemTooLarge": "The file is too large to open.",
+  "problemDamaged": "Couldn’t open “{name}”. The file may be damaged.",
+  "@problemDamaged": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "noticeTrackedChangesAccepted": "The document’s tracked changes were accepted.",
+  "noticeCommentsHidden": "The document’s comments don’t show in Voges Word.",
+  "recoverFailed": "Couldn’t recover the document.",
+  "openFailed": "Couldn’t open the file.",
+  "recentNotFound": "“{name}” wasn’t found. It may have been moved or deleted.",
+  "@recentNotFound": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "savedAs": "Saved as {name}",
+  "@savedAs": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "saveFailed": "Couldn’t save. Check whether the file is open in another program.",
+  "pictureOpenFailed": "Couldn’t open the picture.",
+  "pictureFormatUnknown": "Unrecognized picture format. Use PNG, JPG, GIF or BMP.",
+  "pdfFailed": "Couldn’t create the PDF.",
+  "pdfSaved": "PDF saved: {name}",
+  "@pdfSaved": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "pdfSaveFailed": "Couldn’t save the PDF.",
+  "printFailed": "Couldn’t open printing.",
+  "shareFailed": "Couldn’t share.",
+  "replacedCount": "{count, plural, =1{1 occurrence replaced} other{{count} occurrences replaced}}",
+  "@replacedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "noResults": "No results",
+  "matchPosition": "{current} of {total}",
+  "@matchPosition": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "hideReplace": "Hide replace",
+  "replace": "Replace",
+  "find": "Find",
+  "previous": "Previous",
+  "next": "Next",
+  "closeEsc": "Close (Esc)",
+  "replaceWith": "Replace with",
+  "replaceAll": "All",
+  "otherPages": "Other pages",
+  "firstPage": "First page",
+  "header": "Header",
+  "footer": "Footer",
+  "differentFirstPage": "Different first page",
+  "differentFirstPageHint": "For a cover page: the first page gets its own header and footer, which can stay empty.",
+  "apply": "Apply",
+  "empty": "Empty",
+  "insertPageNumber": "Insert page number",
+  "defaultFont": "Default",
+  "fontsInDocument": "In this document",
+  "fontsOnComputer": "On this computer",
+  "fontsOnDevice": "On this device",
+  "addFromGoogleFonts": "Add from Google Fonts",
+  "searchFont": "Search fonts",
+  "noFontsFound": "No fonts found",
+  "fontMissing": "Not installed: shown with another font",
+  "fontDownloadsOnUse": "Downloads from Google Fonts when used",
+  "addToList": "Add to the list",
+  "undo": "Undo",
+  "redo": "Redo",
+  "copy": "Copy",
+  "cut": "Cut",
+  "paste": "Paste",
+  "fileMenu": "File",
+  "unsavedChanges": "Unsaved changes",
+  "pageOf": "Page {current} of {total}",
+  "@pageOf": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "wordCount": "{count, plural, =1{1 word} other{{count} words}}",
+  "@wordCount": {
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
+  "characterCount": "{count, plural, =1{1 character} other{{count} characters}}",
+  "@characterCount": {
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
+  "plainTextWarning": ".txt files keep only the text. Use “Save as” to keep the formatting.",
+  "plainText": "Plain text",
+  "minimize": "Minimize",
+  "maximize": "Maximize",
+  "restore": "Restore",
+  "close": "Close",
+  "ignoreWord": "Ignore “{word}”",
+  "@ignoreWord": {
+    "placeholders": {
+      "word": {
+        "type": "String"
+      }
+    }
+  },
+  "templateBlank": "Blank document",
+  "templateSingleSpaced": "Single spaced",
+  "templateSchoolWork": "School paper (ABNT)",
+  "templateResume": "Résumé",
+  "open": "Open",
+  "plainTextFile": "Text (.txt)",
+  "print": "Print",
+  "share": "Share",
+  "newDocument": "New document",
+  "recentlyOpened": "Recently opened",
+  "openAnother": "Open another…",
+  "language": "Language",
+  "languageSystem": "Same as the system",
+  "resumeName": "Your Full Name",
+  "resumeContact": "City, State · (000) 000-0000 · youremail@example.com",
+  "resumeObjective": "Objective",
+  "resumeObjectiveText": "Describe in one or two sentences the job or the field you want to work in.",
+  "resumeExperience": "Experience",
+  "resumeRole": "Job title — Company",
+  "resumePeriod": "Month/Year – Month/Year",
+  "resumeAchievement": "Main result or responsibility.",
+  "resumeOtherAchievement": "Another achievement, ideally with numbers.",
+  "resumeEducation": "Education",
+  "resumeCourse": "Degree — School",
+  "resumeGraduation": "Year of completion",
+  "resumeSkills": "Skills",
+  "resumeSkill": "Technical skill or tool",
+  "resumeLanguage": "Language and level"
+}

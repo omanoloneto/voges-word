@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 
+import '../l10n/l10n.dart';
+
 class FindBar extends StatefulWidget {
   const FindBar({
     required this.controller,
@@ -124,24 +126,19 @@ class _FindBarState extends State<FindBar> {
       );
     }
     _search();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          count == 1
-              ? '1 ocorrência substituída'
-              : '$count ocorrências substituídas',
-        ),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.l10n.replacedCount(count))));
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final status = _query.text.isEmpty
         ? ''
         : _matches.isEmpty
-        ? 'Nenhum resultado'
-        : '${_current + 1} de ${_matches.length}';
+        ? l10n.noResults
+        : l10n.matchPosition(_current + 1, _matches.length);
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.escape): widget.onClose,
@@ -162,9 +159,7 @@ class _FindBarState extends State<FindBar> {
                 Row(
                   children: [
                     IconButton(
-                      tooltip: _replacing
-                          ? 'Ocultar substituição'
-                          : 'Substituir',
+                      tooltip: _replacing ? l10n.hideReplace : l10n.replace,
                       visualDensity: VisualDensity.compact,
                       icon: Icon(
                         _replacing ? Icons.expand_less : Icons.find_replace,
@@ -177,7 +172,7 @@ class _FindBarState extends State<FindBar> {
                         focusNode: _focus,
                         decoration: InputDecoration(
                           isDense: true,
-                          hintText: 'Localizar',
+                          hintText: l10n.find,
                           suffixText: status,
                           border: const OutlineInputBorder(),
                         ),
@@ -185,19 +180,19 @@ class _FindBarState extends State<FindBar> {
                       ),
                     ),
                     IconButton(
-                      tooltip: 'Anterior',
+                      tooltip: l10n.previous,
                       visualDensity: VisualDensity.compact,
                       icon: const Icon(Icons.keyboard_arrow_up),
                       onPressed: _matches.isEmpty ? null : () => _step(-1),
                     ),
                     IconButton(
-                      tooltip: 'Próximo',
+                      tooltip: l10n.next,
                       visualDensity: VisualDensity.compact,
                       icon: const Icon(Icons.keyboard_arrow_down),
                       onPressed: _matches.isEmpty ? null : () => _step(1),
                     ),
                     IconButton(
-                      tooltip: 'Fechar (Esc)',
+                      tooltip: l10n.closeEsc,
                       visualDensity: VisualDensity.compact,
                       icon: const Icon(Icons.close),
                       onPressed: widget.onClose,
@@ -212,21 +207,21 @@ class _FindBarState extends State<FindBar> {
                       Expanded(
                         child: TextField(
                           controller: _replacement,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             isDense: true,
-                            hintText: 'Substituir por',
-                            border: OutlineInputBorder(),
+                            hintText: l10n.replaceWith,
+                            border: const OutlineInputBorder(),
                           ),
                           onSubmitted: (_) => _replaceCurrent(),
                         ),
                       ),
                       TextButton(
                         onPressed: _current < 0 ? null : _replaceCurrent,
-                        child: const Text('Substituir'),
+                        child: Text(l10n.replace),
                       ),
                       TextButton(
                         onPressed: _matches.isEmpty ? null : _replaceAll,
-                        child: const Text('Todas'),
+                        child: Text(l10n.replaceAll),
                       ),
                     ],
                   ),

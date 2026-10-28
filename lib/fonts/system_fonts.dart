@@ -7,8 +7,9 @@ import 'font_names.dart';
 
 const _channel = MethodChannel('voges_word/fonts');
 
-/// Famílias instaladas que o Flutter desenha pelo nome. No Android ele não
-/// acha as do aparelho pelo nome; lá, no iOS e na web valem só as do Google.
+/// Installed families that Flutter draws by name. On Android it does not find
+/// the device's fonts by name; there, on iOS and on the web, only Google Fonts
+/// are available.
 Future<List<String>> systemFontFamilies() async {
   if (kIsWeb) return const [];
   if (Platform.isMacOS) {

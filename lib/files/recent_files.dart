@@ -19,7 +19,7 @@ class RecentFile {
   final String name;
   final String path;
 
-  /// No macOS, permissão guardada para reabrir o arquivo depois (sandbox).
+  /// On macOS, stored permission to reopen the file later (sandbox).
   final String? bookmark;
 
   Map<String, dynamic> toJson() => {
@@ -29,10 +29,11 @@ class RecentFile {
   };
 }
 
-/// Últimos arquivos abertos ou salvos; só no computador, onde há caminho fixo.
+/// Recently opened or saved files; desktop only, where there is a fixed path.
 class RecentFiles extends ChangeNotifier {
   RecentFiles(this._files);
 
+  /// Stored on the user's device; renaming it loses their data.
   static const _key = 'arquivos_recentes';
   static const _limit = 8;
   static const _bookmarks = MethodChannel('voges_word/bookmarks');

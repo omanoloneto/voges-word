@@ -16,10 +16,11 @@ import 'package:voges_word/files/document_files.dart';
 import 'package:voges_word/files/recent_files.dart';
 import 'package:voges_word/files/system_open.dart';
 import 'package:voges_word/fonts/font_catalog.dart';
+import 'package:voges_word/l10n/app_language.dart';
 import 'package:voges_word/print/page_renderer.dart';
 import 'package:voges_word/print/pdf_document.dart';
 
-/// Conteúdo descomprimido de cada stream pequeno (texto das páginas).
+/// Inflated content of each small stream (the text of the pages).
 List<String> _contentStreams(Uint8List pdf) {
   final text = latin1.decode(pdf);
   final streams = <String>[];
@@ -36,7 +37,7 @@ List<String> _contentStreams(Uint8List pdf) {
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('monta PDF com xref certo e texto pesquisável', () {
+  test('builds a PDF with a correct xref and searchable text', () {
     final builder = PdfBuilder();
     for (final text in ['Olá (mundo)', 'Ação — fim']) {
       builder.addPage(
@@ -68,7 +69,7 @@ void main() {
     expect(streams, contains('(Ação \u0097 fim) Tj'));
   });
 
-  testWidgets('PDF do documento tem as páginas do editor e o texto', (
+  testWidgets('the document PDF has the editor pages and the text', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1200, 900);
@@ -100,6 +101,7 @@ void main() {
           readGoogleCatalog: () async => '',
         ),
         launchArguments: const [],
+        language: AppLanguage(),
       ),
     );
     await tester.pumpAndSettle();

@@ -6,14 +6,14 @@ import '../document/embeds.dart';
 
 const pointsToPixels = 96 / 72;
 
-/// O "simples" do Word equivale a cerca de 1,17 vez o tamanho da fonte.
+/// Word's "single" spacing is about 1.17 times the font size.
 const naturalLineHeight = 1.17;
 
 const paperTextColor = Color(0xFF000000);
 
 const linkColor = Color(0xFF0563C1);
 
-/// Estilos do editor em pontos; o zoom vem do TextScaler e dos espaçamentos.
+/// Editor styles in points; zoom comes from the TextScaler and the spacing.
 DefaultStyles paperStyles(DocumentLook look, double scale) {
   TextStyle textOf(TextLook text, {double? lineSpacing}) => TextStyle(
     fontFamily: text.fontFamily,
@@ -106,7 +106,7 @@ DefaultStyles paperStyles(DocumentLook look, double scale) {
   );
 }
 
-/// Recuos de 1,27 cm por nível, como o Word; listas ganham o espaço do marcador.
+/// Indents of 1.27 cm per level, like Word; lists get room for the marker.
 HorizontalSpacing _indentWidth(Block block, double scale) {
   final attributes = block.style.attributes;
   final level = (attributes[Attribute.indent.key]?.value as int?) ?? 0;
@@ -114,8 +114,8 @@ HorizontalSpacing _indentWidth(Block block, double scale) {
   return HorizontalSpacing((36 * level + (isList ? 36 : 0)) * scale, 0);
 }
 
-/// Espaçamento e recuos de cada parágrafo como no arquivo. Listas seguem o
-/// espaçamento do bloco, como o estilo Parágrafo da Lista do Word.
+/// Each paragraph's spacing and indents as in the file. Lists follow the
+/// block's spacing, like Word's List Paragraph style.
 LineFormat? paragraphFormat(Line line, DocumentLook look) {
   final attributes = line.style.attributes;
   if (attributes.containsKey(Attribute.list.key) || _isBlockEmbed(line)) {
@@ -141,7 +141,7 @@ LineFormat? paragraphFormat(Line line, DocumentLook look) {
   );
 }
 
-/// Tabelas e outros blocos não herdam recuo de parágrafo, como no Word.
+/// Tables and other blocks do not inherit paragraph indents, as in Word.
 bool _isBlockEmbed(Line line) =>
     line.childCount == 1 &&
     line.children.single is Embed &&
@@ -150,7 +150,7 @@ bool _isBlockEmbed(Line line) =>
 Object? _contextualGroup(Line? line) =>
     line?.style.attributes[HiddenAttributes.contextualGroup]?.value;
 
-/// Parágrafo vizinho, atravessando o limite de blocos (listas, alinhamento).
+/// Neighboring paragraph, across block boundaries (lists, alignment).
 Line? _neighbor(Line line, {required bool before}) {
   final parent = line.parent;
   final sibling =
@@ -164,7 +164,7 @@ Line? _neighbor(Line line, {required bool before}) {
   };
 }
 
-/// Espaçamento de linha fora dos quatro valores prontos do editor.
+/// Line spacing outside the editor's four preset values.
 TextStyle lineHeightStyle(Attribute attribute) {
   if (attribute.key != Attribute.lineHeight.key) return const TextStyle();
   final value = (attribute.value as num?)?.toDouble();

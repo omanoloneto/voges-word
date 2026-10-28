@@ -292,10 +292,10 @@ class QuillEditorConfig {
   /// horizontally centered. This is mostly useful on devices with wide screens.
   final double? maxContentWidth;
 
-  /// Voges Word: desenha o documento em páginas quando não é nulo.
+  /// Voges Word: draws the document as pages when not null.
   final QuillPageLayout? pageLayout;
 
-  /// Voges Word: espaçamento e recuos de cada parágrafo.
+  /// Voges Word: spacing and indents of each paragraph.
   final LineFormatBuilder? lineFormat;
 
   /// Allows to override [DefaultStyles].

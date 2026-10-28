@@ -25,50 +25,16 @@ class DocxCodec implements DocumentCodec {
 
   LoadedDocument createEmpty() => create(DocumentTemplate.blank);
 
-  LoadedDocument create(DocumentTemplate template) {
-    final package = newDocumentPackage(TemplateOptions.of(template));
-    if (template != DocumentTemplate.resume) {
-      return DocxReader(package, tables).read();
-    }
-    return decode(encode(_resume(), source: package));
-  }
-
-  static Delta _resume() {
-    const gray = '#595959';
-    return Delta()
-      ..insert('Seu Nome Completo', {'bold': true, 'size': '24'})
-      ..insert('\n', {'align': 'center'})
-      ..insert('Cidade (UF) · (00) 00000-0000 · seuemail@exemplo.com', {
-        'color': gray,
-      })
-      ..insert('\n', {'align': 'center'})
-      ..insert('Objetivo')
-      ..insert('\n', {'header': 2})
-      ..insert(
-        'Descreva em uma ou duas frases a vaga ou a área em que você quer atuar.\n',
-      )
-      ..insert('Experiência')
-      ..insert('\n', {'header': 2})
-      ..insert('Cargo — Empresa', {'bold': true})
-      ..insert('\n')
-      ..insert('Mês/Ano – Mês/Ano', {'italic': true, 'color': gray})
-      ..insert('\n')
-      ..insert('Principal resultado ou responsabilidade.')
-      ..insert('\n', {'list': 'bullet'})
-      ..insert('Outra conquista, de preferência com números.')
-      ..insert('\n', {'list': 'bullet'})
-      ..insert('Formação')
-      ..insert('\n', {'header': 2})
-      ..insert('Curso — Instituição', {'bold': true})
-      ..insert('\n')
-      ..insert('Ano de conclusão', {'italic': true, 'color': gray})
-      ..insert('\n')
-      ..insert('Habilidades')
-      ..insert('\n', {'header': 2})
-      ..insert('Habilidade técnica ou ferramenta')
-      ..insert('\n', {'list': 'bullet'})
-      ..insert('Idioma e nível')
-      ..insert('\n', {'list': 'bullet'});
+  /// [language] goes into the new document so Word checks its spelling in
+  /// that language; [content] fills templates that come with sample text.
+  LoadedDocument create(
+    DocumentTemplate template, {
+    String language = 'en-US',
+    Delta? content,
+  }) {
+    final package = newDocumentPackage(TemplateOptions.of(template), language);
+    if (content == null) return DocxReader(package, tables).read();
+    return decode(encode(content, source: package));
   }
 
   @override

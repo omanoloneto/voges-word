@@ -4,8 +4,8 @@ import 'dart:ui';
 
 import 'package:archive/archive.dart';
 
-/// Folha do PDF: a imagem da página como aparece no editor e, por cima, o
-/// texto invisível de cada linha, para buscar e copiar.
+/// A PDF page: the page image as it looks in the editor, with each line's
+/// invisible text on top so it can be searched and copied.
 class PdfPageContent {
   const PdfPageContent({
     required this.size,
@@ -15,20 +15,20 @@ class PdfPageContent {
     this.lines = const [],
   });
 
-  /// Tamanho da folha em pontos.
+  /// Page size in points.
   final Size size;
   final int imageWidth;
   final int imageHeight;
 
-  /// Pixels RGB de 8 bits, linha a linha, sem alfa.
+  /// 8-bit RGB pixels, row by row, with no alpha.
   final Uint8List rgb;
 
-  /// Retângulos em pontos, com a origem no topo da folha.
+  /// Rectangles in points, with the origin at the top of the page.
   final List<(Rect, String)> lines;
 }
 
-/// Monta um PDF 1.4 simples; cada folha é comprimida ao ser adicionada para
-/// não guardar todas as imagens abertas na memória.
+/// Builds a simple PDF 1.4; each page is compressed as it is added, to avoid
+/// keeping every uncompressed image in memory.
 class PdfBuilder {
   final _pages =
       <
@@ -155,7 +155,7 @@ class PdfBuilder {
         : fixed;
   }
 
-  /// Título em UTF-16 para acentos e qualquer outra escrita.
+  /// Title in UTF-16, for accents and any other script.
   static String _textString(String value) {
     final hex = StringBuffer('<FEFF');
     for (final unit in value.codeUnits) {
@@ -172,7 +172,7 @@ class PdfBuilder {
       },
   ];
 
-  /// Codificação WinAnsi da fonte padrão; o que não existe nela vira "?".
+  /// WinAnsi encoding of the standard font; characters it lacks become "?".
   static List<int> _winAnsi(String text) => [
     for (final rune in text.runes)
       if (rune >= 0x20 && rune < 0x7F || rune >= 0xA0 && rune <= 0xFF)
@@ -214,7 +214,7 @@ class PdfBuilder {
     0x0178: 0x9F,
   };
 
-  /// Larguras da Helvetica (AFM padrão) de " " a "~", em milésimos.
+  /// Helvetica widths (standard AFM) from " " to "~", in thousandths.
   static const _helvetica = [
     278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, //
     278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, //

@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../docx/docx_template.dart';
 import '../document/document_codec.dart';
 import '../files/recent_files.dart';
+import '../l10n/app_language.dart';
+import '../l10n/l10n.dart';
 import 'app_logo.dart';
 import 'editor_session.dart';
 import 'ribbon/ribbon_style.dart';
@@ -31,21 +33,22 @@ class FilePanelActions {
   final VoidCallback exportPdf;
   final VoidCallback print;
 
-  /// Nulo onde o sistema não compartilha arquivos.
+  /// Null where the system cannot share files.
   final VoidCallback? share;
 }
 
-/// Painel "Arquivo": ações, documento novo a partir de modelos e recentes.
+/// The "File" panel: actions, new document from templates, and recent files.
 Future<void> showFilePanel(
   BuildContext context, {
   required EditorSession session,
   required RecentFiles recents,
+  required AppLanguage language,
   required FilePanelActions actions,
 }) {
   return showGeneralDialog<void>(
     context: context,
     barrierDismissible: true,
-    barrierLabel: 'Fechar',
+    barrierLabel: context.l10n.close,
     barrierColor: const Color(0x22000000),
     transitionDuration: const Duration(milliseconds: 140),
     pageBuilder: (context, _, _) => SafeArea(
@@ -56,6 +59,7 @@ Future<void> showFilePanel(
           child: _FilePanel(
             session: session,
             recents: recents,
+            language: language,
             actions: actions,
           ),
         ),
@@ -78,11 +82,13 @@ class _FilePanel extends StatelessWidget {
   const _FilePanel({
     required this.session,
     required this.recents,
+    required this.language,
     required this.actions,
   });
 
   final EditorSession session;
   final RecentFiles recents;
+  final AppLanguage language;
   final FilePanelActions actions;
 
   void _run(BuildContext context, VoidCallback action) {
@@ -92,6 +98,7 @@ class _FilePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final width = math.min(600.0, MediaQuery.sizeOf(context).width - 24);
     return Material(
       color: RibbonColors.menu,
@@ -111,7 +118,7 @@ class _FilePanel extends StatelessWidget {
                   children: [
                     const AppLogo(size: 22, outlined: true),
                     const SizedBox(width: 10),
-                    const Text('Arquivo', style: RibbonText.activeTab),
+                    Text(l10n.fileMenu, style: RibbonText.activeTab),
                     const SizedBox(width: 14),
                     Expanded(
                       child: Container(
@@ -146,17 +153,17 @@ class _FilePanel extends StatelessWidget {
                   children: [
                     _PanelAction(
                       Icons.folder_open_outlined,
-                      'Abrir',
+                      l10n.open,
                       () => _run(context, actions.open),
                     ),
                     _PanelAction(
                       Icons.save_outlined,
-                      'Salvar',
+                      l10n.save,
                       () => _run(context, actions.save),
                     ),
                     _PanelAction(
                       Icons.save_as_outlined,
-                      'Salvar como',
+                      l10n.saveAs,
                       () => _run(
                         context,
                         () => actions.saveAs(DocumentFormat.docx),
@@ -164,7 +171,7 @@ class _FilePanel extends StatelessWidget {
                     ),
                     _PanelAction(
                       Icons.text_snippet_outlined,
-                      'Texto (.txt)',
+                      l10n.plainTextFile,
                       () => _run(
                         context,
                         () => actions.saveAs(DocumentFormat.plainText),
@@ -177,24 +184,24 @@ class _FilePanel extends StatelessWidget {
                     ),
                     _PanelAction(
                       Icons.print_outlined,
-                      'Imprimir',
+                      l10n.print,
                       () => _run(context, actions.print),
                     ),
                     if (actions.share case final share?)
                       _PanelAction(
                         Icons.ios_share,
-                        'Compartilhar',
+                        l10n.share,
                         () => _run(context, share),
                       ),
                     _PanelAction(
                       Icons.find_replace,
-                      'Substituir',
+                      l10n.replace,
                       () => _run(context, actions.findAndReplace),
                     ),
                   ],
                 ),
               ),
-              const _SectionTitle('Novo documento'),
+              _SectionTitle(l10n.newDocument),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: Wrap(
@@ -203,7 +210,7 @@ class _FilePanel extends StatelessWidget {
                   children: [
                     for (final template in DocumentTemplate.values)
                       _Card(
-                        label: template.label,
+                        label: _templateLabel(l10n, template),
                         preview: _TemplatePreview(template),
                         onTap: () =>
                             _run(context, () => actions.newDocument(template)),
@@ -212,7 +219,7 @@ class _FilePanel extends StatelessWidget {
                 ),
               ),
               if (recents.isSupported) ...[
-                const _SectionTitle('Abertos recentemente'),
+                _SectionTitle(l10n.recentlyOpened),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 14),
                   child: ListenableBuilder(
@@ -230,7 +237,7 @@ class _FilePanel extends StatelessWidget {
                                 _run(context, () => actions.openRecent(file)),
                           ),
                         _Card(
-                          label: 'Abrir outro…',
+                          label: l10n.openAnother,
                           preview: const Center(
                             child: Icon(
                               Icons.add_circle_outline,
@@ -245,6 +252,28 @@ class _FilePanel extends StatelessWidget {
                   ),
                 ),
               ],
+              _SectionTitle(l10n.language),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: ListenableBuilder(
+                  listenable: language,
+                  builder: (context, _) => Wrap(
+                    spacing: 4,
+                    children: [
+                      for (final option in [null, ...appLanguages])
+                        _PanelAction(
+                          language.locale == option
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_unchecked,
+                          option == null
+                              ? l10n.languageSystem
+                              : languageName(option),
+                          () => language.select(option),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
               const SizedBox(height: 18),
             ],
           ),
@@ -253,6 +282,14 @@ class _FilePanel extends StatelessWidget {
     );
   }
 }
+
+String _templateLabel(AppLocalizations l10n, DocumentTemplate template) =>
+    switch (template) {
+      DocumentTemplate.blank => l10n.templateBlank,
+      DocumentTemplate.singleSpaced => l10n.templateSingleSpaced,
+      DocumentTemplate.schoolWork => l10n.templateSchoolWork,
+      DocumentTemplate.resume => l10n.templateResume,
+    };
 
 class _SectionTitle extends StatelessWidget {
   const _SectionTitle(this.text);

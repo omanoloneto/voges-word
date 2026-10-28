@@ -5,6 +5,7 @@ import 'package:flutter_quill/flutter_quill.dart';
 
 import '../../docx/image_formats.dart';
 import '../../document/embeds.dart';
+import '../../l10n/l10n.dart';
 
 const _guideColor = Color(0xFF9E9E9E);
 
@@ -48,14 +49,14 @@ class EmbeddedImage extends StatelessWidget {
 
   final String source;
 
-  /// Tamanho em pontos; o texto ao redor já aplica o zoom aos embutidos.
+  /// Size in points; the surrounding text already applies the zoom to embeds.
   final double? width;
   final double? height;
 
   static final _cache = <String, ({Uint8List bytes, String mime})?>{};
 
-  /// Decodifica antes de desenhar fora da tela (PDF e impressão); usa os
-  /// mesmos bytes que o widget, então o Image acha a imagem no cache.
+  /// Decodes before drawing off-screen (PDF and printing); it uses the same
+  /// bytes as the widget, so the Image finds the picture in the cache.
   static Future<void> precache(String source, BuildContext context) async {
     final decoded = _decode(source);
     if (decoded == null || !isDisplayable(decoded.mime)) return;
@@ -90,14 +91,14 @@ class EmbeddedImage extends StatelessWidget {
         fit: BoxFit.fill,
         gaplessPlayback: true,
         errorBuilder: (context, error, stackTrace) =>
-            _placeholder(decoded.mime),
+            _placeholder(context, decoded.mime),
       );
     } else {
-      image = _placeholder(decoded?.mime);
+      image = _placeholder(context, decoded?.mime);
     }
     return Semantics(
       image: true,
-      label: 'Imagem',
+      label: context.l10n.picture,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: width),
         child: AspectRatio(aspectRatio: width / height, child: image),
@@ -105,7 +106,7 @@ class EmbeddedImage extends StatelessWidget {
     );
   }
 
-  Widget _placeholder(String? mime) {
+  Widget _placeholder(BuildContext context, String? mime) {
     final format = mime == null ? '' : extensionForMime(mime).toUpperCase();
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -114,8 +115,7 @@ class EmbeddedImage extends StatelessWidget {
       ),
       child: Center(
         child: Tooltip(
-          message:
-              'Imagem $format: aparece no Word, mas não aqui. É mantida ao salvar.',
+          message: context.l10n.unsupportedImage(format),
           child: const Icon(Icons.image_outlined, color: _guideColor),
         ),
       ),
@@ -137,7 +137,7 @@ class PageBreakEmbedBuilder extends EmbedBuilder {
 
   @override
   Widget build(BuildContext context, EmbedContext embedContext) =>
-      const _BreakMarker(label: 'Quebra de página');
+      _BreakMarker(label: context.l10n.pageBreak);
 }
 
 class SectionBreakEmbedBuilder extends EmbedBuilder {
@@ -151,7 +151,7 @@ class SectionBreakEmbedBuilder extends EmbedBuilder {
 
   @override
   Widget build(BuildContext context, EmbedContext embedContext) =>
-      const _BreakMarker(label: 'Quebra de seção');
+      _BreakMarker(label: context.l10n.sectionBreak);
 }
 
 class _BreakMarker extends StatelessWidget {
@@ -236,7 +236,7 @@ class OpaqueInlineEmbedBuilder extends EmbedBuilder {
     if (content.hidden) return const SizedBox.shrink();
     final style = embedContext.textStyle;
     final size = style.fontSize ?? 12;
-    if (content.label == 'nota') {
+    if (content.label == OpaqueLabels.note) {
       return Transform.translate(
         offset: Offset(0, -size * 0.35),
         child: Text(
@@ -248,9 +248,9 @@ class OpaqueInlineEmbedBuilder extends EmbedBuilder {
     }
     final text = content.text.isNotEmpty
         ? content.text
-        : '[${content.label ?? 'objeto'}]';
+        : '[${opaqueLabel(context.l10n, content.label ?? OpaqueLabels.object)}]';
     return Tooltip(
-      message: 'Conteúdo do Word mantido como está ao salvar',
+      message: context.l10n.protectedContentTooltip,
       child: ColoredBox(
         color: const Color(0xFFE6E6E6),
         child: Text(text, style: style, textScaler: TextScaler.noScaling),
@@ -259,7 +259,7 @@ class OpaqueInlineEmbedBuilder extends EmbedBuilder {
   }
 }
 
-/// Campo de número da página: no cabeçalho vira o número de cada folha.
+/// Page number field: in the header it becomes each page's number.
 class PageNumberEmbedBuilder extends EmbedBuilder {
   const PageNumberEmbedBuilder();
 
@@ -282,7 +282,7 @@ class PageNumberEmbedBuilder extends EmbedBuilder {
   @override
   Widget build(BuildContext context, EmbedContext embedContext) {
     return Tooltip(
-      message: 'Número da página',
+      message: context.l10n.pageNumber,
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: const Color(0xFFDCE7FB),
@@ -314,8 +314,12 @@ class OpaqueBlockEmbedBuilder extends EmbedBuilder {
   Widget build(BuildContext context, EmbedContext embedContext) {
     final content = OpaqueContent.decode(embedContext.node.value.data);
     final style = embedContext.textStyle;
+    final label = opaqueLabel(
+      context.l10n,
+      content.label ?? OpaqueLabels.special,
+    );
     return Semantics(
-      label: content.label,
+      label: label,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(8),
@@ -327,7 +331,7 @@ class OpaqueBlockEmbedBuilder extends EmbedBuilder {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${content.label ?? 'Conteúdo especial'} · mantido como está ao salvar',
+              context.l10n.keptAsIs(label),
               textScaler: TextScaler.noScaling,
               style: const TextStyle(fontSize: 11, color: Color(0xFF757575)),
             ),
@@ -352,9 +356,24 @@ class UnknownEmbedBuilder extends EmbedBuilder {
   bool get expanded => false;
 
   @override
-  Widget build(BuildContext context, EmbedContext embedContext) =>
-      const Tooltip(
-        message: 'Conteúdo colado que o Voges Word não salva',
-        child: Icon(Icons.help_outline, size: 16, color: _guideColor),
-      );
+  Widget build(BuildContext context, EmbedContext embedContext) => Tooltip(
+    message: context.l10n.unsupportedPastedContent,
+    child: const Icon(Icons.help_outline, size: 16, color: _guideColor),
+  );
 }
+
+/// Label of protected content in the user's language; unknown kinds (like a
+/// Word gallery name) are shown as they came.
+String opaqueLabel(AppLocalizations l10n, String label) => switch (label) {
+  OpaqueLabels.special => l10n.contentSpecial,
+  OpaqueLabels.tableOfContents => l10n.contentTableOfContents,
+  OpaqueLabels.coverPage => l10n.contentCoverPage,
+  OpaqueLabels.bibliography => l10n.contentBibliography,
+  OpaqueLabels.note => l10n.contentNote,
+  OpaqueLabels.chart => l10n.contentChart,
+  OpaqueLabels.diagram => l10n.contentDiagram,
+  OpaqueLabels.textBox => l10n.contentTextBox,
+  OpaqueLabels.equation => l10n.contentEquation,
+  OpaqueLabels.object => l10n.contentObject,
+  _ => label,
+};

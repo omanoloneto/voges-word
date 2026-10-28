@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Cores da faixa azul do topo (mesmas no tema claro e escuro).
+/// Colors of the blue ribbon at the top (the same in light and dark themes).
 abstract final class RibbonColors {
   static const background = Color(0xFF3D6FD8);
   static const panel = Color(0xFF3464CC);
@@ -25,7 +25,7 @@ abstract final class RibbonText {
   );
 }
 
-/// Tema dos menus abertos a partir da faixa.
+/// Theme of the menus opened from the ribbon.
 MenuStyle ribbonMenuStyle() => const MenuStyle(
   backgroundColor: WidgetStatePropertyAll(RibbonColors.menu),
   surfaceTintColor: WidgetStatePropertyAll(Colors.transparent),

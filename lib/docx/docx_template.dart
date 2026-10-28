@@ -6,16 +6,7 @@ import 'word_xml.dart';
 
 const _declaration = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 
-enum DocumentTemplate {
-  blank('Em branco'),
-  singleSpaced('Espaçamento simples'),
-  schoolWork('Trabalho escolar'),
-  resume('Currículo');
-
-  const DocumentTemplate(this.label);
-
-  final String label;
-}
+enum DocumentTemplate { blank, singleSpaced, schoolWork, resume }
 
 class TemplateOptions {
   const TemplateOptions({
@@ -37,8 +28,8 @@ class TemplateOptions {
       lineTwips: 240,
       afterTwips: 0,
     ),
-    // Normas da ABNT: 1,5 de entrelinha, justificado, recuo de 1,25 cm na
-    // primeira linha, margens 3 e 2 cm.
+    // ABNT standards: 1.5 line spacing, justified, 1.25 cm first-line indent,
+    // 3 and 2 cm margins.
     DocumentTemplate.schoolWork => const TemplateOptions(
       lineTwips: 360,
       afterTwips: 0,
@@ -54,10 +45,11 @@ class TemplateOptions {
   };
 }
 
-/// Documento em branco: A4, margens do Word em português (3 cm / 2,5 cm),
-/// Arial 12 e títulos prontos para sumário.
+/// Blank document: A4, the margins of Word in Portuguese (3 cm / 2.5 cm),
+/// Arial 12 and headings ready for a table of contents.
 DocxPackage newDocumentPackage([
   TemplateOptions options = const TemplateOptions(),
+  String language = 'en-US',
 ]) {
   final margins = options.margins;
   final namespaces = Namespaces.known.entries
@@ -99,7 +91,7 @@ DocxPackage newDocumentPackage([
         '<w:characterSpacingControl w:val="doNotCompress"/>'
         '<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>'
         '</w:settings>',
-    'word/styles.xml': _styles(options),
+    'word/styles.xml': _styles(options, language),
   };
   return DocxPackage({
     for (final entry in parts.entries)
@@ -107,7 +99,7 @@ DocxPackage newDocumentPackage([
   });
 }
 
-/// Títulos não herdam o recuo de primeira linha do Normal.
+/// Headings do not inherit the first-line indent of Normal.
 String _heading(int level, int halfPoints, int before, String noIndent) =>
     '<w:style w:type="paragraph" w:styleId="Heading$level">'
     '<w:name w:val="heading $level"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/>'
@@ -117,7 +109,7 @@ String _heading(int level, int halfPoints, int before, String noIndent) =>
     '<w:rPr><w:b/><w:bCs/><w:sz w:val="$halfPoints"/><w:szCs w:val="$halfPoints"/></w:rPr>'
     '</w:style>';
 
-String _styles(TemplateOptions options) {
+String _styles(TemplateOptions options, String language) {
   final firstLine = options.firstLineTwips;
   final noIndent = firstLine == 0 ? '' : '<w:ind w:firstLine="0"/>';
   final normal = [
@@ -130,7 +122,7 @@ String _styles(TemplateOptions options) {
       '<w:rPrDefault><w:rPr>'
       '<w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="Arial" w:cs="Arial"/>'
       '<w:sz w:val="24"/><w:szCs w:val="24"/>'
-      '<w:lang w:val="pt-BR" w:eastAsia="en-US" w:bidi="ar-SA"/>'
+      '<w:lang w:val="$language" w:eastAsia="en-US" w:bidi="ar-SA"/>'
       '</w:rPr></w:rPrDefault>'
       '<w:pPrDefault><w:pPr><w:spacing w:after="${options.afterTwips}" w:line="${options.lineTwips}" w:lineRule="auto"/></w:pPr></w:pPrDefault>'
       '</w:docDefaults>'

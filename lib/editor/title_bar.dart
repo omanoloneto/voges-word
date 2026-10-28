@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../l10n/l10n.dart';
 import 'app_logo.dart';
 import 'editor_factory.dart';
 import 'editor_session.dart';
@@ -16,7 +17,7 @@ import 'window_buttons.dart';
 
 const titleBarHeight = 46.0;
 
-/// Espaço dos botões nativos do macOS, centralizados na faixa pelo Swift.
+/// Room for the native macOS buttons, which Swift centers in the ribbon.
 const _macButtonsWidth = 80.0;
 const _quickButtonWidth = 32.0;
 const _pillMinWidth = 240.0;
@@ -49,7 +50,7 @@ class AppTitleBar extends StatelessWidget {
     final leading = drawn ? windowButtons.leading : const <WindowButton>[];
     final trailing = drawn ? windowButtons.trailing : const <WindowButton>[];
 
-    // Atalhos ficam sempre do lado oposto aos botões da janela.
+    // Shortcuts always sit on the side opposite the window buttons.
     final quickOnRight = macOS || leading.isNotEmpty;
     final quickWidth = (wide ? 5 : 2) * _quickButtonWidth + (wide ? 16 : 8);
     final leadingWidth = macOS
@@ -135,33 +136,33 @@ class _QuickActions extends StatelessWidget {
           children: [
             RibbonIconButton(
               icon: Icons.undo,
-              tooltip: 'Desfazer (${mod}Z)',
+              tooltip: '${context.l10n.undo} (${mod}Z)',
               onPressed: controller.hasUndo ? controller.undo : null,
             ),
             RibbonIconButton(
               icon: Icons.redo,
-              tooltip: 'Refazer (${mod}Y)',
+              tooltip: '${context.l10n.redo} (${mod}Y)',
               onPressed: controller.hasRedo ? controller.redo : null,
             ),
             if (wide) ...[
               const SizedBox(width: 8),
               RibbonIconButton(
                 icon: Icons.content_copy,
-                tooltip: 'Copiar (${mod}C)',
+                tooltip: '${context.l10n.copy} (${mod}C)',
                 onPressed: controller.selection.isCollapsed
                     ? null
                     : () => controller.clipboardSelection(true),
               ),
               RibbonIconButton(
                 icon: Icons.content_cut,
-                tooltip: 'Recortar (${mod}X)',
+                tooltip: '${context.l10n.cut} (${mod}X)',
                 onPressed: controller.selection.isCollapsed
                     ? null
                     : () => controller.clipboardSelection(false),
               ),
               RibbonIconButton(
                 icon: Icons.content_paste,
-                tooltip: 'Colar (${mod}V)',
+                tooltip: '${context.l10n.paste} (${mod}V)',
                 onPressed: () => controller.clipboardPaste(),
               ),
             ],
@@ -197,7 +198,7 @@ class _FilePill extends StatelessWidget {
               children: [
                 const AppLogo(size: 18, outlined: true),
                 const SizedBox(width: 8),
-                const Text('Arquivo', style: RibbonText.activeTab),
+                Text(context.l10n.fileMenu, style: RibbonText.activeTab),
                 Container(
                   width: 1,
                   height: 18,
@@ -219,9 +220,9 @@ class _FilePill extends StatelessWidget {
                 ),
                 if (session.dirty) ...[
                   const SizedBox(width: 6),
-                  const Tooltip(
-                    message: 'Alterações não salvas',
-                    child: Icon(
+                  Tooltip(
+                    message: context.l10n.unsavedChanges,
+                    child: const Icon(
                       Icons.circle,
                       size: 8,
                       color: RibbonColors.muted,

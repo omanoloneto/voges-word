@@ -1,16 +1,16 @@
-// Gera assets/fonts/google_fonts.txt a partir do código do pacote google_fonts
-// e da popularidade publicada em fonts.google.com.
+// Generates assets/fonts/google_fonts.txt from the code of the google_fonts
+// package and the popularity published on fonts.google.com.
 //
-// Uso: dart run tool/google_fonts_catalog.dart <pasta lib/src/google_fonts_parts>
+// Usage: dart run tool/google_fonts_catalog.dart <lib/src/google_fonts_parts folder>
 import 'dart:convert';
 import 'dart:io';
 
-/// A lista padrão traz um terço do catálogo: as mais populares que escrevem
-/// português. As outras só aparecem na busca, para adicionar.
+/// The default list holds a third of the catalog: the most popular fonts that
+/// support Portuguese. The others only show up in search, to be added.
 const _listedShare = 3;
 
-/// Feitas para outra escrita: CJK (arquivos enormes) e as Noto de cada
-/// alfabeto ficam fora da lista padrão mesmo tendo letras latinas.
+/// Made for another script: CJK (huge files) and the Noto fonts for each
+/// alphabet stay out of the default list even though they have Latin letters.
 const _cjk = {'Jpan', 'Kore', 'Hans', 'Hant', 'Hira'};
 
 final _family = RegExp(
@@ -23,7 +23,7 @@ final _variant = RegExp(
 Future<void> main(List<String> arguments) async {
   if (arguments.length != 1) {
     stderr.writeln(
-      'Uso: dart run tool/google_fonts_catalog.dart <google_fonts_parts>',
+      'Usage: dart run tool/google_fonts_catalog.dart <google_fonts_parts>',
     );
     exit(64);
   }
@@ -71,7 +71,7 @@ Future<void> main(List<String> arguments) async {
           .join(),
     );
   stdout.writeln(
-    '${names.length} famílias, ${listed.length} na lista, em ${output.path}',
+    '${names.length} families, ${listed.length} listed, in ${output.path}',
   );
 }
 
@@ -106,7 +106,7 @@ bool _writesPortuguese(Map entry) {
       !(otherScript && (_cjk.contains(script) || entry['isNoto'] == true));
 }
 
-/// Até quatro arquivos: normal e itálico, perto do peso 400 e do 700.
+/// Up to four files: regular and italic, near weight 400 and 700.
 List<String> _documentFaces(Map<(int, bool), String> variants) {
   String? pick(int target, bool italic, {int minimum = 0}) {
     final candidates = variants.keys

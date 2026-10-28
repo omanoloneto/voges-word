@@ -17,6 +17,7 @@ import 'package:voges_word/files/document_files.dart';
 import 'package:voges_word/files/recent_files.dart';
 import 'package:voges_word/files/system_open.dart';
 import 'package:voges_word/fonts/font_catalog.dart';
+import 'package:voges_word/l10n/app_language.dart';
 
 Map<String, Object?> _lineAttributes(Delta delta, String text) {
   final lines = [
@@ -33,7 +34,7 @@ Map<String, Object?> _lineAttributes(Delta delta, String text) {
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('lê recuos e espaçamento próprios do parágrafo', () {
+  test('reads the indents and spacing of each paragraph', () {
     final codec = DocxCodec(TableStore());
     final school = codec.create(DocumentTemplate.schoolWork);
     expect(school.look.body.firstLine, closeTo(35.45, 0.01));
@@ -43,7 +44,7 @@ void main() {
       Delta()
         ..insert('Normal')
         ..insert('\n')
-        ..insert('Citação')
+        ..insert('Quote')
         ..insert('\n', {
           'indent': 3,
           HiddenAttributes.paragraphProperties:
@@ -55,15 +56,15 @@ void main() {
     final delta = codec.decode(bytes).delta;
 
     expect(_lineAttributes(delta, 'Normal'), isNot(contains('vw-fl')));
-    final quote = _lineAttributes(delta, 'Citação');
+    final quote = _lineAttributes(delta, 'Quote');
     expect(quote[HiddenAttributes.spaceBefore], 12);
     expect(quote[HiddenAttributes.indentRight], closeTo(28.35, 0.01));
     expect(quote[HiddenAttributes.firstLine], 0);
     expect(quote, isNot(contains(HiddenAttributes.spaceAfter)));
   });
 
-  test('parágrafos do mesmo estilo com espaçamento contextual não somam '
-      'espaço entre si', () {
+  test('paragraphs of one style with contextual spacing add no space '
+      'between them', () {
     final document = Document.fromDelta(
       Delta()
         ..insert('A')
@@ -83,7 +84,7 @@ void main() {
     expect(third.spaceAfter, look.body.spaceAfter);
   });
 
-  testWidgets('recuo da primeira linha aparece e o cursor anda junto', (
+  testWidgets('the first-line indent shows and the caret moves with it', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1200, 900);
@@ -121,6 +122,7 @@ void main() {
           readGoogleCatalog: () async => '',
         ),
         launchArguments: const [],
+        language: AppLanguage(),
       ),
     );
     await tester.pumpAndSettle();

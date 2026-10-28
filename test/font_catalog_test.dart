@@ -15,7 +15,7 @@ List<int> _u16(int value) => [value >> 8 & 0xFF, value & 0xFF];
 
 List<int> _u32(int value) => [..._u16(value >> 16), ..._u16(value & 0xFFFF)];
 
-/// Fonte mínima só com a tabela 'name', começando em [base] dentro do arquivo.
+/// Minimal font with only the 'name' table, starting at [base] in the file.
 Uint8List _sfnt(Map<int, String> names, {int platform = 3, int base = 0}) {
   final strings = <int>[];
   final records = <int>[];
@@ -63,7 +63,7 @@ void main() {
 
   const google = 'Lato\taa\t1\nArimo\tbb\t1\nCarlito\tcc\t0\nPacifico\tdd\t0\n';
 
-  test('separa instaladas, lista do Google e fora da lista', () async {
+  test('splits installed fonts, the Google list and unlisted fonts', () async {
     final catalog = FontCatalog(
       listSystemFonts: () async => ['Georgia', '.SF NS', 'Arial'],
       readGoogleCatalog: () async => google,
@@ -78,7 +78,7 @@ void main() {
     expect(catalog.canProvide('Aptos'), isFalse);
   });
 
-  test('fonte adicionada entra na lista e fica salva', () async {
+  test('an added font joins the list and is saved', () async {
     FontCatalog catalog() => FontCatalog(
       listSystemFonts: () async => const [],
       readGoogleCatalog: () async => google,
@@ -95,32 +95,35 @@ void main() {
     expect(reopened.googleFamilies, isNot(contains('Inexistente')));
   });
 
-  test('baixa, confere o hash, guarda e registra com o nome pedido', () async {
-    final font = _fakeFont(3);
-    final hash = sha256.convert(font).toString();
-    final cache = Directory.systemTemp.createTempSync('fontes');
-    addTearDown(() => cache.deleteSync(recursive: true));
-    final requested = <Uri>[];
-    FontCatalog catalog() => FontCatalog(
-      listSystemFonts: () async => const [],
-      readGoogleCatalog: () async => 'Carlito\t$hash\t0\n',
-      download: (url) async {
-        requested.add(url);
-        return font;
-      },
-      cacheDirectory: () async => cache,
-    );
+  test(
+    'downloads, checks the hash, caches and registers the requested name',
+    () async {
+      final font = _fakeFont(3);
+      final hash = sha256.convert(font).toString();
+      final cache = Directory.systemTemp.createTempSync('fontes');
+      addTearDown(() => cache.deleteSync(recursive: true));
+      final requested = <Uri>[];
+      FontCatalog catalog() => FontCatalog(
+        listSystemFonts: () async => const [],
+        readGoogleCatalog: () async => 'Carlito\t$hash\t0\n',
+        download: (url) async {
+          requested.add(url);
+          return font;
+        },
+        cacheDirectory: () async => cache,
+      );
 
-    final first = catalog();
-    expect(await first.ensureLoaded('Calibri'), isTrue);
-    expect(first.isReady('Calibri'), isTrue);
-    expect(File('${cache.path}/$hash.ttf').readAsBytesSync(), font);
+      final first = catalog();
+      expect(await first.ensureLoaded('Calibri'), isTrue);
+      expect(first.isReady('Calibri'), isTrue);
+      expect(File('${cache.path}/$hash.ttf').readAsBytesSync(), font);
 
-    expect(await catalog().ensureLoaded('Carlito'), isTrue);
-    expect(requested, [Uri.parse('https://fonts.gstatic.com/s/a/$hash.ttf')]);
-  });
+      expect(await catalog().ensureLoaded('Carlito'), isTrue);
+      expect(requested, [Uri.parse('https://fonts.gstatic.com/s/a/$hash.ttf')]);
+    },
+  );
 
-  test('recusa arquivo que não confere com o catálogo', () async {
+  test('rejects a file that does not match the catalog', () async {
     final catalog = FontCatalog(
       listSystemFonts: () async => const [],
       readGoogleCatalog: () async => 'Lato\t${'0' * 64}\t1\n',
@@ -133,14 +136,14 @@ void main() {
     expect(await catalog.ensureLoaded('Aptos'), isFalse);
   });
 
-  test('lê o nome da família preferindo o tipográfico', () {
+  test('reads the family name, preferring the typographic one', () {
     expect(_families(_sfnt({1: 'Segoe UI Semibold', 16: 'Segoe UI'})), {
       'Segoe UI',
     });
     expect(_families(_sfnt({1: 'Avenir'}, platform: 1)), {'Avenir'});
   });
 
-  test('lê todas as fontes de uma coleção .ttc', () {
+  test('reads every font of a .ttc collection', () {
     final first = _sfnt({1: 'Cambria'}, base: 20);
     final second = _sfnt({1: 'Cambria Math'}, base: 20 + first.length);
     final collection = Uint8List.fromList([

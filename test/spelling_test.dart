@@ -12,21 +12,25 @@ import 'package:voges_word/files/document_files.dart';
 import 'package:voges_word/files/recent_files.dart';
 import 'package:voges_word/files/system_open.dart';
 import 'package:voges_word/fonts/font_catalog.dart';
+import 'package:voges_word/l10n/app_language.dart';
 import 'package:voges_word/spell/spell_checker.dart';
 import 'package:voges_word/spell/spelling_editor.dart';
 
-/// Marca como erro toda ocorrência de "caza" e sugere "casa".
+/// Flags every "hause" as a mistake and suggests "house".
 class _FakeBackend implements SpellBackend {
   var calls = 0;
 
   @override
-  Future<List<List<Misspelling>>> check(List<String> texts) async {
+  Future<List<List<Misspelling>>> check(
+    List<String> texts,
+    String language,
+  ) async {
     calls++;
     return [
       for (final text in texts)
         [
-          for (final match in RegExp('caza').allMatches(text))
-            Misspelling(match.start, match.end, const ['casa', 'caça']),
+          for (final match in RegExp('hause').allMatches(text))
+            Misspelling(match.start, match.end, const ['house', 'horse']),
         ],
     ];
   }
@@ -35,23 +39,25 @@ class _FakeBackend implements SpellBackend {
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('verifica em segundo plano, ignora e desliga', () async {
+  test('checks in the background, ignores and turns off', () async {
     final checker = SpellChecker(_FakeBackend());
     addTearDown(checker.dispose);
-    const text = 'Minha caza é azul';
+    const text = 'My hause is blue';
 
     expect(checker.misspellingsOf(text), isNull);
     await Future<void>.delayed(const Duration(milliseconds: 500));
-    expect(checker.misspellingsOf(text)!.single.start, 6);
+    expect(checker.misspellingsOf(text)!.single.start, 3);
 
-    checker.ignore('Caza');
+    checker.ignore('Hause');
     expect(checker.misspellingsOf(text), isEmpty);
 
     checker.enabled = false;
-    expect(checker.misspellingsOf('outra caza'), isNull);
+    expect(checker.misspellingsOf('another hause'), isNull);
   });
 
-  testWidgets('sublinha a palavra e a sugestão troca o texto', (tester) async {
+  testWidgets('underlines the word and a suggestion replaces it', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1200, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -66,8 +72,8 @@ void main() {
     );
     session.open(
       OpenedFile(
-        name: 'texto.docx',
-        bytes: docx.encode(Delta()..insert('Minha caza é azul\n')),
+        name: 'text.docx',
+        bytes: docx.encode(Delta()..insert('My hause is blue\n')),
       ),
     );
     final checker = SpellChecker(_FakeBackend());
@@ -82,6 +88,7 @@ void main() {
           readGoogleCatalog: () async => '',
         ),
         launchArguments: const [],
+        language: AppLanguage(),
         spelling: checker,
       ),
     );
@@ -99,10 +106,10 @@ void main() {
     final marked = spans.where(
       (span) => span.style?.decorationStyle == TextDecorationStyle.wavy,
     );
-    expect(marked.map((span) => span.text), ['caza']);
+    expect(marked.map((span) => span.text), ['hause']);
 
     session.controller.updateSelection(
-      const TextSelection.collapsed(offset: 8),
+      const TextSelection.collapsed(offset: 5),
       ChangeSource.local,
     );
     await tester.pumpAndSettle();
@@ -114,11 +121,11 @@ void main() {
             as TextFieldTapRegion;
     final toolbar = menu.child! as AdaptiveTextSelectionToolbar;
     final labels = toolbar.buttonItems!.map((item) => item.label).toList();
-    expect(labels.take(3), ['casa', 'caça', 'Ignorar "caza"']);
+    expect(labels.take(3), ['house', 'horse', 'Ignore “hause”']);
 
     toolbar.buttonItems!.first.onPressed!();
     await tester.pumpAndSettle();
-    expect(session.controller.document.toPlainText(), 'Minha casa é azul\n');
+    expect(session.controller.document.toPlainText(), 'My house is blue\n');
     await tester.pump(const Duration(milliseconds: 500));
   });
 }

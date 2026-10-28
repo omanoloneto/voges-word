@@ -1,6 +1,6 @@
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart' show TextField;
-import 'package:flutter/widgets.dart' show Scrollable, ScrollableState;
+import 'package:flutter/widgets.dart' show Locale, Scrollable, ScrollableState;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
@@ -17,6 +17,7 @@ import 'package:voges_word/files/document_files.dart';
 import 'package:voges_word/files/recent_files.dart';
 import 'package:voges_word/files/system_open.dart';
 import 'package:voges_word/fonts/font_catalog.dart';
+import 'package:voges_word/l10n/app_language.dart';
 
 FontCatalog _offlineFonts() => FontCatalog(
   listSystemFonts: () async => const [],
@@ -26,6 +27,7 @@ FontCatalog _offlineFonts() => FontCatalog(
 Future<EditorSession> _pumpApp(
   WidgetTester tester, {
   FontCatalog? fonts,
+  AppLanguage? language,
 }) async {
   tester.view.physicalSize = const Size(1200, 900);
   tester.view.devicePixelRatio = 1;
@@ -42,14 +44,14 @@ Future<EditorSession> _pumpApp(
   );
 
   final table = tables.createEmpty(rows: 2, columns: 2, totalWidth: 9000);
-  table.rows[0].cells[0].controller.document.insert(0, 'Turma');
+  table.rows[0].cells[0].controller.document.insert(0, 'Class');
   final bytes = docx.encode(
     Delta()
-      ..insert('Texto antes da tabela\n')
+      ..insert('Text before the table\n')
       ..insert({EmbedTypes.table: encodeTableId(table.id)})
-      ..insert('\nTexto depois\n'),
+      ..insert('\nText after\n'),
   );
-  session.open(OpenedFile(name: 'teste.docx', bytes: bytes));
+  session.open(OpenedFile(name: 'test.docx', bytes: bytes));
 
   await tester.pumpWidget(
     VogesWordApp(
@@ -58,6 +60,7 @@ Future<EditorSession> _pumpApp(
       recents: RecentFiles(files),
       fonts: fonts ?? _offlineFonts(),
       launchArguments: const [],
+      language: language ?? AppLanguage(),
     ),
   );
   await tester.pumpAndSettle();
@@ -69,13 +72,13 @@ Finder _richText(String text) => find.textContaining(text, findRichText: true);
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  testWidgets('clicar numa célula edita a célula, não o texto principal', (
+  testWidgets('clicking a cell edits the cell, not the main text', (
     tester,
   ) async {
     final session = await _pumpApp(tester);
     final mainText = session.controller.document.toPlainText();
 
-    await tester.tap(_richText('Turma'));
+    await tester.tap(_richText('Class'));
     await tester.pumpAndSettle();
 
     final cell = session.activeCell.value;
@@ -84,51 +87,51 @@ void main() {
 
     tester.testTextInput.updateEditingValue(
       const TextEditingValue(
-        text: 'Turma A\n',
+        text: 'Class A\n',
         selection: TextSelection.collapsed(offset: 7),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(cell.cell.controller.document.toPlainText(), 'Turma A\n');
+    expect(cell.cell.controller.document.toPlainText(), 'Class A\n');
     expect(session.controller.document.toPlainText(), mainText);
     expect(session.dirty, isTrue);
 
-    await tester.tap(_richText('Texto depois'));
+    await tester.tap(_richText('Text after'));
     await tester.pumpAndSettle();
     expect(session.activeCell.value, isNull);
     expect(session.activeController.value, same(session.controller));
   });
 
-  testWidgets('negrito da barra vale para o trecho selecionado', (
+  testWidgets('bold from the ribbon applies to the selected text', (
     tester,
   ) async {
     final session = await _pumpApp(tester);
-    await tester.tap(_richText('Texto antes'));
+    await tester.tap(_richText('Text before'));
     await tester.pumpAndSettle();
 
     session.controller.updateSelection(
-      const TextSelection(baseOffset: 0, extentOffset: 5),
+      const TextSelection(baseOffset: 0, extentOffset: 4),
       ChangeSource.local,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Negrito (Ctrl+B)'));
+    await tester.tap(find.byTooltip('Bold (Ctrl+B)'));
     await tester.pumpAndSettle();
 
     final first = session.controller.document.toDelta().toList().first;
-    expect(first.data, 'Texto');
+    expect(first.data, 'Text');
     expect(first.attributes?['bold'], isTrue);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('atalho Shift+Enter quebra a linha sem novo parágrafo', (
+  testWidgets('Shift+Enter breaks the line without a new paragraph', (
     tester,
   ) async {
     final session = await _pumpApp(tester);
-    await tester.tap(_richText('Texto antes'));
+    await tester.tap(_richText('Text before'));
     await tester.pumpAndSettle();
     session.controller.updateSelection(
-      const TextSelection.collapsed(offset: 5),
+      const TextSelection.collapsed(offset: 4),
       ChangeSource.local,
     );
     await tester.pumpAndSettle();
@@ -139,13 +142,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      session.controller.document.toPlainText().startsWith('Texto\u2028 antes'),
+      session.controller.document.toPlainText().startsWith('Text\u2028 before'),
       isTrue,
     );
   });
 
   testWidgets(
-    'clique em parágrafo dividido entre páginas acha a palavra certa',
+    'a click on a paragraph split across pages finds the right word',
     (tester) async {
       tester.view.physicalSize = const Size(1200, 900);
       tester.view.devicePixelRatio = 1;
@@ -162,9 +165,9 @@ void main() {
         files: files,
         tables: tables,
       );
-      final words = List.generate(900, (i) => 'palavra$i').join(' ');
-      final bytes = docx.encode(Delta()..insert('$words MARCADOR fim\n'));
-      session.open(OpenedFile(name: 'longo.docx', bytes: bytes));
+      final words = List.generate(900, (i) => 'word$i').join(' ');
+      final bytes = docx.encode(Delta()..insert('$words MARKER end\n'));
+      session.open(OpenedFile(name: 'long.docx', bytes: bytes));
       await tester.pumpWidget(
         VogesWordApp(
           session: session,
@@ -172,6 +175,7 @@ void main() {
           recents: RecentFiles(files),
           fonts: _offlineFonts(),
           launchArguments: const [],
+          language: AppLanguage(),
         ),
       );
       await tester.pumpAndSettle();
@@ -181,7 +185,7 @@ void main() {
           .renderEditor;
       expect(editor.pageCount, greaterThan(1));
       final target =
-          session.controller.document.toPlainText().indexOf('MARCADOR') + 3;
+          session.controller.document.toPlainText().indexOf('MARKER') + 3;
       final scroll = tester.state<ScrollableState>(
         find
             .descendant(
@@ -206,7 +210,7 @@ void main() {
     },
   );
 
-  testWidgets('barra de status fica acima da barra de navegação do celular', (
+  testWidgets('the status bar stays above the phone navigation bar', (
     tester,
   ) async {
     await _pumpApp(tester);
@@ -214,7 +218,7 @@ void main() {
     tester.view.viewPadding = const FakeViewPadding(bottom: 48);
     await tester.pumpAndSettle();
 
-    final words = tester.getRect(find.textContaining('palavras'));
+    final words = tester.getRect(find.textContaining('words'));
     expect(words.bottom, lessThanOrEqualTo(900 - 48));
   });
 
@@ -240,7 +244,7 @@ void main() {
       ChangeSource.local,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Fonte'));
+    await tester.tap(find.byTooltip('Font'));
     await tester.pumpAndSettle();
     return (session, fonts, requested);
   }
@@ -251,11 +255,11 @@ void main() {
       .first
       .attributes?[Attribute.font.key];
 
-  testWidgets('seletor de fontes busca e aplica uma fonte do Google', (
+  testWidgets('the font picker finds and applies a Google font', (
     tester,
   ) async {
     final (session, _, requested) = await pumpWithFonts(tester);
-    expect(find.text('NO APARELHO'), findsOneWidget);
+    expect(find.text('ON THIS DEVICE'), findsOneWidget);
     expect(find.text('GOOGLE FONTS'), findsOneWidget);
     expect(find.text('Georgia'), findsOneWidget);
     expect(find.text('Pacifico'), findsNothing);
@@ -263,7 +267,7 @@ void main() {
     await tester.enterText(find.byType(TextField), 'la');
     await tester.pumpAndSettle();
     expect(find.text('Georgia'), findsNothing);
-    expect(find.text('ADICIONAR DO GOOGLE FONTS'), findsNothing);
+    expect(find.text('ADD FROM GOOGLE FONTS'), findsNothing);
 
     await tester.tap(find.text('Lato'));
     await tester.pumpAndSettle();
@@ -272,19 +276,58 @@ void main() {
     expect(requested.single.host, 'fonts.gstatic.com');
   });
 
-  testWidgets('fonte do Google fora da lista aparece na busca para adicionar', (
+  testWidgets('a Google font outside the list shows up in the search to add', (
     tester,
   ) async {
     final (session, fonts, _) = await pumpWithFonts(tester);
 
     await tester.enterText(find.byType(TextField), 'paci');
     await tester.pumpAndSettle();
-    expect(find.text('ADICIONAR DO GOOGLE FONTS'), findsOneWidget);
+    expect(find.text('ADD FROM GOOGLE FONTS'), findsOneWidget);
 
     await tester.tap(find.text('Pacifico'));
     await tester.pumpAndSettle();
 
     expect(firstFont(session), 'Pacifico');
     expect(fonts.googleFamilies, contains('Pacifico'));
+  });
+
+  testWidgets('the interface speaks the chosen language', (tester) async {
+    final language = AppLanguage(const Locale('pt'));
+    final session = await _pumpApp(tester, language: language);
+    expect(find.text('Início'), findsOneWidget);
+    expect(find.text('Arquivo'), findsOneWidget);
+    expect(session.locale.language, 'pt-BR');
+
+    language.select(const Locale('es'));
+    await tester.pumpAndSettle();
+    expect(find.text('Inicio'), findsOneWidget);
+    expect(find.text('Archivo'), findsOneWidget);
+    expect(find.byTooltip('Negrita (Ctrl+B)'), findsOneWidget);
+    expect(session.locale.language, 'es-ES');
+  });
+
+  testWidgets('the File menu switches the language and remembers it', (
+    tester,
+  ) async {
+    final language = AppLanguage();
+    await _pumpApp(tester, language: language);
+    expect(find.text('Home'), findsOneWidget);
+
+    await tester.tap(find.text('File'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Português'));
+    await tester.pumpAndSettle();
+    expect(language.locale, const Locale('pt'));
+    expect(find.text('Idioma'), findsOneWidget);
+
+    final saved = AppLanguage();
+    await saved.load();
+    expect(saved.locale, const Locale('pt'));
+
+    await tester.tap(find.text('Igual ao sistema'));
+    await tester.pumpAndSettle();
+    expect(language.locale, isNull);
+    expect(find.text('Language'), findsOneWidget);
   });
 }

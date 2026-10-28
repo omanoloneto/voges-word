@@ -10,14 +10,14 @@ import '../document/embeds.dart';
 import '../document/headers_footers.dart';
 import 'paper_styles.dart';
 
-/// Desenha cabeçalho e rodapé em cada folha, em pontos: texto, número da
-/// página e imagens (logos ancorados na posição que o Word usa).
+/// Paints the header and footer on each page, in points: text, page number
+/// and images (anchored logos at the position Word uses).
 class HeaderFooterPainter extends ChangeNotifier {
   HeaderFooterPainter(this.stories, this.look) {
     ready = _decodeImages();
   }
 
-  /// Completa quando as imagens do cabeçalho e do rodapé estão prontas.
+  /// Completes when the header and footer images are ready.
   late final Future<void> ready;
 
   final HeadersFooters stories;
@@ -31,7 +31,7 @@ class HeaderFooterPainter extends ChangeNotifier {
     ...stories.footers.values,
   ];
 
-  /// Até onde o cabeçalho mais alto desce, a partir do topo da folha.
+  /// How far down the tallest header reaches, from the top of the page.
   double get headerBottom => stories.headers.values.fold(
     0,
     (bottom, story) => math.max(
@@ -40,7 +40,7 @@ class HeaderFooterPainter extends ChangeNotifier {
     ),
   );
 
-  /// Até onde o rodapé mais alto sobe, a partir da base da folha.
+  /// How far up the tallest footer reaches, from the bottom of the page.
   double get footerTop => stories.footers.values.fold(
     0,
     (top, story) =>
@@ -161,11 +161,11 @@ class _PlacedText {
   final TextPainter painter;
   final Offset offset;
 
-  /// Imagens no meio do texto, na ordem dos espaços reservados.
+  /// Inline images, in the order of their placeholders.
   final List<String> images;
 }
 
-/// Imagem flutuante: a posição vem do wp:anchor guardado no atributo oculto.
+/// Floating image: positioned by the wp:anchor kept in the hidden attribute.
 class _Anchor {
   const _Anchor(this.source, this.xml, this.size, this.paragraphTop);
 
@@ -230,8 +230,8 @@ class _Anchor {
 class _StoryLayout {
   _StoryLayout(this.texts, this.anchors, this.height);
 
-  /// Parágrafos em pontos, com tabulações em esquerda, centro e direita
-  /// como no estilo Cabeçalho do Word.
+  /// Paragraphs in points, with left, center and right tab stops as in Word's
+  /// Header style.
   factory _StoryLayout.build(
     HeaderFooterStory story,
     DocumentLook look,

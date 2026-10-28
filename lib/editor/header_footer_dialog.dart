@@ -4,11 +4,12 @@ import 'package:flutter_quill/quill_delta.dart';
 
 import '../document/embeds.dart';
 import '../document/headers_footers.dart';
+import '../l10n/l10n.dart';
 import 'editor_factory.dart';
 import 'editor_session.dart';
 import 'paper_styles.dart';
 
-/// Edita cabeçalho e rodapé; devolve nulo se o usuário cancelar.
+/// Edits the header and footer; returns null if the user cancels.
 Future<HeadersFooters?> showHeaderFooterDialog(
   BuildContext context,
   EditorSession session,
@@ -104,9 +105,10 @@ class _HeaderFooterDialogState extends State<_HeaderFooterDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final variant = _firstDifferent ? _variant : PageVariant.normal;
     return AlertDialog(
-      title: const Text('Cabeçalho e rodapé'),
+      title: Text(l10n.groupHeaderFooter),
       content: SizedBox(
         width: 640,
         child: SingleChildScrollView(
@@ -116,14 +118,14 @@ class _HeaderFooterDialogState extends State<_HeaderFooterDialog> {
             children: [
               if (_firstDifferent) ...[
                 SegmentedButton<PageVariant>(
-                  segments: const [
+                  segments: [
                     ButtonSegment(
                       value: PageVariant.normal,
-                      label: Text('Demais páginas'),
+                      label: Text(l10n.otherPages),
                     ),
                     ButtonSegment(
                       value: PageVariant.first,
-                      label: Text('Primeira página'),
+                      label: Text(l10n.firstPage),
                     ),
                   ],
                   selected: {variant},
@@ -132,18 +134,15 @@ class _HeaderFooterDialogState extends State<_HeaderFooterDialog> {
                 ),
                 const SizedBox(height: 12),
               ],
-              _section('Cabeçalho', (true, variant)),
+              _section(l10n.header, (true, variant)),
               const SizedBox(height: 16),
-              _section('Rodapé', (false, variant)),
+              _section(l10n.footer, (false, variant)),
               const SizedBox(height: 8),
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
                 value: _firstDifferent,
-                title: const Text('Primeira página diferente'),
-                subtitle: const Text(
-                  'Para capa: a primeira página fica com cabeçalho e rodapé '
-                  'próprios, que podem ficar vazios.',
-                ),
+                title: Text(l10n.differentFirstPage),
+                subtitle: Text(l10n.differentFirstPageHint),
                 onChanged: (value) =>
                     setState(() => _firstDifferent = value ?? false),
               ),
@@ -154,11 +153,11 @@ class _HeaderFooterDialogState extends State<_HeaderFooterDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancelar'),
+          child: Text(l10n.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(context, _result()),
-          child: const Text('Aplicar'),
+          child: Text(l10n.apply),
         ),
       ],
     );
@@ -201,7 +200,7 @@ class _HeaderFooterDialogState extends State<_HeaderFooterDialog> {
                 padding: const EdgeInsets.all(10),
                 scrollable: true,
                 expands: true,
-                placeholder: 'Vazio',
+                placeholder: context.l10n.empty,
               ),
             ),
           ),
@@ -267,41 +266,41 @@ class _Toolbar extends StatelessWidget {
           children: [
             button(
               Icons.format_bold,
-              'Negrito',
+              context.l10n.bold,
               () => _toggle(Attribute.bold),
               selected: style.containsKey(Attribute.bold.key),
             ),
             button(
               Icons.format_italic,
-              'Itálico',
+              context.l10n.italic,
               () => _toggle(Attribute.italic),
               selected: style.containsKey(Attribute.italic.key),
             ),
             button(
               Icons.format_underlined,
-              'Sublinhado',
+              context.l10n.underline,
               () => _toggle(Attribute.underline),
               selected: style.containsKey(Attribute.underline.key),
             ),
             button(
               Icons.format_align_left,
-              'Alinhar à esquerda',
+              context.l10n.alignLeft,
               () => _align(Attribute.leftAlignment),
               selected: align == 'left',
             ),
             button(
               Icons.format_align_center,
-              'Centralizar',
+              context.l10n.alignCenter,
               () => _align(Attribute.centerAlignment),
               selected: align == 'center',
             ),
             button(
               Icons.format_align_right,
-              'Alinhar à direita',
+              context.l10n.alignRight,
               () => _align(Attribute.rightAlignment),
               selected: align == 'right',
             ),
-            button(Icons.tag, 'Inserir número da página', _insertPageNumber),
+            button(Icons.tag, context.l10n.insertPageNumber, _insertPageNumber),
           ],
         );
       },
