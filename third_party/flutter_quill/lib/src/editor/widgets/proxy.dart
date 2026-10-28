@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/rendering.dart';
@@ -145,8 +146,12 @@ class RichTextProxy extends SingleChildRenderObjectWidget {
     required this.textScaler,
     this.textWidthBasis = TextWidthBasis.parent,
     this.textHeightBehavior,
+    this.leadingPlaceholders = 0,
     super.key,
   });
+
+  /// Voges Word: caracteres no começo do texto que não existem no documento.
+  final int leadingPlaceholders;
 
   final TextStyle textStyle;
   final TextAlign textAlign;
@@ -160,7 +165,8 @@ class RichTextProxy extends SingleChildRenderObjectWidget {
   @override
   RenderParagraphProxy createRenderObject(BuildContext context) {
     return RenderParagraphProxy(null, textStyle, textAlign, textDirection,
-        textScaler, strutStyle, locale, textWidthBasis, textHeightBehavior);
+        textScaler, strutStyle, locale, textWidthBasis, textHeightBehavior)
+      ..leadingPlaceholders = leadingPlaceholders;
   }
 
   @override
@@ -174,7 +180,8 @@ class RichTextProxy extends SingleChildRenderObjectWidget {
       ..locale = locale
       ..strutStyle = strutStyle
       ..textWidthBasis = textWidthBasis
-      ..textHeightBehavior = textHeightBehavior;
+      ..textHeightBehavior = textHeightBehavior
+      ..leadingPlaceholders = leadingPlaceholders;
   }
 }
 
@@ -270,28 +277,64 @@ class RenderParagraphProxy extends RenderProxyBox
   @override
   RenderParagraph? get child => super.child as RenderParagraph?;
 
+  /// Voges Word: posições do documento ficam deslocadas desse tanto no texto
+  /// desenhado (recuo da primeira linha).
+  int _leading = 0;
+
+  set leadingPlaceholders(int value) {
+    if (_leading == value) {
+      return;
+    }
+    _leading = value;
+    markNeedsLayout();
+  }
+
+  TextPosition _toText(TextPosition position) => _leading == 0
+      ? position
+      : TextPosition(
+          offset: position.offset + _leading, affinity: position.affinity);
+
+  int _toDocument(int offset) => math.max(0, offset - _leading);
+
   @override
   double get preferredLineHeight => _prototypePainter.preferredLineHeight;
 
   @override
   Offset getOffsetForCaret(TextPosition position, Rect caretPrototype) =>
-      child!.getOffsetForCaret(position, caretPrototype);
+      child!.getOffsetForCaret(_toText(position), caretPrototype);
 
   @override
-  TextPosition getPositionForOffset(Offset offset) =>
-      child!.getPositionForOffset(offset);
+  TextPosition getPositionForOffset(Offset offset) {
+    final position = child!.getPositionForOffset(offset);
+    return _leading == 0
+        ? position
+        : TextPosition(
+            offset: _toDocument(position.offset),
+            affinity: position.affinity);
+  }
 
   @override
   double? getFullHeightForCaret(TextPosition position) =>
-      child!.getFullHeightForCaret(position);
+      child!.getFullHeightForCaret(_toText(position));
 
   @override
-  TextRange getWordBoundary(TextPosition position) =>
-      child!.getWordBoundary(position);
+  TextRange getWordBoundary(TextPosition position) {
+    final range = child!.getWordBoundary(_toText(position));
+    return _leading == 0
+        ? range
+        : TextRange(
+            start: _toDocument(range.start), end: _toDocument(range.end));
+  }
 
   @override
-  List<TextBox> getBoxesForSelection(TextSelection selection) => child!
-      .getBoxesForSelection(selection, boxHeightStyle: BoxHeightStyle.max);
+  List<TextBox> getBoxesForSelection(TextSelection selection) =>
+      child!.getBoxesForSelection(
+          _leading == 0
+              ? selection
+              : selection.copyWith(
+                  baseOffset: selection.baseOffset + _leading,
+                  extentOffset: selection.extentOffset + _leading),
+          boxHeightStyle: BoxHeightStyle.max);
 
   @override
   void performLayout() {

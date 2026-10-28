@@ -126,6 +126,7 @@ class EditorFactory {
       placeholder: placeholder,
       editorKey: editorKey,
       customStyles: styles,
+      lineFormat: (line) => paragraphFormat(line, look),
       embedBuilders: embedBuilders,
       unknownEmbedBuilder: const UnknownEmbedBuilder(),
       customStyleBuilder: lineHeightStyle,

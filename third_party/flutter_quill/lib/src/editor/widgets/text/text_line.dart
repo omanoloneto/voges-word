@@ -37,6 +37,7 @@ class TextLine extends StatefulWidget {
     this.customStyleBuilder,
     this.customRecognizerBuilder,
     this.customLinkPrefixes = const <String>[],
+    this.lineFormat,
     super.key,
   });
 
@@ -53,6 +54,9 @@ class TextLine extends StatefulWidget {
   final LinkActionPicker linkActionPicker;
   final List<String> customLinkPrefixes;
   final TextRange composingRange;
+
+  /// Voges Word: recuo da primeira linha do parágrafo.
+  final LineFormatBuilder? lineFormat;
 
   @override
   State<TextLine> createState() => _TextLineState();
@@ -170,10 +174,24 @@ class _TextLineState extends State<TextLine> {
         );
       }
     }
-    final textSpan = _getTextSpanForWholeLine();
+    var textSpan = _getTextSpanForWholeLine();
     final strutStyle =
         StrutStyle.fromTextStyle(textSpan.style ?? const TextStyle());
     final textAlign = _getTextAlign();
+    // Voges Word: o recuo da primeira linha é um espaço vazio no começo do
+    // texto; o proxy desconta esse caractere das posições.
+    final firstLine = widget.lineFormat?.call(widget.line)?.firstLine ?? 0;
+    final indented = firstLine > 0;
+    if (indented) {
+      textSpan = TextSpan(style: textSpan.style, children: [
+        WidgetSpan(
+          alignment: PlaceholderAlignment.baseline,
+          baseline: TextBaseline.alphabetic,
+          child: SizedBox(width: firstLine),
+        ),
+        textSpan,
+      ]);
+    }
     final child = RichText(
       key: _richTextKey,
       text: textSpan,
@@ -189,6 +207,7 @@ class _TextLineState extends State<TextLine> {
       strutStyle: strutStyle,
       locale: Localizations.localeOf(context),
       textScaler: MediaQuery.textScalerOf(context),
+      leadingPlaceholders: indented ? 1 : 0,
       child: child,
     );
   }

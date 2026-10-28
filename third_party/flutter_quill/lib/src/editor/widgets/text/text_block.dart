@@ -12,6 +12,7 @@ import '../../../document/nodes/line.dart';
 import '../../../editor_toolbar_shared/color.dart';
 import '../../editor.dart';
 import '../../embed/embed_editor_builder.dart';
+import '../../line_format.dart';
 import '../../raw_editor/builders/leading_block_builder.dart';
 import '../box.dart';
 import '../cursor.dart';
@@ -84,6 +85,7 @@ class EditableTextBlock extends StatelessWidget {
     this.customStyleBuilder,
     this.customLinkPrefixes = const <String>[],
     this.customLeadingBlockBuilder,
+    this.lineFormat,
     super.key,
   });
 
@@ -114,6 +116,9 @@ class EditableTextBlock extends StatelessWidget {
   final bool? checkBoxReadOnly;
   final List<String> customLinkPrefixes;
   final TextRange composingRange;
+
+  /// Voges Word: espaçamento e recuos de cada parágrafo.
+  final LineFormatBuilder? lineFormat;
 
   @override
   Widget build(BuildContext context) {
@@ -173,8 +178,12 @@ class EditableTextBlock extends StatelessWidget {
       indentLevelCounts.clear();
     }
     var index = 0;
+    final scaler = MediaQuery.textScalerOf(context);
     for (final line in Iterable.castFrom<dynamic, Line>(block.children)) {
       index++;
+      final format = lineFormat?.call(line);
+      final indent =
+          indentWidthBuilder(block, context, count, numberPointWidthBuilder);
       final editableTextLine = EditableTextLine(
           line,
           _buildLeading(
@@ -198,9 +207,16 @@ class EditableTextBlock extends StatelessWidget {
             customLinkPrefixes: customLinkPrefixes,
             customRecognizerBuilder: customRecognizerBuilder,
             composingRange: composingRange,
+            lineFormat: lineFormat,
           ),
-          indentWidthBuilder(block, context, count, numberPointWidthBuilder),
-          _getSpacingForLine(line, index, count, defaultStyles),
+          format == null
+              ? indent
+              : HorizontalSpacing(
+                  indent.left, indent.right + scaler.scale(format.indentRight)),
+          format == null
+              ? _getSpacingForLine(line, index, count, defaultStyles)
+              : VerticalSpacing(scaler.scale(format.spaceBefore),
+                  scaler.scale(format.spaceAfter)),
           textDirection,
           textSelection,
           color,

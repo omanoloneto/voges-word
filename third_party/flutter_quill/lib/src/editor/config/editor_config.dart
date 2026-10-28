@@ -20,6 +20,7 @@ import '../widgets/link.dart' hide linkPrefixes;
 import '../widgets/text/magnifier.dart';
 import '../widgets/text/utils/text_block_utils.dart';
 import 'search_config.dart';
+import '../line_format.dart';
 import '../page_layout.dart';
 
 // IMPORTANT For project authors: The QuillEditorConfig.copyWith()
@@ -48,6 +49,7 @@ class QuillEditorConfig {
     this.maxHeight,
     this.maxContentWidth,
     this.pageLayout,
+    this.lineFormat,
     this.customStyles,
     this.textCapitalization = TextCapitalization.sentences,
     this.keyboardAppearance,
@@ -293,6 +295,9 @@ class QuillEditorConfig {
   /// Voges Word: desenha o documento em páginas quando não é nulo.
   final QuillPageLayout? pageLayout;
 
+  /// Voges Word: espaçamento e recuos de cada parágrafo.
+  final LineFormatBuilder? lineFormat;
+
   /// Allows to override [DefaultStyles].
   final DefaultStyles? customStyles;
 
@@ -503,6 +508,7 @@ class QuillEditorConfig {
     double? maxHeight,
     double? maxContentWidth,
     QuillPageLayout? pageLayout,
+    LineFormatBuilder? lineFormat,
     DefaultStyles? customStyles,
     bool? expands,
     TextCapitalization? textCapitalization,
@@ -567,6 +573,7 @@ class QuillEditorConfig {
       maxHeight: maxHeight ?? this.maxHeight,
       maxContentWidth: maxContentWidth ?? this.maxContentWidth,
       pageLayout: pageLayout ?? this.pageLayout,
+      lineFormat: lineFormat ?? this.lineFormat,
       customStyles: customStyles ?? this.customStyles,
       expands: expands ?? this.expands,
       textCapitalization: textCapitalization ?? this.textCapitalization,

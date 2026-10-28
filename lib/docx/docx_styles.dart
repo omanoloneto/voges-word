@@ -141,6 +141,9 @@ class ParagraphProps {
     this.spaceBefore = 0,
     this.spaceAfter = 0,
     this.indentLeft = 0,
+    this.indentRight = 0,
+    this.firstLine = 0,
+    this.contextualSpacing = false,
     this.numId,
     this.level = 0,
   });
@@ -155,8 +158,13 @@ class ParagraphProps {
   final double spaceBefore;
   final double spaceAfter;
 
-  /// Recuo à esquerda em twips.
+  /// Recuos em twips; [firstLine] negativo é recuo deslocado.
   final double indentLeft;
+  final double indentRight;
+  final double firstLine;
+
+  /// Sem espaço entre parágrafos do mesmo estilo.
+  final bool contextualSpacing;
   final int? numId;
   final int level;
 
@@ -168,6 +176,8 @@ class ParagraphProps {
     var before = spaceBefore;
     var after = spaceAfter;
     var indent = indentLeft;
+    var right = indentRight;
+    var first = firstLine;
     var numId = this.numId;
     var level = this.level;
 
@@ -191,7 +201,19 @@ class ParagraphProps {
       indent =
           double.tryParse(x.attr(ind, 'left') ?? x.attr(ind, 'start') ?? '') ??
           indent;
+      right =
+          double.tryParse(x.attr(ind, 'right') ?? x.attr(ind, 'end') ?? '') ??
+          right;
+      final hanging = double.tryParse(x.attr(ind, 'hanging') ?? '');
+      final firstLine = double.tryParse(x.attr(ind, 'firstLine') ?? '');
+      if (hanging != null) {
+        first = -hanging;
+      } else if (firstLine != null) {
+        first = firstLine;
+      }
     }
+    final contextual =
+        x.onOff(x.child(pPr, 'contextualSpacing')) ?? contextualSpacing;
 
     final numPr = x.child(pPr, 'numPr');
     if (numPr != null) {
@@ -206,6 +228,9 @@ class ParagraphProps {
       spaceBefore: before,
       spaceAfter: after,
       indentLeft: indent,
+      indentRight: right,
+      firstLine: first,
+      contextualSpacing: contextual,
       numId: numId,
       level: level,
     );

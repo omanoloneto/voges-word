@@ -85,6 +85,8 @@ class DocxReader {
       italic: run.italic,
       spaceBefore: paragraph.spaceBefore,
       spaceAfter: paragraph.spaceAfter,
+      indentRight: paragraph.indentRight / 20,
+      firstLine: paragraph.firstLine / 20,
     );
 
     final normal = styles.paragraphProps(null);
@@ -272,6 +274,10 @@ class _BlockReader {
     final indentLevel = list != null
         ? props.level
         : (props.indentLeft / 720).round();
+    final base = header != null
+        ? c.styles.paragraphProps(styleId)
+        : c.normalParagraph;
+    bool differs(double a, double b) => (a - b).abs() > 0.05;
     final attributes = <String, dynamic>{
       'header': ?header,
       if (list != null) 'list': list == ListKind.bullet ? 'bullet' : 'ordered',
@@ -281,6 +287,18 @@ class _BlockReader {
           (props.lineSpacing - c.normalParagraph.lineSpacing).abs() > 0.01)
         'line-height': (props.lineSpacing * 100).round() / 100,
       if (list != null) HiddenAttributes.numbering: numId,
+      if (list == null) ...{
+        if (differs(props.spaceBefore, base.spaceBefore))
+          HiddenAttributes.spaceBefore: props.spaceBefore,
+        if (differs(props.spaceAfter, base.spaceAfter))
+          HiddenAttributes.spaceAfter: props.spaceAfter,
+        if (differs(props.indentRight, base.indentRight))
+          HiddenAttributes.indentRight: props.indentRight / 20,
+        if (differs(props.firstLine, base.firstLine))
+          HiddenAttributes.firstLine: props.firstLine / 20,
+        if (props.contextualSpacing)
+          HiddenAttributes.contextualGroup: styleId ?? '',
+      },
       if (bookmarks.isNotEmpty)
         HiddenAttributes.bookmarks: jsonEncode(bookmarks),
     };

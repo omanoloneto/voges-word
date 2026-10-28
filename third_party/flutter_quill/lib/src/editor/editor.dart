@@ -303,6 +303,7 @@ class QuillEditorState extends State<QuillEditor>
         maxHeight: config.maxHeight,
         maxContentWidth: config.maxContentWidth,
         pageLayout: config.pageLayout,
+        lineFormat: config.lineFormat,
         customStyles: config.customStyles,
         expands: config.expands,
         autoFocus: config.autoFocus,

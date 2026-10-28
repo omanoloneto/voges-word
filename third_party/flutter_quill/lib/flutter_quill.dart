@@ -16,6 +16,7 @@ export 'src/document/nodes/node.dart';
 export 'src/document/structs/doc_change.dart';
 export 'src/document/style.dart';
 export 'src/editor/editor.dart';
+export 'src/editor/line_format.dart';
 export 'src/editor/page_layout.dart';
 export 'src/editor/embed/embed_editor_builder.dart';
 export 'src/editor/raw_editor/builders/leading_block_builder.dart';

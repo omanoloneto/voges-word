@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 
 import '../document/document_look.dart';
+import '../document/embeds.dart';
 
 const pointsToPixels = 96 / 72;
 
@@ -111,6 +112,56 @@ HorizontalSpacing _indentWidth(Block block, double scale) {
   final level = (attributes[Attribute.indent.key]?.value as int?) ?? 0;
   final isList = attributes.containsKey(Attribute.list.key);
   return HorizontalSpacing((36 * level + (isList ? 36 : 0)) * scale, 0);
+}
+
+/// Espaçamento e recuos de cada parágrafo como no arquivo. Listas seguem o
+/// espaçamento do bloco, como o estilo Parágrafo da Lista do Word.
+LineFormat? paragraphFormat(Line line, DocumentLook look) {
+  final attributes = line.style.attributes;
+  if (attributes.containsKey(Attribute.list.key) || _isBlockEmbed(line)) {
+    return null;
+  }
+  final level = (attributes[Attribute.header.key]?.value as num?)?.toInt();
+  final base = level == null ? look.body : look.heading(level);
+  double value(String key, double fallback) =>
+      (attributes[key]?.value as num?)?.toDouble() ?? fallback;
+
+  var before = value(HiddenAttributes.spaceBefore, base.spaceBefore);
+  var after = value(HiddenAttributes.spaceAfter, base.spaceAfter);
+  final group = attributes[HiddenAttributes.contextualGroup]?.value;
+  if (group != null) {
+    if (_contextualGroup(_neighbor(line, before: true)) == group) before = 0;
+    if (_contextualGroup(_neighbor(line, before: false)) == group) after = 0;
+  }
+  return LineFormat(
+    spaceBefore: before,
+    spaceAfter: after,
+    indentRight: value(HiddenAttributes.indentRight, base.indentRight),
+    firstLine: value(HiddenAttributes.firstLine, base.firstLine),
+  );
+}
+
+/// Tabelas e outros blocos não herdam recuo de parágrafo, como no Word.
+bool _isBlockEmbed(Line line) =>
+    line.childCount == 1 &&
+    line.children.single is Embed &&
+    EmbedTypes.blockLevel.contains((line.children.single as Embed).value.type);
+
+Object? _contextualGroup(Line? line) =>
+    line?.style.attributes[HiddenAttributes.contextualGroup]?.value;
+
+/// Parágrafo vizinho, atravessando o limite de blocos (listas, alinhamento).
+Line? _neighbor(Line line, {required bool before}) {
+  final parent = line.parent;
+  final sibling =
+      (before ? line.previous : line.next) ??
+      (parent is Block ? (before ? parent.previous : parent.next) : null);
+  return switch (sibling) {
+    Line() => sibling,
+    Block() =>
+      (before ? sibling.children.last : sibling.children.first) as Line,
+    _ => null,
+  };
 }
 
 /// Espaçamento de linha fora dos quatro valores prontos do editor.

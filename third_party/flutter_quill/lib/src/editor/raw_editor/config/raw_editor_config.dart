@@ -16,6 +16,7 @@ import '../../widgets/text/magnifier.dart';
 import '../../widgets/text/utils/text_block_utils.dart';
 import '../builders/leading_block_builder.dart';
 import 'events/events.dart';
+import '../../line_format.dart';
 import '../../page_layout.dart';
 
 @immutable
@@ -48,6 +49,7 @@ class QuillRawEditorConfig {
     this.minHeight,
     this.maxContentWidth,
     this.pageLayout,
+    this.lineFormat,
     this.customStyles,
     this.customShortcuts,
     this.customActions,
@@ -285,6 +287,9 @@ class QuillRawEditorConfig {
 
   /// Voges Word: paginação (ver [QuillPageLayout]).
   final QuillPageLayout? pageLayout;
+
+  /// Voges Word: espaçamento e recuos de cada parágrafo.
+  final LineFormatBuilder? lineFormat;
 
   /// Allows to override [DefaultStyles].
   final DefaultStyles? customStyles;

@@ -9,6 +9,8 @@ class TextLook {
     this.italic = false,
     this.spaceBefore = 0,
     this.spaceAfter = 0,
+    this.indentRight = 0,
+    this.firstLine = 0,
   });
 
   /// Pontos.
@@ -19,6 +21,10 @@ class TextLook {
   final bool italic;
   final double spaceBefore;
   final double spaceAfter;
+  final double indentRight;
+
+  /// Negativo é recuo deslocado.
+  final double firstLine;
 }
 
 /// Medidas da página e aparência base do documento, tudo em pontos.

@@ -623,6 +623,7 @@ class QuillRawEditorState extends EditorState
           customStyleBuilder: widget.config.customStyleBuilder,
           customLinkPrefixes: widget.config.customLinkPrefixes,
           composingRange: composingRange.value,
+          lineFormat: widget.config.lineFormat,
         );
         result.add(
           Directionality(
@@ -657,13 +658,24 @@ class QuillRawEditorState extends EditorState
       onLaunchUrl: widget.config.onLaunchUrl,
       customLinkPrefixes: widget.config.customLinkPrefixes,
       composingRange: composingRange.value,
+      lineFormat: widget.config.lineFormat,
     );
+    // Voges Word: espaçamento e recuo à direita do próprio parágrafo.
+    final format = widget.config.lineFormat?.call(node);
+    final scaler = MediaQuery.textScalerOf(context);
+    final horizontal = _getHorizontalSpacingForLine(node, _styles);
     final editableTextLine = EditableTextLine(
         node,
         null,
         textLine,
-        _getHorizontalSpacingForLine(node, _styles),
-        _getVerticalSpacingForLine(node, _styles),
+        format == null
+            ? horizontal
+            : HorizontalSpacing(horizontal.left,
+                horizontal.right + scaler.scale(format.indentRight)),
+        format == null
+            ? _getVerticalSpacingForLine(node, _styles)
+            : VerticalSpacing(scaler.scale(format.spaceBefore),
+                scaler.scale(format.spaceAfter)),
         _textDirection,
         controller.selection,
         widget.config.selectionColor,

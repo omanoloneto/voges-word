@@ -23,6 +23,16 @@ abstract final class HiddenAttributes {
   static const bookmarks = 'vw-bmk';
   static const drawing = 'vw-drawing';
   static const package = 'vw-pkg';
+
+  /// Cópias em pontos do espaçamento e dos recuos do parágrafo, só para a
+  /// tela; o arquivo continua vindo de [paragraphProperties].
+  static const spaceBefore = 'vw-sb';
+  static const spaceAfter = 'vw-sa';
+  static const indentRight = 'vw-ir';
+  static const firstLine = 'vw-fl';
+
+  /// Estilo dos parágrafos que não somam espaço entre si.
+  static const contextualGroup = 'vw-ctx';
 }
 
 /// Conteúdo do Word que o editor exibe mas não edita (campos, sumário,
