@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'system_fonts.dart';
 
@@ -42,15 +43,22 @@ class FontCatalog extends ChangeNotifier {
   var _system = const <String>[];
   var _systemNames = const <String>{};
   var _google = const <String, List<String>>{};
+  var _listed = const <String>{};
+  var _added = <String>{};
   var _googleNames = const <String>[];
+  var _unlisted = const <String>[];
   final _registered = <String>{};
   final _pending = <String, Future<bool>>{};
   Future<void>? _loading;
 
   List<String> get systemFamilies => _system;
 
-  /// Inclui os nomes do Office atendidos pelas equivalentes do Google.
+  /// O terço mais popular do catálogo, as adicionadas pelo usuário e os
+  /// nomes do Office atendidos pelas equivalentes do Google.
   List<String> get googleFamilies => _googleNames;
+
+  /// Fora da lista: aparecem na busca, para adicionar.
+  List<String> get unlistedGoogleFamilies => _unlisted;
 
   Future<void> load() => _loading ??= _load();
 
@@ -61,21 +69,60 @@ class FontCatalog extends ChangeNotifier {
       _system = const [];
     }
     _systemNames = _system.toSet();
+    final google = <String, List<String>>{};
+    final listed = <String>{};
     try {
-      _google = {
-        for (final line in (await _readGoogleCatalog()).split('\n'))
-          if (line.split('\t') case [final name, final files])
-            name: files.split(' '),
-      };
+      for (final line in (await _readGoogleCatalog()).split('\n')) {
+        if (line.split('\t') case [final name, final files, final inList]) {
+          google[name] = files.split(' ');
+          if (inList == '1') listed.add(name);
+        }
+      }
     } catch (_) {
-      _google = const {};
+      google.clear();
     }
+    _google = google;
+    _listed = listed;
+    _added = await _readAdded();
+    _refreshLists();
+    notifyListeners();
+  }
+
+  void _refreshLists() {
+    bool listed(String name) => _listed.contains(name) || _added.contains(name);
     _googleNames = _sorted([
-      ..._google.keys,
+      ..._google.keys.where(listed),
       for (final MapEntry(:key, :value) in metricCompatibleFonts.entries)
         if (_google.containsKey(value)) key,
     ]).where((name) => !_systemNames.contains(name)).toList();
+    _unlisted = _sorted(
+      _google.keys.where(
+        (name) => !listed(name) && !_systemNames.contains(name),
+      ),
+    );
+  }
+
+  /// Põe uma fonte do Google na lista do usuário; fica salva no aparelho.
+  Future<void> add(String family) async {
+    await load();
+    if (!_google.containsKey(family) || !_added.add(family)) return;
+    _refreshLists();
     notifyListeners();
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setStringList(_addedKey, _added.toList()..sort());
+    } catch (_) {
+      return;
+    }
+  }
+
+  Future<Set<String>> _readAdded() async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      return {...?preferences.getStringList(_addedKey)};
+    } catch (_) {
+      return {};
+    }
   }
 
   /// Pode ser desenhada agora, sem baixar nada.
@@ -137,6 +184,8 @@ class FontCatalog extends ChangeNotifier {
     return bytes;
   }
 }
+
+const _addedKey = 'fontes_adicionadas';
 
 bool _matches(Uint8List bytes, String hash) =>
     sha256.convert(bytes).toString() == hash;

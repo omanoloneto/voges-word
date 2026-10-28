@@ -5,7 +5,9 @@ import '../editor_factory.dart';
 import 'ribbon_controls.dart';
 import 'ribbon_style.dart';
 
-typedef _Row = ({String text, bool header});
+enum _RowKind { header, font, add }
+
+typedef _Row = ({String text, _RowKind kind});
 
 /// Campo de fonte com busca: as do documento, as instaladas e as do Google.
 class FontPicker extends StatefulWidget {
@@ -97,13 +99,18 @@ class _FontPanelState extends State<_FontPanel> {
 
   List<_Row> _rows() {
     final query = _query.trim().toLowerCase();
-    List<_Row> section(String title, Iterable<String> families) {
+    List<_Row> section(
+      String title,
+      Iterable<String> families, {
+      _RowKind kind = _RowKind.font,
+    }) {
       final found = [
         for (final family in families)
-          if (family.toLowerCase().contains(query))
-            (text: family, header: false),
+          if (family.toLowerCase().contains(query)) (text: family, kind: kind),
       ];
-      return found.isEmpty ? const [] : [(text: title, header: true), ...found];
+      return found.isEmpty
+          ? const []
+          : [(text: title, kind: _RowKind.header), ...found];
     }
 
     final fonts = widget.fonts;
@@ -118,7 +125,18 @@ class _FontPanelState extends State<_FontPanel> {
         fonts.systemFamilies,
       ),
       ...section('Google Fonts', fonts.googleFamilies),
+      if (query.isNotEmpty)
+        ...section(
+          'Adicionar do Google Fonts',
+          fonts.unlistedGoogleFamilies,
+          kind: _RowKind.add,
+        ),
     ];
+  }
+
+  void _choose(_Row row) {
+    if (row.kind == _RowKind.add) widget.fonts.add(row.text).ignore();
+    widget.onSelected(row.text);
   }
 
   @override
@@ -154,8 +172,10 @@ class _FontPanelState extends State<_FontPanel> {
               ),
               onChanged: (value) => setState(() => _query = value),
               onSubmitted: (_) {
-                final first = _rows().where((row) => !row.header).firstOrNull;
-                if (first != null) widget.onSelected(first.text);
+                final first = _rows()
+                    .where((row) => row.kind != _RowKind.header)
+                    .firstOrNull;
+                if (first != null) _choose(first);
               },
             ),
           ),
@@ -178,7 +198,11 @@ class _FontPanelState extends State<_FontPanel> {
                   itemExtent: 34,
                   itemBuilder: (context, index) {
                     final row = rows[index];
-                    return row.header ? _header(row.text) : _font(row.text);
+                    return switch (row.kind) {
+                      _RowKind.header => _header(row.text),
+                      _RowKind.font => _font(row),
+                      _RowKind.add => _addable(row),
+                    };
                   },
                 );
               },
@@ -194,12 +218,13 @@ class _FontPanelState extends State<_FontPanel> {
     child: Text(title.toUpperCase(), style: RibbonText.label),
   );
 
-  Widget _font(String family) {
+  Widget _font(_Row row) {
+    final family = row.text;
     final fonts = widget.fonts;
     final ready = fonts.isReady(family);
     final missing = !fonts.canProvide(family);
     return InkWell(
-      onTap: () => widget.onSelected(family),
+      onTap: () => _choose(row),
       hoverColor: RibbonColors.hover,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -247,4 +272,33 @@ class _FontPanelState extends State<_FontPanel> {
       ),
     );
   }
+
+  Widget _addable(_Row row) => InkWell(
+    onTap: () => _choose(row),
+    hoverColor: RibbonColors.hover,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: Row(
+        children: [
+          const SizedBox(width: 26),
+          Expanded(
+            child: Text(
+              row.text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: RibbonText.control,
+            ),
+          ),
+          const Tooltip(
+            message: 'Adicionar à lista',
+            child: Icon(
+              Icons.add_circle_outline,
+              size: 16,
+              color: RibbonColors.text,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }

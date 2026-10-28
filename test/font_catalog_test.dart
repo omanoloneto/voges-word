@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:voges_word/fonts/font_catalog.dart';
 import 'package:voges_word/fonts/font_names.dart';
 
@@ -58,25 +59,40 @@ Set<String> _families(Uint8List bytes) =>
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('separa instaladas e do Google, com os nomes do Office', () async {
+  const google = 'Lato\taa\t1\nArimo\tbb\t1\nCarlito\tcc\t0\nPacifico\tdd\t0\n';
+
+  test('separa instaladas, lista do Google e fora da lista', () async {
     final catalog = FontCatalog(
       listSystemFonts: () async => ['Georgia', '.SF NS', 'Arial'],
-      readGoogleCatalog: () async => 'Lato\taa\nArimo\tbb\nCarlito\tcc\n',
+      readGoogleCatalog: () async => google,
     );
     await catalog.load();
 
     expect(catalog.systemFamilies, ['Arial', 'Georgia']);
-    expect(catalog.googleFamilies, [
-      'Arimo',
-      'Calibri',
-      'Carlito',
-      'Helvetica',
-      'Lato',
-    ]);
+    expect(catalog.googleFamilies, ['Arimo', 'Calibri', 'Helvetica', 'Lato']);
+    expect(catalog.unlistedGoogleFamilies, ['Carlito', 'Pacifico']);
     expect(catalog.isReady('Georgia'), isTrue);
     expect(catalog.canProvide('Calibri'), isTrue);
     expect(catalog.canProvide('Aptos'), isFalse);
+  });
+
+  test('fonte adicionada entra na lista e fica salva', () async {
+    FontCatalog catalog() => FontCatalog(
+      listSystemFonts: () async => const [],
+      readGoogleCatalog: () async => google,
+    );
+    final first = catalog();
+    await first.add('Pacifico');
+    await first.add('Inexistente');
+
+    expect(first.googleFamilies, contains('Pacifico'));
+    expect(first.unlistedGoogleFamilies, isNot(contains('Pacifico')));
+    final reopened = catalog();
+    await reopened.load();
+    expect(reopened.googleFamilies, contains('Pacifico'));
+    expect(reopened.googleFamilies, isNot(contains('Inexistente')));
   });
 
   test('baixa, confere o hash, guarda e registra com o nome pedido', () async {
@@ -87,7 +103,7 @@ void main() {
     final requested = <Uri>[];
     FontCatalog catalog() => FontCatalog(
       listSystemFonts: () async => const [],
-      readGoogleCatalog: () async => 'Carlito\t$hash\n',
+      readGoogleCatalog: () async => 'Carlito\t$hash\t0\n',
       download: (url) async {
         requested.add(url);
         return font;
@@ -107,7 +123,7 @@ void main() {
   test('recusa arquivo que não confere com o catálogo', () async {
     final catalog = FontCatalog(
       listSystemFonts: () async => const [],
-      readGoogleCatalog: () async => 'Lato\t${'0' * 64}\n',
+      readGoogleCatalog: () async => 'Lato\t${'0' * 64}\t1\n',
       download: (_) async => _fakeFont(5),
       cacheDirectory: () async => null,
     );

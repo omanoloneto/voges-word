@@ -8,7 +8,8 @@ Editor de documentos leve, no espírito do Word, sem um milhão de opções. Abr
 - Documento em páginas, como o Word: o texto passa para a página seguinte sozinho, parágrafos se dividem entre páginas (sem linha sozinha no pé ou no topo), títulos não ficam isolados no fim da página e tabelas quebram por linha. Também há o modo contínuo e zoom de 50% a 200%. Em telas estreitas o texto se ajusta à largura.
 - Faixa de ferramentas em abas (Início, Inserir, Layout, Exibir e Tabela, que aparece ao editar uma célula), com galeria de estilos e cores rápidas.
 - No computador, os botões da janela ficam dentro da faixa azul: à esquerda no Mac, à direita no Windows e, no Linux, do lado configurado no sistema (à direita se não houver configuração). Desfazer, refazer, copiar, recortar e colar ficam sempre do lado oposto.
-- Fontes com busca: as instaladas no computador e as do Google Fonts (cerca de 1.900). Uma fonte do Google é baixada na primeira vez que você a escolhe ou abre um documento que a usa, conferida pelo hash e guardada no aparelho.
+- Fontes com busca: as instaladas no computador e 630 do Google Fonts, o terço mais popular entre as que escrevem português. As outras do Google aparecem quando você busca por elas; ao escolher uma, ela entra na sua lista.
+- Uma fonte do Google é baixada na primeira vez que você a escolhe ou abre um documento que a usa. O arquivo é conferido pelo hash e fica guardado no aparelho.
 - Calibri, Cambria, Arial, Times New Roman, Courier New, Georgia e Helvetica, quando não estão instaladas, aparecem com as equivalentes de mesma medida do Google Fonts (Carlito, Caladea, Arimo, Tinos, Cousine e Gelasio). Assim o texto quebra nas mesmas linhas que no Word.
 - Layout da página: margens (Normal, ABNT, Estreita, Moderada, Larga), retrato ou paisagem e tamanho (A4, Carta, Ofício, A5), gravados no .docx.
 - Menu Arquivo com documento novo a partir de modelos (em branco, espaçamento simples, trabalho escolar nas normas da ABNT, currículo) e arquivos abertos recentemente.
@@ -71,7 +72,7 @@ Para gerar imagens da tela e conferir o visual (fontes do sistema, sem abrir o a
 VW_SCREENSHOTS=pasta-de-saida VW_SAMPLES=/pasta/com/docx flutter test test/screenshots_test.dart
 ```
 
-A lista do Google Fonts (`assets/fonts/google_fonts.txt`) sai do código do pacote [google_fonts](https://pub.dev/packages/google_fonts) (licença BSD), com até quatro arquivos por família (normal, negrito, itálico e negrito itálico). Para atualizar:
+A lista do Google Fonts (`assets/fonts/google_fonts.txt`) sai do código do pacote [google_fonts](https://pub.dev/packages/google_fonts) (licença BSD), com até quatro arquivos por família (normal, negrito, itálico e negrito itálico). Quais entram na lista padrão vem da popularidade publicada em fonts.google.com. Para atualizar:
 
 ```sh
 dart run tool/google_fonts_catalog.dart ~/.pub-cache/hosted/pub.dev/google_fonts-<versão>/lib/src/google_fonts_parts

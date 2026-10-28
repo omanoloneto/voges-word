@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:voges_word/app.dart';
 import 'package:voges_word/docx/docx_codec.dart';
 import 'package:voges_word/document/embeds.dart';
@@ -66,6 +67,8 @@ Future<EditorSession> _pumpApp(
 Finder _richText(String text) => find.textContaining(text, findRichText: true);
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   testWidgets('clicar numa célula edita a célula, não o texto principal', (
     tester,
   ) async {
@@ -215,15 +218,16 @@ void main() {
     expect(words.bottom, lessThanOrEqualTo(900 - 48));
   });
 
-  testWidgets('seletor de fontes busca e aplica uma fonte do Google', (
-    tester,
+  Future<(EditorSession, FontCatalog, List<Uri>)> pumpWithFonts(
+    WidgetTester tester,
   ) async {
     final bytes = Uint8List.fromList(List.generate(64, (i) => i));
     final hash = sha256.convert(bytes).toString();
     final requested = <Uri>[];
     final fonts = FontCatalog(
       listSystemFonts: () async => const ['Georgia'],
-      readGoogleCatalog: () async => 'Lato\t$hash\nRoboto\t$hash\n',
+      readGoogleCatalog: () async =>
+          'Lato\t$hash\t1\nRoboto\t$hash\t1\nPacifico\t$hash\t0\n',
       download: (url) async {
         requested.add(url);
         return bytes;
@@ -236,23 +240,51 @@ void main() {
       ChangeSource.local,
     );
     await tester.pumpAndSettle();
-
     await tester.tap(find.byTooltip('Fonte'));
     await tester.pumpAndSettle();
+    return (session, fonts, requested);
+  }
+
+  String? firstFont(EditorSession session) => session.controller.document
+      .toDelta()
+      .operations
+      .first
+      .attributes?[Attribute.font.key];
+
+  testWidgets('seletor de fontes busca e aplica uma fonte do Google', (
+    tester,
+  ) async {
+    final (session, _, requested) = await pumpWithFonts(tester);
     expect(find.text('NO APARELHO'), findsOneWidget);
     expect(find.text('GOOGLE FONTS'), findsOneWidget);
     expect(find.text('Georgia'), findsOneWidget);
+    expect(find.text('Pacifico'), findsNothing);
 
     await tester.enterText(find.byType(TextField), 'la');
     await tester.pumpAndSettle();
     expect(find.text('Georgia'), findsNothing);
+    expect(find.text('ADICIONAR DO GOOGLE FONTS'), findsNothing);
 
     await tester.tap(find.text('Lato'));
     await tester.pumpAndSettle();
 
-    final first = session.controller.document.toDelta().operations.first;
-    expect(first.data, 'Texto');
-    expect(first.attributes?[Attribute.font.key], 'Lato');
-    expect(requested, [Uri.parse('https://fonts.gstatic.com/s/a/$hash.ttf')]);
+    expect(firstFont(session), 'Lato');
+    expect(requested.single.host, 'fonts.gstatic.com');
+  });
+
+  testWidgets('fonte do Google fora da lista aparece na busca para adicionar', (
+    tester,
+  ) async {
+    final (session, fonts, _) = await pumpWithFonts(tester);
+
+    await tester.enterText(find.byType(TextField), 'paci');
+    await tester.pumpAndSettle();
+    expect(find.text('ADICIONAR DO GOOGLE FONTS'), findsOneWidget);
+
+    await tester.tap(find.text('Pacifico'));
+    await tester.pumpAndSettle();
+
+    expect(firstFont(session), 'Pacifico');
+    expect(fonts.googleFamilies, contains('Pacifico'));
   });
 }

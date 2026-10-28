@@ -152,6 +152,8 @@ void main() {
     await capture(tester, 'fontes');
     await tester.enterText(find.byType(TextField), 'ro');
     await capture(tester, 'fontes-busca');
+    await tester.enterText(find.byType(TextField), 'noto sans');
+    await capture(tester, 'fontes-adicionar');
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Arquivo').first);

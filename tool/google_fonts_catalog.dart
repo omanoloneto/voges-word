@@ -1,7 +1,17 @@
-// Gera assets/fonts/google_fonts.txt a partir do código do pacote google_fonts.
+// Gera assets/fonts/google_fonts.txt a partir do código do pacote google_fonts
+// e da popularidade publicada em fonts.google.com.
 //
 // Uso: dart run tool/google_fonts_catalog.dart <pasta lib/src/google_fonts_parts>
+import 'dart:convert';
 import 'dart:io';
+
+/// A lista padrão traz um terço do catálogo: as mais populares que escrevem
+/// português. As outras só aparecem na busca, para adicionar.
+const _listedShare = 3;
+
+/// Feitas para outra escrita: CJK (arquivos enormes) e as Noto de cada
+/// alfabeto ficam fora da lista padrão mesmo tendo letras latinas.
+const _cjk = {'Jpan', 'Kore', 'Hans', 'Hant', 'Hira'};
 
 final _family = RegExp(
   r'/// Applies the (.+) font family from Google Fonts to the\n',
@@ -10,7 +20,7 @@ final _variant = RegExp(
   r"fontWeight: FontWeight\.w(\d)00,\s*fontStyle: FontStyle\.(normal|italic),\s*\): GoogleFontsFile\(\s*'([0-9a-f]{64})'",
 );
 
-void main(List<String> arguments) {
+Future<void> main(List<String> arguments) async {
   if (arguments.length != 1) {
     stderr.writeln(
       'Uso: dart run tool/google_fonts_catalog.dart <google_fonts_parts>',
@@ -39,12 +49,61 @@ void main(List<String> arguments) {
       if (files.isNotEmpty) families[starts[i][1]!] = files;
     }
   }
+
+  final popularity = await _popularity();
+  final ranked =
+      families.keys.where((name) => popularity[name]?.latin ?? false).toList()
+        ..sort((a, b) {
+          final rank = popularity[a]!.rank.compareTo(popularity[b]!.rank);
+          return rank != 0 ? rank : a.compareTo(b);
+        });
+  final listed = ranked.take((families.length / _listedShare).round()).toSet();
+
   final names = families.keys.toList()..sort();
   final output = File('assets/fonts/google_fonts.txt')
     ..writeAsStringSync(
-      names.map((name) => '$name\t${families[name]!.join(' ')}\n').join(),
+      names
+          .map(
+            (name) =>
+                '$name\t${families[name]!.join(' ')}\t'
+                '${listed.contains(name) ? 1 : 0}\n',
+          )
+          .join(),
     );
-  stdout.writeln('${names.length} famílias em ${output.path}');
+  stdout.writeln(
+    '${names.length} famílias, ${listed.length} na lista, em ${output.path}',
+  );
+}
+
+Future<Map<String, ({int rank, bool latin})>> _popularity() async {
+  final client = HttpClient();
+  try {
+    final request = await client.getUrl(
+      Uri.https('fonts.google.com', '/metadata/fonts'),
+    );
+    final response = await request.close();
+    if (response.statusCode != 200) {
+      throw HttpException('HTTP ${response.statusCode}');
+    }
+    final body = await response.transform(utf8.decoder).join();
+    final json = jsonDecode(body.substring(body.indexOf('{'))) as Map;
+    return {
+      for (final entry in json['familyMetadataList'] as List)
+        entry['family'] as String: (
+          rank: entry['popularity'] as int,
+          latin: _writesPortuguese(entry as Map),
+        ),
+    };
+  } finally {
+    client.close();
+  }
+}
+
+bool _writesPortuguese(Map entry) {
+  final script = entry['primaryScript'] as String? ?? '';
+  final otherScript = script.isNotEmpty && script != 'Latn';
+  return (entry['subsets'] as List).contains('latin') &&
+      !(otherScript && (_cjk.contains(script) || entry['isNoto'] == true));
 }
 
 /// Até quatro arquivos: normal e itálico, perto do peso 400 e do 700.
