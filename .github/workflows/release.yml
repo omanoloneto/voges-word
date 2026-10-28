@@ -38,7 +38,8 @@ jobs:
   linux:
     name: Linux
     needs: version
-    runs-on: ubuntu-latest
+    # o binário exige a glibc de onde foi compilado: no 22.04 o .deb roda no Debian 12 e no Mint 21
+    runs-on: ubuntu-22.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:

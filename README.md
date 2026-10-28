@@ -8,7 +8,7 @@ Os instaladores estão na [última versão](https://github.com/omanoloneto/voges
 
 - **macOS** 10.15 ou mais novo, Apple Silicon e Intel: abra o `VogesWord-macos.dmg` e arraste o Voges Word para Aplicativos. O app não é autenticado pela Apple; na primeira vez, libere em Ajustes do Sistema → Privacidade e Segurança → Abrir Mesmo Assim.
 - **Windows** 10 ou 11, 64 bits: `VogesWord-windows-setup.exe`. Instala sem administrador e entra no "Abrir com" do `.docx` e do `.txt`. Se o SmartScreen avisar, clique em "Mais informações" e depois em "Executar assim mesmo".
-- **Linux** (Debian, Ubuntu e derivados, 64 bits): `sudo apt install ./voges-word-linux-amd64.deb`.
+- **Linux** (Ubuntu 22.04, Debian 12 ou mais novos e derivados, 64 bits): `sudo apt install ./voges-word-linux-amd64.deb`.
 
 ## O que faz
 
