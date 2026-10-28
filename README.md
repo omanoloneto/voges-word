@@ -15,6 +15,11 @@ Editor de documentos leve, no espírito do Word, sem um milhão de opções. Abr
 - Menu Arquivo com documento novo a partir de modelos (em branco, espaçamento simples, trabalho escolar nas normas da ABNT, currículo) e arquivos abertos recentemente.
 - Formatação do dia a dia: estilo (Normal, Título 1–3), fonte, tamanho, negrito, itálico, sublinhado, tachado, cor da fonte, realce, alinhamento, marcadores, numeração, recuo e espaçamento entre linhas.
 - Inserir link, imagem, tabela (com linhas e colunas novas) e quebra de página.
+- Cabeçalho, rodapé e número de página (aba Inserir), com primeira página diferente para capa. Logos e campos de página que vêm do Word aparecem em cada folha.
+- Recuo da primeira linha, recuos e espaçamento de cada parágrafo aparecem na tela como no arquivo; o modelo de trabalho escolar já vem com o recuo de 1,25 cm da ABNT.
+- PDF, impressão e compartilhamento pelo menu Arquivo. O PDF sai igual à tela, com o texto pesquisável.
+- Corretor ortográfico em português, com sugestões no botão direito (ou no toque longo), no Mac, no Android e no iPhone.
+- Recuperação: enquanto há alterações não salvas, uma cópia fica guardada; se o app fechar sem salvar, ele oferece recuperar ao abrir de novo.
 - Tabelas editáveis célula por célula, inclusive com células mescladas.
 - Localizar e substituir, contagem de palavras, desfazer/refazer.
 - Avisa antes de fechar ou abrir outro arquivo com alterações não salvas.
@@ -29,9 +34,12 @@ Limitações conhecidas:
 - A divisão em páginas é feita com as fontes disponíveis. Se o arquivo usa uma fonte que não está instalada e não tem equivalente no Google Fonts (como a Aptos), uma página pode terminar uma ou duas linhas antes ou depois do que no Word.
 - No Android, no iOS e na web a lista traz só as fontes do Google: o Android não deixa usar as fontes do aparelho pelo nome.
 - Para baixar fontes, o app acessa fonts.gstatic.com, do Google. Sem internet, a fonte aparece com outra até poder ser baixada.
-- Cabeçalho e rodapé são mantidos, mas não aparecem nas páginas nem podem ser editados.
+- Em documentos com várias seções, todas as páginas mostram o cabeçalho e o rodapé da última seção; tabelas dentro do cabeçalho não aparecem nas folhas.
+- O PDF guarda cada página como imagem a 200 dpi, com o texto invisível por cima para buscar e copiar; por isso fica maior que um PDF exportado pelo Word.
+- No Windows e no Linux, Imprimir abre o PDF no visualizador do sistema, de onde se imprime. O Linux não compartilha arquivos.
+- O corretor ortográfico ainda não existe no Windows, no Linux e na web.
 - Comentários não aparecem; alterações controladas são aceitas ao abrir.
-- Recuo de primeira linha e espaçamento próprio de cada parágrafo são mantidos no arquivo, mas a tela usa o espaçamento do estilo Normal.
+- Recuo deslocado (o inverso do recuo de primeira linha) é mantido no arquivo, mas a tela mostra o parágrafo sem ele.
 - Arquivos `.doc` antigos (Word 97–2003) não são suportados.
 
 ## Atalhos
@@ -44,6 +52,7 @@ Limitações conhecidas:
 | Alinhar esquerda / centro / direita / justificar | Ctrl+L / Ctrl+E / Ctrl+R / Ctrl+J |
 | Link / Imagem | Ctrl+K / Ctrl+G |
 | Localizar / Substituir | Ctrl+F / Ctrl+H |
+| Imprimir | Ctrl+P |
 | Quebra de linha no mesmo parágrafo | Shift+Enter |
 | Quebra de página | Ctrl+Enter |
 | Zoom | Ctrl+= / Ctrl+- / Ctrl+0 |
@@ -87,5 +96,7 @@ O editor de texto é o [flutter_quill](https://pub.dev/packages/flutter_quill) 1
 - `lib/editor/` — tela, páginas, faixa de ferramentas, menu Arquivo, tabelas, busca e sessão (abrir, salvar, alterações).
 - `lib/files/` — diálogos de arquivo, arquivos abertos pelo sistema e recentes.
 - `lib/fonts/` — fontes instaladas, catálogo e download do Google Fonts.
+- `lib/print/` — páginas desenhadas fora da tela, montagem do PDF e impressão pelo sistema.
+- `lib/spell/` — corretor ortográfico do sistema e sublinhado no editor.
 - `tool/` — gerador da lista do Google Fonts.
 - `third_party/flutter_quill/` — editor de texto com paginação.
