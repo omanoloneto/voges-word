@@ -30,7 +30,8 @@ Future<void> requestWindowClose(WidgetTester tester) async {
     ),
     (_) {},
   );
-  await tester.pump();
+  // the updater exits one event-loop turn after it reopens the app
+  await tester.pump(Duration.zero);
 }
 
 Finder button(String label) => find.ancestor(
@@ -94,6 +95,7 @@ void main() {
         findsOneWidget,
       );
       await tester.tap(button('Close'));
+      await tester.pump(Duration.zero);
       expect(h.exits, [0]);
       expect(h.platform.finished, isEmpty);
     });
@@ -115,6 +117,7 @@ void main() {
       expect(h.opened, [Uri.parse(vogesWord.downloadPage)]);
 
       await tester.tap(button('Close'));
+      await tester.pump(Duration.zero);
       expect(h.exits, [0]);
       expect(h.platform.finished, [null]);
     });
@@ -146,6 +149,7 @@ void main() {
       expect(find.text('All your Voges apps are up to date.'), findsOneWidget);
       await tester.tap(button('Open Voges Word'));
       expect(h.platform.finished, [wordHost]);
+      await tester.pump(Duration.zero);
       expect(h.exits, [0]);
     });
 
@@ -178,6 +182,7 @@ void main() {
 
       await tester.tap(button('Not now'));
       expect(h.platform.finished, [wordHost]);
+      await tester.pump(Duration.zero);
       expect(h.exits, [0]);
     });
 
@@ -330,6 +335,7 @@ void main() {
 
       await tester.pump(const Duration(seconds: 1));
       expect(h.platform.installs, hasLength(1));
+      await tester.pump(Duration.zero);
       expect(h.exits, [0]);
     });
 
@@ -424,6 +430,7 @@ void main() {
       await tester.tap(button('Try again'));
       await tester.pump();
       expect(h.platform.installs.last.single.copy.app, vogesSheets);
+      await tester.pump(Duration.zero);
       expect(h.exits, [0]);
     });
   });
@@ -622,6 +629,7 @@ void main() {
       await tester.pump();
       await requestWindowClose(tester);
       expect(h.platform.finished, [wordHost]);
+      await tester.pump(Duration.zero);
       expect(h.exits, [0]);
     });
 
@@ -630,8 +638,11 @@ void main() {
       await h.session.start();
       await pumpUpdater(tester, h);
 
-      expect(await tester.binding.handleRequestAppExit(), AppExitResponse.exit);
+      final response = tester.binding.handleRequestAppExit();
+      await tester.pump(Duration.zero);
+      expect(await response, AppExitResponse.exit);
       expect(h.platform.finished, [wordHost]);
+      await tester.pump(Duration.zero);
       expect(h.exits, [0]);
     });
   });
@@ -643,11 +654,12 @@ void main() {
       await pumpUpdater(tester, h);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump(Duration.zero);
       expect(h.exits, [0]);
       expect(h.platform.installs, isEmpty);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
+      await tester.pump(Duration.zero);
       expect(h.platform.installs, hasLength(1));
     });
 

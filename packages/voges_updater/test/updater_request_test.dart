@@ -84,6 +84,8 @@ void main() {
         ['--voges-updater', r'--relaunch=C:\Voges\..\Other\voges_word.exe'],
         ['--voges-updater', r'--relaunch=C:\Voges\.\voges_word.exe'],
         ['--voges-updater', r'--relaunch=C:/Voges/voges_word.exe'],
+        ['--voges-updater', r'--relaunch=\Voges\voges_word.exe'],
+        ['--voges-updater', r'--relaunch=\\server\share\voges_word.exe'],
         ['--voges-updater', '--relaunch $_exe'],
         ['--voges-updater', '--relaunch=$_exe', 'document.docx'],
         ['--voges-updater', _exe],

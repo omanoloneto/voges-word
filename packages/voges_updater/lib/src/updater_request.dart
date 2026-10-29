@@ -8,6 +8,7 @@ final class UpdaterRequest {
 
   static const flag = '--voges-updater';
   static const _relaunch = '--relaunch=';
+  static final _drivePath = RegExp(r'^[A-Za-z]:\\[^\\]');
 
   /// Windows: the installed executable to open again when the update ends.
   final String? relaunch;
@@ -34,7 +35,9 @@ final class UpdaterRequest {
           return null;
         }
         final path = arguments.last.substring(_relaunch.length);
-        if (!p.windows.isAbsolute(path) || p.windows.normalize(path) != path) {
+        // a drive path only: the installers never use root-relative or
+        // network paths
+        if (!_drivePath.hasMatch(path) || p.windows.normalize(path) != path) {
           return null;
         }
         return UpdaterRequest._(relaunch: path);

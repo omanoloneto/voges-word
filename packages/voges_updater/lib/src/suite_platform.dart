@@ -107,11 +107,7 @@ abstract interface class SuitePlatform {
   }) {
     if (Platform.isMacOS) return MacosPlatform(runner: runner);
     if (Platform.isWindows) {
-      return WindowsPlatform(
-        hostApp: host,
-        relaunch: relaunch,
-        runner: runner,
-      );
+      return WindowsPlatform(hostApp: host, relaunch: relaunch, runner: runner);
     }
     if (Platform.isLinux) return LinuxPlatform(hostApp: host, runner: runner);
     throw UnsupportedError('No updater for ${Platform.operatingSystem}');

@@ -295,7 +295,7 @@ class UpdaterSession extends ChangeNotifier {
       if (!await _waitForApps(ready, run)) return;
       await _install(ready);
     }
-    _finish(rows);
+    await _finish(rows);
   }
 
   /// Copies of the same app share one download.
@@ -425,7 +425,7 @@ class UpdaterSession extends ChangeNotifier {
     }
   }
 
-  void _finish(List<UpdateRow> rows) {
+  Future<void> _finish(List<UpdateRow> rows) async {
     final failures = [for (final row in rows) ?row._failure];
     final declined =
         failures.length == rows.length &&
@@ -439,7 +439,7 @@ class UpdaterSession extends ChangeNotifier {
     }
     _enter(UpdaterStage.finished);
     if (!_rows.any((row) => row._phase == UpdateRowPhase.failed)) {
-      _finishAndExit();
+      await _finishAndExit();
     }
   }
 
@@ -485,17 +485,20 @@ class UpdaterSession extends ChangeNotifier {
       _exit(0);
       return;
     }
-    _finishAndExit();
+    await _finishAndExit();
   }
 
-  // synchronous up to the exit: on macOS the old bundle that holds this
-  // process may be deleted here, and nothing must load from it afterwards
-  void _finishAndExit() {
+  // On macOS the old bundle that holds this process may be deleted here, so
+  // only one event-loop turn runs before the exit: Dart starts the detached
+  // reopen of Windows and Linux on the next turn, and without it the app
+  // would never open again.
+  Future<void> _finishAndExit() async {
     try {
       platform.finishSync(_host);
     } catch (_) {
       // the process ends anyway
     }
+    await Future<void>.delayed(Duration.zero);
     _exit(0);
   }
 

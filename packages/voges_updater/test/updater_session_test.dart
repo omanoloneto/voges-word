@@ -163,6 +163,7 @@ void main() {
       expect(h.session.reopensHost, isFalse);
 
       h.session.leave();
+      async.elapse(Duration.zero);
       expect(h.exits, [0]);
       expect(h.platform.finished, isEmpty);
     });
@@ -178,6 +179,7 @@ void main() {
 
       h.session.leave();
       expect(h.platform.finished, [null]);
+      async.elapse(Duration.zero);
       expect(h.exits, [0]);
     });
 
@@ -222,6 +224,7 @@ void main() {
       expect(h.row(vogesWord).phase, UpdateRowPhase.updated);
       expect(h.row(vogesWord).installedVersion, version('1.2.0'));
       expect(h.platform.finished, [wordHost]);
+      async.elapse(Duration.zero);
       expect(h.exits, [0]);
     });
 
@@ -237,6 +240,7 @@ void main() {
       expect(h.platform.installs.single.map((item) => item.copy.app), [
         vogesSheets,
       ]);
+      async.elapse(Duration.zero);
       expect(h.exits, [0]);
     });
 
@@ -333,6 +337,7 @@ void main() {
         items.singleWhere((item) => item.copy.app == vogesWord).asset,
         same(word.asset),
       );
+      async.elapse(Duration.zero);
       expect(h.exits, [0]);
     });
 
@@ -366,6 +371,7 @@ void main() {
       expect(h.platform.runningChecks, 3);
       expect(h.session.blockers, isEmpty);
       expect(h.platform.installs, hasLength(1));
+      async.elapse(Duration.zero);
       expect(h.exits, [0]);
     });
 
@@ -413,6 +419,7 @@ void main() {
       final item = h.platform.installs.single.single;
       install.complete([Installed(item, item.version)]);
       async.flushMicrotasks();
+      async.elapse(Duration.zero);
       expect(h.exits, [0]);
     });
 
@@ -444,6 +451,7 @@ void main() {
       ]);
       expect(h.downloader.calls, hasLength(2));
       expect(h.platform.finished, [wordHost]);
+      async.elapse(Duration.zero);
       expect(h.exits, [0]);
     });
 
@@ -497,6 +505,7 @@ void main() {
       h.session.update();
       async.flushMicrotasks();
       expect(h.downloader.calls, hasLength(1));
+      async.elapse(Duration.zero);
       expect(h.exits, [0]);
     });
 
@@ -565,6 +574,7 @@ void main() {
         expect(h.session.reopensHost, isTrue);
         h.session.leave();
         expect(h.platform.finished, [wordHost]);
+        async.elapse(Duration.zero);
         expect(h.exits, [0]);
       });
     }
@@ -579,6 +589,7 @@ void main() {
         async.flushMicrotasks();
         h.session.leave();
         expect(h.platform.finished, [wordHost]);
+        async.elapse(Duration.zero);
         expect(h.exits, [0]);
       }
     });

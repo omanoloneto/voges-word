@@ -101,6 +101,10 @@ final class _FakeSystem implements ProcessRunner {
   }
 
   @override
+  ProcessResult runSync(String executable, List<String> arguments) =>
+      throw UnsupportedError('the release tool never runs tools synchronously');
+
+  @override
   Future<Process> start(
     String executable,
     List<String> arguments, {

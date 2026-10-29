@@ -59,11 +59,7 @@ final class UpdateFailure implements Exception {
 
   @override
   String toString() {
-    final parts = [
-      kind.name,
-      if (code != null) 'code $code',
-      ?detail,
-    ];
+    final parts = [kind.name, if (code != null) 'code $code', ?detail];
     return 'UpdateFailure(${parts.join(', ')})';
   }
 }
