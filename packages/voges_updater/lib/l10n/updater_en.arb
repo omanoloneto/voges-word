@@ -1,5 +1,209 @@
 {
   "@@locale": "en",
   "updateChecking": "Checking for updates…",
-  "@updateChecking": {"description": "Status bar, while the app checks for a new version."}
+  "@updateChecking": {"description": "Status bar, while the app checks for a new version."},
+  "updateUpToDate": "Up to date",
+  "@updateUpToDate": {"description": "Status bar, when the app runs the latest version."},
+  "updateUpToDateTooltip": "{app} {version} is the latest version. Click to check again.",
+  "@updateUpToDateTooltip": {
+    "description": "Tooltip of the status bar when the app runs the latest version.",
+    "placeholders": {
+      "app": {"type": "String", "example": "Voges Word"},
+      "version": {"type": "String", "example": "1.2.0"}
+    }
+  },
+  "updateAvailable": "Update to {version}",
+  "@updateAvailable": {
+    "description": "Status bar button that closes the app and opens Voges Updater.",
+    "placeholders": {
+      "version": {"type": "String", "example": "1.2.0"}
+    }
+  },
+  "updateAvailableTooltip": "{app} closes and Voges Updater installs version {version}.",
+  "@updateAvailableTooltip": {
+    "description": "Tooltip of the status bar button that opens Voges Updater.",
+    "placeholders": {
+      "app": {"type": "String", "example": "Voges Word"},
+      "version": {"type": "String", "example": "1.2.0"}
+    }
+  },
+  "updateOpening": "Opening the updater…",
+  "@updateOpening": {"description": "Status bar, while the app starts Voges Updater."},
+  "updateDownloadAvailable": "Version {version} available",
+  "@updateDownloadAvailable": {
+    "description": "Status bar, when a new version exists but this copy can't update itself. Opens the download page.",
+    "placeholders": {
+      "version": {"type": "String", "example": "1.2.0"}
+    }
+  },
+  "updateDownloadTooltip": "Download the new version from the website.",
+  "@updateDownloadTooltip": {"description": "Tooltip when this copy wasn't installed with the suite's installers."},
+  "updateMoveToApplications": "To update {app} from here, move it to the Applications folder and open it again.",
+  "@updateMoveToApplications": {
+    "description": "macOS tooltip, when the app runs from a disk image or from a translocated folder.",
+    "placeholders": {
+      "app": {"type": "String", "example": "Voges Word"}
+    }
+  },
+  "updateCheckFailed": "Couldn't check for updates",
+  "@updateCheckFailed": {"description": "Status bar, when the version check failed."},
+  "updateCheckFailedTooltip": "Click to try again.",
+  "@updateCheckFailedTooltip": {"description": "Tooltip of the status bar when the version check failed."},
+  "updateLaunchFailed": "Couldn't open the updater.",
+  "@updateLaunchFailed": {"description": "Message when Voges Updater didn't start."},
+  "updateDownloadPage": "Download page",
+  "@updateDownloadPage": {"description": "Button that opens the app's download page on the website."},
+  "updaterHeading": "Updates for your Voges apps",
+  "@updaterHeading": {"description": "Voges Updater: title of the list of updates."},
+  "updaterHostClosed": "{app} was closed to install updates. It opens again when you're done.",
+  "@updaterHostClosed": {
+    "description": "Voges Updater: the app that opened the updater was closed.",
+    "placeholders": {
+      "app": {"type": "String", "example": "Voges Word"}
+    }
+  },
+  "updaterChecking": "Looking for updates…",
+  "@updaterChecking": {"description": "Voges Updater: while it checks for new versions."},
+  "updaterSelectAll": "Select all",
+  "@updaterSelectAll": {"description": "Voges Updater: checkbox that selects every update of the list."},
+  "updaterVersionChange": "{from} → {to}",
+  "@updaterVersionChange": {
+    "description": "Voges Updater: the installed version and the new version of an app.",
+    "placeholders": {
+      "from": {"type": "String", "example": "1.1.0"},
+      "to": {"type": "String", "example": "1.2.0"}
+    }
+  },
+  "updaterWhatsNew": "What's new",
+  "@updaterWhatsNew": {"description": "Voges Updater: link to the release notes of the new version."},
+  "updaterForThisUser": "For this user",
+  "@updaterForThisUser": {"description": "Windows: a copy installed only for the current user."},
+  "updaterForAllUsers": "For all users · asks for administrator permission",
+  "@updaterForAllUsers": {"description": "Windows: a copy installed for every user of the computer."},
+  "updaterNotNow": "Not now",
+  "@updaterNotNow": {"description": "Voges Updater: closes without updating."},
+  "updaterUpdateButton": "{count, plural, =1{Update 1 app} other{Update {count} apps}}",
+  "@updaterUpdateButton": {
+    "description": "Voges Updater: installs the selected updates.",
+    "placeholders": {
+      "count": {"type": "int", "example": "2"}
+    }
+  },
+  "updaterAllUpToDate": "All your Voges apps are up to date.",
+  "@updaterAllUpToDate": {"description": "Voges Updater: no app has a new version."},
+  "updaterOffline": "Couldn't check for updates. Check your internet connection.",
+  "@updaterOffline": {"description": "Voges Updater: every version check failed."},
+  "updaterHostNotFound": "Voges Updater couldn't find where {app} is installed. Download the new version from the website.",
+  "@updaterHostNotFound": {
+    "description": "Voges Updater: the app that opened the updater isn't among the installed apps.",
+    "placeholders": {
+      "app": {"type": "String", "example": "Voges Word"}
+    }
+  },
+  "updaterRowCheckFailed": "Couldn't check for updates",
+  "@updaterRowCheckFailed": {"description": "Voges Updater: an app whose version check failed."},
+  "updaterTryAgain": "Try again",
+  "@updaterTryAgain": {"description": "Voges Updater: repeats what failed."},
+  "updaterCloseApps": "Save your work and close these apps. The update continues by itself once they're closed.",
+  "@updaterCloseApps": {"description": "Voges Updater: shown while the apps to update are still open."},
+  "updaterOpenWindows": "{app} · {count, plural, =1{1 window} other{{count} windows}}",
+  "@updaterOpenWindows": {
+    "description": "Voges Updater: an app that is still open, and how many windows it has.",
+    "placeholders": {
+      "app": {"type": "String", "example": "Voges Word"},
+      "count": {"type": "int", "example": "2"}
+    }
+  },
+  "updaterOtherAccount": "{app} · open in another user account",
+  "@updaterOtherAccount": {
+    "description": "Voges Updater: an app that is open in another user account of the computer.",
+    "placeholders": {
+      "app": {"type": "String", "example": "Voges Word"}
+    }
+  },
+  "updaterDownloading": "Downloading… {percent}%",
+  "@updaterDownloading": {
+    "description": "Voges Updater: download progress of an app.",
+    "placeholders": {
+      "percent": {"type": "int", "example": "42"}
+    }
+  },
+  "updaterVerifying": "Checking the download…",
+  "@updaterVerifying": {"description": "Voges Updater: while it checks the signature and the checksum of a download."},
+  "updaterInstalling": "Installing…",
+  "@updaterInstalling": {"description": "Voges Updater: while an app is installed."},
+  "updaterAdminHint": "Confirm the administrator prompt. If you don't see it, look for it on the taskbar.",
+  "@updaterAdminHint": {"description": "Windows: while the installer waits for the administrator prompt."},
+  "updaterPasswordHint": "Type your password in the window that opened.",
+  "@updaterPasswordHint": {"description": "Linux: while the system asks for the password."},
+  "updaterUpdated": "Updated to {version}",
+  "@updaterUpdated": {
+    "description": "Voges Updater: an app that was updated.",
+    "placeholders": {
+      "version": {"type": "String", "example": "1.2.0"}
+    }
+  },
+  "updaterCancel": "Cancel",
+  "@updaterCancel": {"description": "Voges Updater: stops the download or the wait and goes back to the list."},
+  "updaterClose": "Close",
+  "@updaterClose": {"description": "Voges Updater: closes the updater."},
+  "updaterOpenApp": "Open {app}",
+  "@updaterOpenApp": {
+    "description": "Voges Updater: closes the updater and opens the app that opened it.",
+    "placeholders": {
+      "app": {"type": "String", "example": "Voges Word"}
+    }
+  },
+  "updaterAlreadyRunning": "Voges Updater is already open in another window.",
+  "@updaterAlreadyRunning": {"description": "Voges Updater: another updater is running."},
+  "updaterErrorNetwork": "The download failed. Check your internet connection and try again.",
+  "@updaterErrorNetwork": {"description": "Voges Updater: a download failed."},
+  "updaterErrorVerification": "The download couldn't be verified, so nothing was installed. Try again later.",
+  "@updaterErrorVerification": {"description": "Voges Updater: the signature, the checksum or the identity of a download didn't match."},
+  "updaterErrorUnavailable": "Version {version} isn't available for this system yet.",
+  "@updaterErrorUnavailable": {
+    "description": "Voges Updater: the release has no installer for this system.",
+    "placeholders": {
+      "version": {"type": "String", "example": "1.2.0"}
+    }
+  },
+  "updaterErrorPermission": "macOS didn't allow replacing {app}. Install it with the installer.",
+  "@updaterErrorPermission": {
+    "description": "macOS: the app's folder can't be changed by this user.",
+    "placeholders": {
+      "app": {"type": "String", "example": "Voges Word"}
+    }
+  },
+  "updaterErrorInUse": "{app} or one of its files was still in use. Close it and try again.",
+  "@updaterErrorInUse": {
+    "description": "Voges Updater: the app was still open when it had to be replaced.",
+    "placeholders": {
+      "app": {"type": "String", "example": "Voges Word"}
+    }
+  },
+  "updaterErrorDeclined": "Permission wasn't given, so nothing was installed.",
+  "@updaterErrorDeclined": {"description": "Voges Updater: the administrator or password prompt was dismissed."},
+  "updaterErrorNoPasswordWindow": "This system can't show a password window. Install the update from a terminal:",
+  "@updaterErrorNoPasswordWindow": {"description": "Linux: no password window is available; a command follows."},
+  "updaterErrorNotAuthorized": "Your account can't install apps. Ask an administrator to run:",
+  "@updaterErrorNotAuthorized": {"description": "Linux: the account may not install software; a command follows."},
+  "updaterErrorPackageManager": "The package manager couldn't install the update:",
+  "@updaterErrorPackageManager": {"description": "Linux: apt refused the package; its error follows."},
+  "updaterErrorFailed": "The update failed (code {code}).",
+  "@updaterErrorFailed": {
+    "description": "Voges Updater: the installer failed with this exit code.",
+    "placeholders": {
+      "code": {"type": "int", "example": "7"}
+    }
+  },
+  "updaterErrorUnknown": "The update failed.",
+  "@updaterErrorUnknown": {"description": "Voges Updater: the update failed with no exit code."},
+  "updaterKeepOpen": "Keep this window open until the command finishes.",
+  "@updaterKeepOpen": {"description": "Linux: the downloaded files are deleted when the window closes."},
+  "updaterCopyCommand": "Copy command",
+  "@updaterCopyCommand": {"description": "Linux: copies the install command."},
+  "updaterOpenInstaller": "Open the installer",
+  "@updaterOpenInstaller": {"description": "macOS: copies the verified disk image to Downloads and opens it."},
+  "updaterShowLog": "Show log",
+  "@updaterShowLog": {"description": "Windows: opens the installer's log."}
 }
