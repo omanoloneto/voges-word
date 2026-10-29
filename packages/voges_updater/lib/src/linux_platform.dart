@@ -67,6 +67,14 @@ final class LinuxPlatform implements SuitePlatform {
     final cache = await Directory(_cacheFolder()).create(recursive: true);
     final work = await cache.createTemp('update-');
     _work.add(work);
+    // unlike mkdtemp on macOS, Dart creates it with the umask here (0755)
+    final private = await runner.run('/usr/bin/chmod', ['700', work.path]);
+    if (private.exitCode != 0) {
+      throw UpdateFailure(
+        UpdateFailureKind.failed,
+        detail: 'chmod: ${private.stderr}'.trim(),
+      );
+    }
     return work;
   }
 

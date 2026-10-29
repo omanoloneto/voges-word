@@ -185,6 +185,7 @@ void main() {
     setUp(() async {
       linux = platform();
       work = await linux.workDirectory();
+      runner.calls.clear();
     });
 
     PendingInstall pending(SuiteApp app, {String version = '1.2.0'}) {
@@ -414,7 +415,24 @@ void main() {
 
       expect(p.dirname(work.path), p.join(cache, 'voges'));
       expect(p.basename(work.path), startsWith('update-'));
-      expect(work.statSync().modeString(), 'rwx------');
+      expect(runner.argvs, [
+        ['/usr/bin/chmod', '700', work.path],
+      ]);
+    });
+
+    test('refuses a work folder it can\'t make private', () async {
+      runner.onRun = (call) => processResult(1, stderr: 'not permitted');
+
+      await expectLater(
+        platform().workDirectory(),
+        throwsA(
+          isA<UpdateFailure>().having(
+            (failure) => failure.kind,
+            'kind',
+            UpdateFailureKind.failed,
+          ),
+        ),
+      );
     });
 
     test('falls back to ~/.cache for a missing or relative XDG path', () async {
@@ -462,6 +480,7 @@ void main() {
       () async {
         final linux = platform();
         final work = await linux.workDirectory();
+        runner.calls.clear();
 
         linux.finishSync(await linux.host());
 

@@ -566,12 +566,17 @@ void main() {
       expect(File(p.join(outside.path, 'keep')).existsSync(), isTrue);
     });
 
-    test('gives each run a private work folder', () async {
-      final work = await mac.platform().workDirectory();
+    test(
+      'gives each run a private work folder',
+      () async {
+        final work = await mac.platform().workDirectory();
 
-      expect(p.basename(work.path), startsWith('voges-update-'));
-      expect(work.statSync().modeString(), 'rwx------');
-    });
+        expect(p.basename(work.path), startsWith('voges-update-'));
+        expect(work.statSync().modeString(), 'rwx------');
+      },
+      // the mode comes from mkdtemp, which Dart uses only on macOS
+      testOn: 'mac-os',
+    );
   });
 
   group('leaving', () {
