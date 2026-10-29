@@ -48,6 +48,8 @@ dependencies:
   path_provider: ^2.1.6
   share_plus: ^12.0.2
   intl: ^0.20.2
+  voges_updater:
+    path: packages/voges_updater
 
 dev_dependencies:
   flutter_test:

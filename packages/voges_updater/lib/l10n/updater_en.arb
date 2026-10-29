@@ -1,0 +1,5 @@
+{
+  "@@locale": "en",
+  "updateChecking": "Checking for updates…",
+  "@updateChecking": {"description": "Status bar, while the app checks for a new version."}
+}
