@@ -9,6 +9,10 @@ abstract interface class ProcessRunner {
     String? workingDirectory,
   });
 
+  /// For the last steps before the process exits, when no event loop turn is
+  /// left to run an asynchronous call.
+  ProcessResult runSync(String executable, List<String> arguments);
+
   Future<Process> start(
     String executable,
     List<String> arguments, {
@@ -33,6 +37,12 @@ final class SystemProcessRunner implements ProcessRunner {
       workingDirectory: workingDirectory,
       runInShell: false,
     );
+  }
+
+  @override
+  ProcessResult runSync(String executable, List<String> arguments) {
+    _requireAbsolute(executable);
+    return Process.runSync(executable, arguments, runInShell: false);
   }
 
   @override
