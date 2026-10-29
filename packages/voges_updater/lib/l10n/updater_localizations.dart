@@ -343,6 +343,12 @@ abstract class UpdaterLocalizations {
   /// **'Open {app}'**
   String updaterOpenApp(String app);
 
+  /// Voges Updater: it could not take its lock, so it updates nothing.
+  ///
+  /// In en, this message translates to:
+  /// **'Voges Updater couldn\'t start. Download the new version of {app} from the website.'**
+  String updaterStartFailed(String app);
+
   /// Voges Updater: another updater is running.
   ///
   /// In en, this message translates to:

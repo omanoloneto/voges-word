@@ -280,7 +280,14 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   Future<void> _startUpdate() async {
     final updates = widget.updates;
     if (updates == null || !await _confirmDiscard()) return;
+    final revision = session.revision;
     if (await updates.startUpdater() == LaunchResult.started) {
+      // Windows copies the app for the updater first, and the document may
+      // change meanwhile; if the user keeps it open, the updater waits
+      if (!mounted ||
+          (session.revision != revision && !await _confirmDiscard())) {
+        return;
+      }
       _closing = true;
       await windowManager.destroy();
       return;

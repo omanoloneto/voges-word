@@ -142,13 +142,13 @@ class _Chip extends StatelessWidget {
               onPressed: onPressed,
               style: style,
               icon: Icon(icon),
-              label: Text(label),
+              label: _Label(label),
             )
           : TextButton.icon(
               onPressed: onPressed,
               style: style,
               icon: Icon(icon),
-              label: Text(label),
+              label: _Label(label),
             ),
     );
   }
@@ -182,9 +182,32 @@ class _Busy extends StatelessWidget {
         children: [
           spinner,
           const SizedBox(width: 8),
-          Text(label, style: theme.textTheme.bodySmall?.copyWith(color: color)),
+          Flexible(
+            child: _Label(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(color: color),
+            ),
+          ),
         ],
       ),
     );
   }
+}
+
+/// One line that ends in an ellipsis when the status bar is short of room;
+/// the tooltip still has the whole text.
+class _Label extends StatelessWidget {
+  const _Label(this.text, {this.style});
+
+  final String text;
+  final TextStyle? style;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    text,
+    style: style,
+    maxLines: 1,
+    softWrap: false,
+    overflow: TextOverflow.ellipsis,
+  );
 }

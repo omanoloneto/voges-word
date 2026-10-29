@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
@@ -11,13 +12,23 @@ import 'updater_session.dart';
 
 /// The Voges Updater window.
 class UpdaterApp extends StatefulWidget {
-  const UpdaterApp({required this.session, this.locale, super.key});
+  const UpdaterApp({
+    required this.session,
+    this.locale,
+    this.settleTime = const Duration(milliseconds: 400),
+    super.key,
+  });
 
   final UpdaterSession session;
 
   /// The language of the app that opened the updater; null follows the
   /// system.
   final Locale? locale;
+
+  /// How long the buttons ignore clicks after the screen changes, so the
+  /// second click of a double click doesn't press the button that the new
+  /// screen puts in the same place, such as Cancel right after Update.
+  final Duration settleTime;
 
   @override
   State<UpdaterApp> createState() => _UpdaterAppState();
@@ -74,7 +85,7 @@ class _UpdaterAppState extends State<UpdaterApp> with WindowListener {
       locale: widget.locale,
       supportedLocales: UpdaterLocalizations.supportedLocales,
       localizationsDelegates: UpdaterLocalizations.localizationsDelegates,
-      home: _UpdaterScreen(session: session),
+      home: _UpdaterScreen(session: session, settleTime: widget.settleTime),
     );
   }
 }
@@ -101,13 +112,51 @@ final class _Screen {
   final VoidCallback? onEscape;
 }
 
-class _UpdaterScreen extends StatelessWidget {
-  const _UpdaterScreen({required this.session});
+class _UpdaterScreen extends StatefulWidget {
+  const _UpdaterScreen({required this.session, required this.settleTime});
 
   final UpdaterSession session;
+  final Duration settleTime;
+
+  @override
+  State<_UpdaterScreen> createState() => _UpdaterScreenState();
+}
+
+class _UpdaterScreenState extends State<_UpdaterScreen> {
+  UpdaterSession get session => widget.session;
+
+  late UpdaterStage _stage;
+  Timer? _settle;
+
+  bool get _settling => _settle?.isActive ?? false;
+
+  @override
+  void initState() {
+    super.initState();
+    _stage = session.stage;
+    session.addListener(_onSession);
+  }
+
+  @override
+  void dispose() {
+    session.removeListener(_onSession);
+    _settle?.cancel();
+    super.dispose();
+  }
+
+  void _onSession() {
+    if (session.stage == _stage) return;
+    _stage = session.stage;
+    _settle?.cancel();
+    if (widget.settleTime == Duration.zero) return;
+    _settle = Timer(widget.settleTime, () {
+      if (mounted) setState(() {});
+    });
+  }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event, _Screen screen) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (_settling) return KeyEventResult.handled;
     final key = event.logicalKey;
     final escape = screen.onEscape;
     if (key == LogicalKeyboardKey.escape && escape != null) {
@@ -148,6 +197,21 @@ class _UpdaterScreen extends StatelessWidget {
             message: l10n.updaterAlreadyRunning,
           ),
           buttons: [leave.asMain],
+        );
+      case UpdaterStage.startFailed:
+        return _Screen(
+          _Status(
+            icon: Icons.error_outline,
+            message: l10n.updaterStartFailed(host),
+          ),
+          buttons: [
+            leave,
+            _Button(
+              l10n.updateDownloadPage,
+              session.openDownloadPage,
+              main: true,
+            ),
+          ],
         );
       case UpdaterStage.offline:
         return _Screen(
@@ -242,22 +306,25 @@ class _UpdaterScreen extends StatelessWidget {
                     Expanded(child: screen.body),
                     if (screen.buttons.isNotEmpty) ...[
                       const SizedBox(height: 16),
-                      Wrap(
-                        alignment: WrapAlignment.end,
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          for (final button in screen.buttons)
-                            button.main
-                                ? FilledButton(
-                                    onPressed: button.onPressed,
-                                    child: Text(button.label),
-                                  )
-                                : TextButton(
-                                    onPressed: button.onPressed,
-                                    child: Text(button.label),
-                                  ),
-                        ],
+                      IgnorePointer(
+                        ignoring: _settling,
+                        child: Wrap(
+                          alignment: WrapAlignment.end,
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final button in screen.buttons)
+                              button.main
+                                  ? FilledButton(
+                                      onPressed: button.onPressed,
+                                      child: Text(button.label),
+                                    )
+                                  : TextButton(
+                                      onPressed: button.onPressed,
+                                      child: Text(button.label),
+                                    ),
+                          ],
+                        ),
                       ),
                     ],
                   ],

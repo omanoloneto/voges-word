@@ -129,7 +129,7 @@ class _StatusBarState extends State<StatusBar> {
               ],
               const Spacer(),
               if (widget.trailing case final trailing?) ...[
-                trailing,
+                Flexible(child: trailing),
                 const SizedBox(width: 8),
               ],
               SizedBox(

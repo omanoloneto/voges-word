@@ -37,7 +37,6 @@ const _vogesSheets = SuiteApp(
 
 void main() {
   late Directory root;
-  late Directory home;
   late FakeProcessRunner runner;
 
   /// What dpkg-query prints, and its exit code.
@@ -49,7 +48,7 @@ void main() {
 
   setUp(() {
     root = platformsTempRoot();
-    home = Directory(p.join(root.path, 'home'))..createSync();
+    Directory(p.join(root.path, 'tmp')).createSync();
     File(p.join(root.path, 'usr', 'bin', 'pkexec')).createSync(recursive: true);
     packages = 'voges-word\tinstalled\t1.1.0\n';
     queryCode = 0;
@@ -64,13 +63,9 @@ void main() {
   });
   tearDown(() => root.deleteSync(recursive: true));
 
-  LinuxPlatform platform({
-    String executable = _binary,
-    Map<String, String>? environment,
-  }) => LinuxPlatform(
+  LinuxPlatform platform({String executable = _binary}) => LinuxPlatform(
     hostApp: vogesWord,
     runner: runner,
-    environment: environment ?? {'HOME': home.path},
     executable: executable,
     ownPid: 4242,
     root: root.path,
@@ -406,17 +401,13 @@ void main() {
   });
 
   group('folders', () {
-    test('works in a private folder of the XDG cache', () async {
-      final cache = p.join(root.path, 'cache');
+    test('works in a private folder of /tmp', () async {
+      final work = await platform().workDirectory();
 
-      final work = await platform(
-        environment: {'HOME': home.path, 'XDG_CACHE_HOME': cache},
-      ).workDirectory();
-
-      expect(p.dirname(work.path), p.join(cache, 'voges'));
-      expect(p.basename(work.path), startsWith('update-'));
+      expect(p.dirname(work.path), p.join(root.path, 'tmp'));
+      expect(p.basename(work.path), startsWith('voges-update-'));
       expect(runner.argvs, [
-        ['/usr/bin/chmod', '700', work.path],
+        ['/bin/chmod', '700', work.path],
       ]);
     });
 
@@ -435,39 +426,27 @@ void main() {
       );
     });
 
-    test('falls back to ~/.cache for a missing or relative XDG path', () async {
-      for (final environment in [
-        {'HOME': home.path},
-        {'HOME': home.path, 'XDG_CACHE_HOME': 'relative/cache'},
-      ]) {
-        final work = await platform(environment: environment).workDirectory();
-
-        expect(p.dirname(work.path), p.join(home.path, '.cache', 'voges'));
-      }
-    });
-
     test('deletes the folders of earlier runs, by exact name', () async {
       final linux = platform();
       final current = await linux.workDirectory();
-      final cache = current.parent;
+      final tmp = current.parent;
       final outside = Directory(p.join(root.path, 'outside'))..createSync();
       Directory(
-        p.join(cache.path, 'update-abc123', 'nested'),
+        p.join(tmp.path, 'voges-update-abc123', 'nested'),
       ).createSync(recursive: true);
-      Directory(p.join(cache.path, 'update-x_y')).createSync();
-      Link(p.join(cache.path, 'update-link01')).createSync(outside.path);
-      File(p.join(cache.path, 'updater.lock')).createSync();
+      Directory(p.join(tmp.path, 'voges-update-x_y')).createSync();
+      Directory(p.join(tmp.path, 'other-app')).createSync();
+      Link(p.join(tmp.path, 'voges-update-link01')).createSync(outside.path);
 
       await linux.cleanStale(current);
 
       expect(
-        [for (final entity in cache.listSync()) p.basename(entity.path)]
-          ..sort(),
+        [for (final entity in tmp.listSync()) p.basename(entity.path)]..sort(),
         [
           p.basename(current.path),
-          'update-link01',
-          'update-x_y',
-          'updater.lock',
+          'other-app',
+          'voges-update-link01',
+          'voges-update-x_y',
         ]..sort(),
       );
       expect(outside.existsSync(), isTrue);

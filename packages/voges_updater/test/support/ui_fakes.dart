@@ -215,6 +215,7 @@ class UiHarness {
     List<InstalledCopy>? copies,
     Map<SuiteApp, String> latest = const {vogesWord: '1.2.0'},
     bool locked = false,
+    bool lockFails = false,
     String operatingSystem = 'macos',
     bool manualDownloads = false,
   }) : platform = FakePlatform(copies ?? [installedCopy(vogesWord, '1.1.0')]),
@@ -229,7 +230,10 @@ class UiHarness {
       downloader: downloader,
       catalog: const [vogesWord, vogesSheets],
       operatingSystem: operatingSystem,
-      acquireLock: () async => locked ? null : Object(),
+      acquireLock: () async {
+        if (lockFails) throw const FileSystemException('no cache folder');
+        return locked ? null : Object();
+      },
       openUrl: (url) async {
         opened.add(url);
         return true;

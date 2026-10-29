@@ -62,6 +62,7 @@ final class _Mac {
       'plutil' => _plutil(call),
       'ps' => processResult(0, stdout: processes),
       'id' => processResult(0, stdout: '501\n'),
+      'stat' => processResult(0, stdout: '$owner\n'),
       'hdiutil' => hdiutil(call),
       'ditto' => ditto(call),
       'codesign' => codesign(call),
@@ -71,6 +72,9 @@ final class _Mac {
   }
 
   final root = platformsTempRoot();
+
+  /// The user id that owns the installed bundle.
+  int owner = 501;
   late final applications = Directory(p.join(root.path, 'Applications'));
   late final home = Directory(p.join(root.path, 'home'));
   late final temp = Directory(p.join(root.path, 'tmp'));
@@ -275,8 +279,14 @@ void main() {
       expect([for (final app in first) app.otherAccount], [false, true]);
       expect(first.every((app) => app.app == vogesWord), isTrue);
       expect(mac.runner.callsTo('ps').map((call) => call.argv), [
-        ['/bin/ps', '-axo', 'pid=,uid=,comm='],
-        ['/bin/ps', '-axo', 'pid=,uid=,comm='],
+        for (var i = 0; i < 2; i++)
+          [
+            '/usr/bin/env',
+            'LC_ALL=en_US.UTF-8',
+            '/bin/ps',
+            '-axo',
+            'pid=,uid=,comm=',
+          ],
       ]);
       expect(mac.runner.callsTo('id').map((call) => call.argv), [
         ['/usr/bin/id', '-u'],
@@ -452,6 +462,28 @@ void main() {
       },
     );
 
+    test('sends an app of another account to the installer', () async {
+      _writeBundle(mac.target);
+      mac.owner = 502;
+      final platform = mac.platform();
+      final item = await mac.pending(platform);
+
+      final outcome = (await platform.install([item], (_, _) {})).single;
+
+      final failure = (outcome as NotInstalled).failure;
+      expect(failure.kind, UpdateFailureKind.permission);
+      expect(failure.installer, item.asset.file.path);
+      expect(mac.runner.callsTo('stat').single.argv, [
+        '/usr/bin/stat',
+        '-f',
+        '%u',
+        mac.target,
+      ]);
+      expect(mac.runner.callsTo('hdiutil'), isEmpty);
+      expect(mac.leftovers(mac.applications.path), isEmpty);
+      expect(_versionAt(mac.target), '1.1.0');
+    });
+
     test('rolls back when the new bundle cannot be moved in', () async {
       _writeBundle(mac.target);
       mac.ditto = (call) {
@@ -561,7 +593,7 @@ void main() {
           p.basename(current.path),
           'voges-update-link02',
           'voges-updates-BBBB22',
-        ],
+        ]..sort(),
       );
       expect(File(p.join(outside.path, 'keep')).existsSync(), isTrue);
     });
@@ -580,6 +612,29 @@ void main() {
   });
 
   group('leaving', () {
+    test('opens the installer where it is when Downloads is refused', () async {
+      final downloads = Directory(p.join(mac.home.path, 'Downloads'))
+        ..createSync();
+      Process.runSync('/bin/chmod', ['555', downloads.path]);
+      addTearDown(() => Process.runSync('/bin/chmod', ['755', downloads.path]));
+      final installer = verifiedFile(
+        p.join(mac.temp.path, 'work', 'VogesWord-macos.dmg'),
+        'disk image',
+      );
+
+      await mac.platform().openFallback(
+        UpdateFailure(
+          UpdateFailureKind.permission,
+          installer: installer.file.path,
+        ),
+      );
+
+      expect(downloads.listSync(), isEmpty);
+      expect(mac.runner.argvs, [
+        ['/usr/bin/open', installer.file.path],
+      ]);
+    });
+
     test('copies the installer to Downloads under a free name', () async {
       final downloads = Directory(p.join(mac.home.path, 'Downloads'))
         ..createSync();

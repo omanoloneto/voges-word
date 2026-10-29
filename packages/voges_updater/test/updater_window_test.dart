@@ -13,11 +13,14 @@ Future<void> pumpUpdater(
   UiHarness h, {
   Locale locale = const Locale('en'),
   Size size = const Size(560, 520),
+  Duration settleTime = Duration.zero,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  await tester.pumpWidget(UpdaterApp(session: h.session, locale: locale));
+  await tester.pumpWidget(
+    UpdaterApp(session: h.session, locale: locale, settleTime: settleTime),
+  );
   await tester.pump();
 }
 
@@ -98,6 +101,26 @@ void main() {
       await tester.pump(Duration.zero);
       expect(h.exits, [0]);
       expect(h.platform.finished, isEmpty);
+    });
+
+    testWidgets('a failed start offers the download page and reopens the app', (
+      tester,
+    ) async {
+      final h = UiHarness(lockFails: true);
+      await h.session.start();
+      await pumpUpdater(tester, h);
+
+      expect(
+        find.text(
+          'Voges Updater couldn\'t start. Download the new version of Voges '
+          'Word from the website.',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(button('Open Voges Word'));
+      await tester.pump(Duration.zero);
+      expect(h.exits, [0]);
+      expect(h.platform.finished, [wordHost]);
     });
 
     testWidgets('host not found offers the download page', (tester) async {
@@ -644,6 +667,31 @@ void main() {
       expect(h.platform.finished, [wordHost]);
       await tester.pump(Duration.zero);
       expect(h.exits, [0]);
+    });
+  });
+
+  group('double clicks', () {
+    testWidgets('the second click of Update does not cancel', (tester) async {
+      final h = UiHarness(manualDownloads: true);
+      await h.session.start();
+      await pumpUpdater(
+        tester,
+        h,
+        settleTime: const Duration(milliseconds: 400),
+      );
+
+      final update = tester.getCenter(button('Update 1 app'));
+      await tester.tapAt(update);
+      await tester.pump(const Duration(milliseconds: 120));
+      await tester.tapAt(update);
+      await tester.pump();
+      expect(h.session.stage, UpdaterStage.downloading);
+
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(button('Cancel'));
+      await tester.pump();
+      expect(h.session.stage, UpdaterStage.choosing);
+      await tester.pump(const Duration(milliseconds: 400));
     });
   });
 

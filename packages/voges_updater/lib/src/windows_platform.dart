@@ -113,10 +113,18 @@ final class WindowsPlatform implements SuitePlatform {
     final session = _session ??= await _ownSession();
     final found = <RunningApp>[];
     for (final app in {for (final copy in copies) copy.app}) {
+      // an install for all users is also locked by the instances that other
+      // users have open in their sessions
+      final shared = copies.any(
+        (copy) => copy.app == app && copy.scope == InstallScope.allUsers,
+      );
       final tasks = await _tasks('IMAGENAME eq ${app.windows.executable}');
       for (final task in tasks) {
-        if (task.pid != ownPid && task.session == session) {
+        if (task.pid == ownPid) continue;
+        if (task.session == session) {
           found.add(RunningApp(app: app, pid: task.pid));
+        } else if (shared) {
+          found.add(RunningApp(app: app, pid: task.pid, otherAccount: true));
         }
       }
     }

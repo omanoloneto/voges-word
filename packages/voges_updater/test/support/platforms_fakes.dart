@@ -25,7 +25,16 @@ final class RecordedCall {
 
   List<String> get argv => [executable, ...arguments];
 
-  String get tool => executable.split(RegExp(r'[/\\]')).last;
+  /// The tool's file name; for `/usr/bin/env VAR=value tool ...`, that tool.
+  String get tool {
+    final name = executable.split(RegExp(r'[/\\]')).last;
+    if (name != 'env') return name;
+    final command = arguments.firstWhere(
+      (argument) => !argument.contains('='),
+      orElse: () => name,
+    );
+    return command.split(RegExp(r'[/\\]')).last;
+  }
 }
 
 /// Records every call and answers with scripted results.

@@ -168,6 +168,24 @@ void main() {
       expect(h.platform.finished, isEmpty);
     });
 
+    sessionTest('a lock that fails updates nothing but reopens the host', (
+      async,
+    ) {
+      final h = UiHarness(lockFails: true);
+      h.session.start();
+      async.flushMicrotasks();
+
+      expect(h.session.stage, UpdaterStage.startFailed);
+      expect(h.session.reopensHost, isTrue);
+      expect(h.platform.cleaned, isEmpty);
+      expect(h.feed.checks, isEmpty);
+
+      h.session.leave();
+      async.elapse(Duration.zero);
+      expect(h.platform.finished, [wordHost]);
+      expect(h.exits, [0]);
+    });
+
     sessionTest('the host is not found when the system has none', (async) {
       final h = UiHarness()..platform.hostResult = null;
       h.session.start();

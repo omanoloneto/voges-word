@@ -154,6 +154,11 @@
       "app": {"type": "String", "example": "Voges Word"}
     }
   },
+  "updaterStartFailed": "Voges Updater couldn't start. Download the new version of {app} from the website.",
+  "@updaterStartFailed": {
+    "description": "Voges Updater: it could not take its lock, so it updates nothing.",
+    "placeholders": {"app": {"type": "String", "example": "Voges Word"}}
+  },
   "updaterAlreadyRunning": "Voges Updater is already open in another window.",
   "@updaterAlreadyRunning": {"description": "Voges Updater: another updater is running."},
   "updaterErrorNetwork": "The download failed. Check your internet connection and try again.",

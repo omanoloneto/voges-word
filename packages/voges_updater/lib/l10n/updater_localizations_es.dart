@@ -176,6 +176,11 @@ class UpdaterLocalizationsEs extends UpdaterLocalizations {
   }
 
   @override
+  String updaterStartFailed(String app) {
+    return 'Voges Updater no pudo iniciarse. Descarga la nueva versión de $app desde el sitio web.';
+  }
+
+  @override
   String get updaterAlreadyRunning =>
       'Voges Updater ya está abierto en otra ventana.';
 

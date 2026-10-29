@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io' show SocketException;
+
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart' show TextField;
 import 'package:flutter/widgets.dart' show Locale, Scrollable, ScrollableState;
@@ -38,8 +41,9 @@ Future<EditorSession> _pumpApp(
   FontCatalog? fonts,
   AppLanguage? language,
   UpdateCheck? updates,
+  Size size = const Size(1200, 900),
 }) async {
-  tester.view.physicalSize = const Size(1200, 900);
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
 
@@ -87,10 +91,21 @@ final class _Feed implements ReleaseFeed {
   Future<ReleaseVersion> latest(String repository) async => version;
 }
 
+final class _OfflineFeed implements ReleaseFeed {
+  const _OfflineFeed();
+
+  @override
+  Future<ReleaseVersion> latest(String repository) async =>
+      throw const SocketException('offline');
+}
+
 final class _Launcher implements UpdaterLauncher {
-  _Launcher(this.result);
+  _Launcher(this.result, {this.opening});
 
   final LaunchResult result;
+
+  /// Holds the launch open until completed, like the Windows copy does.
+  final Completer<LaunchResult>? opening;
   var launches = 0;
 
   @override
@@ -99,7 +114,7 @@ final class _Launcher implements UpdaterLauncher {
   @override
   Future<LaunchResult> launch() async {
     launches++;
-    return result;
+    return opening?.future ?? result;
   }
 
   @override
@@ -403,6 +418,26 @@ void main() {
       expect(find.text('Up to date'), findsOneWidget);
     });
 
+    testWidgets('a long status fits a narrow window', (tester) async {
+      await _pumpApp(
+        tester,
+        size: const Size(660, 900),
+        language: AppLanguage(const Locale('pt')),
+        updates: UpdateCheck(
+          app: vogesWord,
+          current: const ReleaseVersion(1, 2, 0),
+          feed: const _OfflineFeed(),
+          launcher: _Launcher(LaunchResult.started),
+        ),
+      );
+
+      expect(
+        find.text('Não foi possível procurar atualizações'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('with unsaved work, Cancel keeps the app open', (tester) async {
       final launcher = _Launcher(LaunchResult.started);
       final calls = _recordWindowCalls();
@@ -443,6 +478,33 @@ void main() {
 
       expect(launcher.launches, 1);
       expect(calls, contains('destroy'));
+    });
+
+    testWidgets('work typed while the updater opens is asked about again', (
+      tester,
+    ) async {
+      final opening = Completer<LaunchResult>();
+      final launcher = _Launcher(LaunchResult.started, opening: opening);
+      final calls = _recordWindowCalls();
+      final session = await _pumpApp(
+        tester,
+        updates: _updates('9.9.9', launcher),
+      );
+      session.controller.document.insert(0, 'changed ');
+      await tester.pump();
+
+      await tester.tap(find.text('Update to 9.9.9'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Don’t save'));
+      await tester.pump();
+      session.controller.document.insert(0, 'typed meanwhile ');
+      opening.complete(LaunchResult.started);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('Don’t save'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(calls, isNot(contains('destroy')));
     });
 
     testWidgets('when the updater does not open, the app stays open', (

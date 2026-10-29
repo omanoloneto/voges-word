@@ -15,6 +15,9 @@ import 'updater_lock.dart';
 enum UpdaterStage {
   starting,
   alreadyRunning,
+
+  /// The lock could not be taken for another reason than a second updater.
+  startFailed,
   checking,
   offline,
   hostNotFound,
@@ -177,7 +180,14 @@ class UpdaterSession extends ChangeNotifier {
     try {
       _lock = await _acquireLock();
     } catch (_) {
-      _lock = null;
+      // nothing is installed without the lock, but the app still reopens
+      try {
+        _host = await platform.host();
+      } catch (_) {
+        _host = null;
+      }
+      _enter(UpdaterStage.startFailed);
+      return;
     }
     if (_lock == null) {
       _enter(UpdaterStage.alreadyRunning);

@@ -203,6 +203,30 @@ void main() {
       ]);
     });
 
+    test('an install for all users also waits for other sessions', () async {
+      runner.onRun = (call) => processResult(
+        0,
+        stdout: call.arguments.last == 'PID eq 4242'
+            ? '"voges_word.exe","4242","Console","1","142,356 K"\r\n'
+            : '"voges_word.exe","4242","Console","1","142,356 K"\r\n'
+                  '"voges_word.exe","6000","RDP-Tcp#0","2","88,004 K"\r\n',
+      );
+
+      final running = await platform().running([
+        InstalledCopy(
+          app: vogesWord,
+          version: const ReleaseVersion(1, 1, 0),
+          location: _machineKey,
+          scope: InstallScope.allUsers,
+        ),
+      ]);
+
+      expect(
+        [for (final app in running) (app.pid, app.otherAccount)],
+        [(6000, true)],
+      );
+    });
+
     test('reads the translated no-match line as no instances', () async {
       runner.onRun = (call) => processResult(
         0,

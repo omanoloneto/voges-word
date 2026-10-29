@@ -51,6 +51,8 @@ final class MacosPlatform implements SuitePlatform {
 
   static const _plutil = '/usr/bin/plutil';
   static const _ps = '/bin/ps';
+  static const _env = '/usr/bin/env';
+  static const _stat = '/usr/bin/stat';
   static const _id = '/usr/bin/id';
   static const _hdiutil = '/usr/bin/hdiutil';
   static const _ditto = '/usr/bin/ditto';
@@ -229,14 +231,22 @@ final class MacosPlatform implements SuitePlatform {
   Future<void> openFallback(UpdateFailure failure) async {
     final installer = failure.installer;
     final home = this.home;
-    if (installer == null || home == null) return;
-    final downloads = await Directory(
-      p.join(home, 'Downloads'),
-    ).create(recursive: true);
-    final copy = await File(
-      installer,
-    ).copy(_freePath(downloads.path, p.basename(installer)));
-    await _run(_open, [copy.path]);
+    if (installer == null) return;
+    var opened = installer;
+    try {
+      if (home == null) throw const FileSystemException('no home folder');
+      final downloads = await Directory(
+        p.join(home, 'Downloads'),
+      ).create(recursive: true);
+      final copy = await File(
+        installer,
+      ).copy(_freePath(downloads.path, p.basename(installer)));
+      opened = copy.path;
+    } on FileSystemException {
+      // the user may deny access to Downloads: the disk image still opens
+      // from the work folder, and stays mounted after that folder is gone
+    }
+    await _run(_open, [opened]);
   }
 
   @override
@@ -258,6 +268,7 @@ final class MacosPlatform implements SuitePlatform {
   Future<ReleaseVersion> _install(PendingInstall item) async {
     final app = item.copy.app;
     final target = item.copy.location;
+    await _requireOwnBundle(target, item.asset);
     final staging = await _stagingFolder(p.dirname(target), item.asset);
     final staged = p.join(staging.path, app.macos.bundleName);
     final old = '${staging.path}.old';
@@ -288,6 +299,21 @@ final class MacosPlatform implements SuitePlatform {
     }
     _executables[target] = info.executable;
     return info.version;
+  }
+
+  /// The old bundle could be renamed aside but not deleted when another
+  /// account owns it; Finder asks for that account's permission instead.
+  Future<void> _requireOwnBundle(String target, VerifiedAsset asset) async {
+    final owner = int.tryParse(
+      '${(await _run(_stat, ['-f', '%u', target])).stdout}'.trim(),
+    );
+    if (owner != await _ownUserId()) {
+      throw UpdateFailure(
+        UpdateFailureKind.permission,
+        detail: '$target belongs to user $owner',
+        installer: asset.file.path,
+      );
+    }
   }
 
   Future<Directory> _stagingFolder(String parent, VerifiedAsset asset) async {
@@ -409,7 +435,14 @@ final class MacosPlatform implements SuitePlatform {
   }
 
   Future<List<_Process>> _processes() async {
-    final result = await _run(_ps, const ['-axo', 'pid=,uid=,comm=']);
+    // apps opened by LaunchServices have no locale, and ps then escapes
+    // every byte of a non-ASCII path
+    final result = await _run(_env, const [
+      'LC_ALL=en_US.UTF-8',
+      _ps,
+      '-axo',
+      'pid=,uid=,comm=',
+    ]);
     return [
       for (final line in const LineSplitter().convert('${result.stdout}'))
         if (_processLine.firstMatch(line) case final match?)

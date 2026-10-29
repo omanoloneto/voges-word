@@ -16,26 +16,24 @@ final class LinuxPlatform implements SuitePlatform {
   LinuxPlatform({
     this.hostApp,
     this.runner = const SystemProcessRunner(),
-    Map<String, String>? environment,
     String? executable,
     int? ownPid,
     this.root = '',
-  }) : environment = environment ?? Platform.environment,
-       executable = executable ?? Platform.resolvedExecutable,
+  }) : executable = executable ?? Platform.resolvedExecutable,
        ownPid = ownPid ?? pid;
 
   /// The app compiled into this updater.
   final SuiteApp? hostApp;
 
   final ProcessRunner runner;
-  final Map<String, String> environment;
 
   /// This process's executable, read when the updater started: afterwards
   /// the kernel reports it as deleted once the package is upgraded.
   final String executable;
   final int ownPid;
 
-  /// Prefix of the system paths this reads (`/proc`, `/usr/bin`), for tests.
+  /// Prefix of the system paths this uses (`/proc`, `/usr/bin`, `/tmp`), for
+  /// tests.
   final String root;
 
   static const _dpkgQuery = '/usr/bin/dpkg-query';
@@ -48,7 +46,7 @@ final class LinuxPlatform implements SuitePlatform {
       r'--showformat=${Package}\t${db:Status-Status}\t${Version}\n';
   static const _deleted = ' (deleted)';
   static final _processId = RegExp(r'^\d+$');
-  static final _staleWork = RegExp(r'^update-[A-Za-z0-9]+$');
+  static final _staleWork = RegExp(r'^voges-update-[A-Za-z0-9]+$');
 
   final _work = <Directory>[];
 
@@ -62,13 +60,16 @@ final class LinuxPlatform implements SuitePlatform {
     return UpdaterHost(app: app, reopenPath: app.linux.launcher);
   }
 
+  /// In /tmp itself, never $TMPDIR or the cache: /tmp is sticky, so no
+  /// other user can rename this folder and swap the package that root
+  /// installs. Packages are never run from here, so noexec doesn't matter.
   @override
   Future<Directory> workDirectory() async {
-    final cache = await Directory(_cacheFolder()).create(recursive: true);
-    final work = await cache.createTemp('update-');
+    final work = await Directory('$root/tmp').createTemp('voges-update-');
     _work.add(work);
-    // unlike mkdtemp on macOS, Dart creates it with the umask here (0755)
-    final private = await runner.run('/usr/bin/chmod', ['700', work.path]);
+    // unlike mkdtemp on macOS, Dart creates it with the umask here (0755);
+    // /bin/chmod exists with and without the merged /usr
+    final private = await runner.run('/bin/chmod', ['700', work.path]);
     if (private.exitCode != 0) {
       throw UpdateFailure(
         UpdateFailureKind.failed,
@@ -80,13 +81,8 @@ final class LinuxPlatform implements SuitePlatform {
 
   @override
   Future<void> cleanStale(Directory current) async {
-    final String cache;
-    try {
-      cache = _cacheFolder();
-    } on UpdateFailure {
-      return;
-    }
-    for (final entry in _entries(cache)) {
+    // other users' folders fail to delete, which is fine
+    for (final entry in _entries('$root/tmp')) {
       if (_staleWork.hasMatch(p.basename(entry)) &&
           !p.equals(entry, current.path)) {
         _deleteTree(entry);
@@ -247,8 +243,8 @@ final class LinuxPlatform implements SuitePlatform {
     }
     var installing = false;
     final output = _lines(process.stdout).forEach((line) {
-      // apt's text is translated; only its status lines have a fixed format
-      if (installing || !line.startsWith('pmstatus:')) return;
+      // apt-get only runs, and prints, once the password was accepted
+      if (installing) return;
       installing = true;
       for (final item in batch) {
         onStep(item, InstallStep.installing);
@@ -348,20 +344,6 @@ final class LinuxPlatform implements SuitePlatform {
       if (version != null) versions[fields[0]] = version;
     }
     return versions;
-  }
-
-  /// `${XDG_CACHE_HOME:-$HOME/.cache}/voges`.
-  String _cacheFolder() {
-    final cache = environment['XDG_CACHE_HOME'];
-    if (cache != null && p.isAbsolute(cache)) return p.join(cache, 'voges');
-    final home = environment['HOME'];
-    if (home == null || !p.isAbsolute(home)) {
-      throw const UpdateFailure(
-        UpdateFailureKind.failed,
-        detail: 'HOME is not set',
-      );
-    }
-    return p.join(home, '.cache', 'voges');
   }
 
   static Stream<String> _lines(Stream<List<int>> output) => output

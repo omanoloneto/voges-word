@@ -40,6 +40,7 @@
   "updaterCancel": "Cancelar",
   "updaterClose": "Cerrar",
   "updaterOpenApp": "Abrir {app}",
+  "updaterStartFailed": "Voges Updater no pudo iniciarse. Descarga la nueva versión de {app} desde el sitio web.",
   "updaterAlreadyRunning": "Voges Updater ya está abierto en otra ventana.",
   "updaterErrorNetwork": "La descarga falló. Revisa tu conexión a internet e inténtalo de nuevo.",
   "updaterErrorVerification": "No se pudo verificar la descarga, así que no se instaló nada. Inténtalo de nuevo más tarde.",
