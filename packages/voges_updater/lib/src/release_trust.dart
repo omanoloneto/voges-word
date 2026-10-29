@@ -1,6 +1,9 @@
 /// Public Ed25519 keys (base64) that sign the Voges releases. A list, so a
 /// new key can be added before the old one is retired.
-const releaseSigningKeys = <String>[];
+const releaseSigningKeys = <String>[
+  // created on 2026-10-29; the private key is in the owner's login Keychain
+  'nW7yqL9fJaQ3zrkEfOPptjWrNrjW7bP5Vi9LTGrp+g0=',
+];
 
 const _testOriginDefine = String.fromEnvironment('VOGES_UPDATE_TEST_ORIGIN');
 const _testKeyDefine = String.fromEnvironment('VOGES_UPDATE_TEST_KEY');

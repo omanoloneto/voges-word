@@ -220,6 +220,8 @@ void main() {
   });
 
   test('every pinned key is 32 bytes of standard base64', () {
+    // a release that trusts no key could never be updated again
+    expect(releaseSigningKeys, isNotEmpty);
     for (final key in releaseSigningKeys) {
       expect(base64.encode(base64.decode(key)), key);
       expect(base64.decode(key), hasLength(32));

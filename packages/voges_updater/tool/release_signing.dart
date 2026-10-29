@@ -2,9 +2,11 @@
 /// login Keychain, on the owner's Mac:
 ///
 ///     dart run tool/release_signing.dart init
+///     dart run tool/release_signing.dart public-key
 ///     dart run tool/release_signing.dart publish <owner/repo> <vX.Y.Z> [--dry-run]
 ///
-/// `init` creates the key once. `publish` signs the checksums of a draft
+/// `init` creates the key once. `public-key` prints the public key that
+/// `releaseSigningKeys` must list. `publish` signs the checksums of a draft
 /// that the release workflow created, uploads the signature and publishes
 /// the draft.
 library;
@@ -96,6 +98,7 @@ final class ReleaseSigning {
   static const usage =
       'Usage:\n'
       '  dart run tool/release_signing.dart init\n'
+      '  dart run tool/release_signing.dart public-key\n'
       '  dart run tool/release_signing.dart publish <owner/repo> <vX.Y.Z> '
       '[--dry-run]';
 
@@ -109,6 +112,8 @@ final class ReleaseSigning {
       switch (arguments) {
         case ['init']:
           await init();
+        case ['public-key']:
+          out.writeln(await publicKeyOf(_seedOf(await _readKey())));
         case ['publish', final repository, final tag]:
           await publish(repository, tag);
         case ['publish', final repository, final tag, '--dry-run']:

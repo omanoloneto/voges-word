@@ -373,6 +373,21 @@ void main() {
     });
   });
 
+  group('public-key', () {
+    test('prints the public key of the stored key, never the key', () async {
+      system.keychain = base64.encode(_seed);
+
+      expect(await run(['public-key']), 0);
+      expect('$out'.trim(), publicKey);
+      expect('$out$err', isNot(contains(system.keychain!)));
+    });
+
+    test('needs the key', () async {
+      expect(await run(['public-key']), 1);
+      expect('$err', contains('Run init first'));
+    });
+  });
+
   group('publish', () {
     setUp(() => system.keychain = base64.encode(_seed));
 
@@ -540,6 +555,7 @@ void main() {
     for (final arguments in [
       const <String>[],
       ['init', '--force'],
+      ['public-key', 'extra'],
       ['publish', _repository],
       ['publish', _repository, _tag, '--draft'],
       ['sign', _repository, _tag],
