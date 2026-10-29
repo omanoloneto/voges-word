@@ -1,6 +1,8 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
+import 'package:path/path.dart' as p;
 
 import 'catalog.dart';
 import 'github_releases.dart';
@@ -55,6 +57,11 @@ final class ReleaseDownloader implements UpdateDownloader {
   final GitHubReleases releases;
   final ReleaseVerifier verifier;
 
+  /// Size limits, in bytes: anything larger is not a Voges release.
+  static const checksumsLimit = 64 * 1024;
+  static const signatureLimit = 1024;
+  static const assetLimit = 512 * 1024 * 1024;
+
   @override
   Future<VerifiedAsset> fetch(
     SuiteApp app,
@@ -63,7 +70,82 @@ final class ReleaseDownloader implements UpdateDownloader {
     Directory into, {
     void Function(double progress)? onProgress,
     bool Function()? isCancelled,
-  }) {
-    throw UnimplementedError();
+  }) async {
+    onProgress?.call(0);
+    final checksums = await _verificationFile(
+      app,
+      version,
+      checksumsAsset,
+      checksumsLimit,
+    );
+    final signature = await _verificationFile(
+      app,
+      version,
+      signatureAsset,
+      signatureLimit,
+    );
+    final expected = (await verifier.verify(
+      repository: app.repository,
+      version: version,
+      checksums: checksums,
+      signature: signature,
+    ))[asset];
+    if (expected == null) {
+      throw UpdateFailure(
+        UpdateFailureKind.unavailable,
+        detail: '${version.tag} has no $asset',
+      );
+    }
+    final file = File(p.join(into.path, asset));
+    final actual = await releases.download(
+      app.repository,
+      version,
+      asset,
+      file,
+      maxBytes: assetLimit,
+      onProgress: onProgress == null
+          ? null
+          : (received, total) {
+              if (total != null && total > 0) onProgress(received / total);
+            },
+      isCancelled: isCancelled,
+    );
+    if (actual != expected) {
+      try {
+        await file.delete();
+      } on FileSystemException {
+        // still never installed: no VerifiedAsset points at it
+      }
+      throw UpdateFailure(
+        UpdateFailureKind.verification,
+        detail: '$asset does not match $checksumsAsset',
+      );
+    }
+    onProgress?.call(1);
+    return VerifiedAsset(file: file, sha256: actual);
+  }
+
+  Future<Uint8List> _verificationFile(
+    SuiteApp app,
+    ReleaseVersion version,
+    String name,
+    int maxBytes,
+  ) async {
+    try {
+      return await releases.fetch(
+        app.repository,
+        version,
+        name,
+        maxBytes: maxBytes,
+      );
+    } on UpdateFailure catch (failure) {
+      // a release without its checksums or their signature is never
+      // trusted, so it fails like a bad signature, without a download link
+      if (failure.kind != UpdateFailureKind.unavailable) rethrow;
+      throw UpdateFailure(
+        UpdateFailureKind.verification,
+        detail: '${version.tag} has no $name',
+      );
+    }
   }
 }
