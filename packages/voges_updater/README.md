@@ -45,3 +45,5 @@ flutter build macos          # the helper app
 ```
 
 `tool/fake_github.dart` serves a release on `127.0.0.1` for trying the whole flow with builds made with `--dart-define=VOGES_UPDATE_TEST_ORIGIN=http://127.0.0.1:<port>` and `--dart-define=VOGES_UPDATE_TEST_KEY=<public key>`; `dart run tool/fake_github.dart init-key --key-file <file>` makes a throwaway key.
+
+`tool/e2e.dart` checks a real update without test builds: it serves the new installer from the fake GitHub, signed with a key made for the run, and drives the production code to find the installed app, download, verify and install the update, and to refuse a tampered or unsigned release. `.github/workflows/updater-e2e.yml` runs it on Windows, Linux and macOS, updating an install at 98.0.0 to 99.0.0, both built from the same commit. It replaces the installed app, so it is meant for CI runners and test machines.
