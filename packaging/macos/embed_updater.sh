@@ -3,7 +3,7 @@ set -euo pipefail
 
 helper="${1:?path to Voges Updater.app}"
 host="${2:?path to the suite app, such as Voges Word.app}"
-entitlements="${3:?the suite app's Release.entitlements}"
+entitlements="${3:?path to the suite app Release.entitlements}"
 
 id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$helper/Contents/Info.plist")
 if [ "$id" != com.omanoloneto.vogesUpdater ]; then
