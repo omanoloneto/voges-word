@@ -151,5 +151,38 @@ class AppDelegate: FlutterAppDelegate {
         result(FlutterMethodNotImplemented)
       }
     }
+
+    // The app is sandboxed and a child process would inherit the sandbox, so
+    // the embedded updater is opened through LaunchServices. Arguments are
+    // not passed: macOS drops them for sandboxed callers.
+    let updater = FlutterMethodChannel(
+      name: "voges/updater",
+      binaryMessenger: controller.engine.binaryMessenger)
+    updater.setMethodCallHandler { call, result in
+      guard call.method == "launch" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let helper = Bundle.main.bundleURL.appendingPathComponent(
+        "Contents/Helpers/Voges Updater.app", isDirectory: true)
+      guard Bundle(url: helper)?.bundleIdentifier == "com.omanoloneto.vogesUpdater" else {
+        result("missing")
+        return
+      }
+      var replied = false
+      let reply: (String) -> Void = { value in
+        if !replied {
+          replied = true
+          result(value)
+        }
+      }
+      let configuration = NSWorkspace.OpenConfiguration()
+      configuration.activates = true
+      NSWorkspace.shared.openApplication(at: helper, configuration: configuration) { _, error in
+        DispatchQueue.main.async { reply(error == nil ? "started" : "failed") }
+      }
+      // a Gatekeeper prompt holds the completion for about 30 seconds
+      DispatchQueue.main.asyncAfter(deadline: .now() + 3) { reply("started") }
+    }
   }
 }

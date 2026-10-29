@@ -1,6 +1,9 @@
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:voges_updater/voges_updater.dart'
+    show UpdateCheck, UpdaterRequest, runUpdater, vogesWord;
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
@@ -22,6 +25,18 @@ import 'spell/spell_checker.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // On Windows and Linux a copy of the app itself is the updater; on macOS
+  // the updater is a separate app, because this one is sandboxed.
+  if (!kIsWeb &&
+      UpdaterRequest.isUpdaterLaunch(arguments, defaultTargetPlatform.name)) {
+    final language = AppLanguage();
+    await language.load();
+    return runUpdater(
+      arguments: arguments,
+      host: vogesWord,
+      locale: language.locale,
+    );
+  }
   if (isDesktopPlatform) {
     await windowManager.ensureInitialized();
     await windowManager.waitUntilReadyToShow(
@@ -79,6 +94,7 @@ Future<void> main(List<String> arguments) async {
       windowButtons: windowButtons,
       recovery: RecoveryStore(),
       spelling: spelling,
+      updates: isDesktopPlatform ? UpdateCheck.forPlatform(vogesWord) : null,
     ),
   );
 }

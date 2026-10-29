@@ -1,0 +1,243 @@
+name: Updater end-to-end
+
+# Voges Updater updates a real install on each system: tool/e2e.dart serves
+# the new version from a fake GitHub on the runner and checks every step
+on:
+  pull_request:
+    paths:
+      - 'packages/voges_updater/**'
+      - 'lib/main.dart'
+      - 'macos/**'
+      - 'windows/**'
+      - 'linux/**'
+      - 'packaging/**'
+      - '.github/workflows/updater-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FLUTTER_VERSION: 3.41.6
+  # both versions are built from this commit: the published releases came
+  # before the updater, so they can't open it
+  OLD_VERSION: 98.0.0
+  NEW_VERSION: 99.0.0
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Flutter
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch $env:FLUTTER_VERSION `
+            https://github.com/flutter/flutter.git "$env:RUNNER_TEMP\flutter"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\flutter\bin"
+      - run: flutter pub get
+      - name: Voges Updater tests
+        working-directory: packages/voges_updater
+        run: |
+          flutter pub get
+          flutter test
+      - name: Build
+        shell: pwsh
+        run: flutter build windows --release --build-name $env:NEW_VERSION
+      - name: Visual C++ runtime
+        shell: pwsh
+        run: |
+          foreach ($dll in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            Copy-Item "$env:SystemRoot\System32\$dll" build\windows\x64\runner\Release\
+          }
+      - name: Build the installers
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          foreach ($version in $env:OLD_VERSION, $env:NEW_VERSION) {
+            & $iscc "/DAppVersion=$version" "/O$env:RUNNER_TEMP\setup\$version" `
+              packaging\windows\voges_word.iss
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Update a per-user and an all-users install
+        shell: pwsh
+        working-directory: packages/voges_updater
+        timeout-minutes: 30
+        run: |
+          $key = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{237302D4-CF82-4A6D-B1A5-F3E8C553542A}_is1'
+          $build = "$env:GITHUB_WORKSPACE\build\windows\x64\runner\Release"
+          $setup = "$env:RUNNER_TEMP\setup"
+          # dart.bat would pass the arguments through cmd.exe, and the app's
+          # folder has an accent
+          $dart = "$env:RUNNER_TEMP\flutter\bin\cache\dart-sdk\bin\dart.exe"
+
+          function Assert-That([bool] $ok, [string] $check) {
+            if (-not $ok) { throw "FAIL  $check" }
+            Write-Output "PASS  $check"
+          }
+          function Get-Uninstall([string] $hive, [string] $view = 'Registry64') {
+            [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view).OpenSubKey($key)
+          }
+          function Invoke-Setup([string] $file, [string[]] $arguments) {
+            (Start-Process -FilePath $file -ArgumentList $arguments -Wait -PassThru).ExitCode
+          }
+
+          # test only: accents and spaces in the temp folder, where the
+          # updater runs from, and in the per-user install
+          $temp = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\Área temporária"
+          $env:TEMP = $temp.FullName
+          $env:TMP = $temp.FullName
+
+          foreach ($scope in 'user', 'all-users') {
+            if ($scope -eq 'user') {
+              $hive, $other, $flag = 'CurrentUser', 'LocalMachine', '/CURRENTUSER'
+              $folder = "`"/DIR=$env:RUNNER_TEMP\São Paulo\Voges Word`""
+            } else {
+              $hive, $other, $flag = 'LocalMachine', 'CurrentUser', '/ALLUSERS'
+              $folder = $null
+            }
+            $install = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', $flag, $folder) |
+              Where-Object { $_ }
+            $code = Invoke-Setup "$setup\$env:OLD_VERSION\VogesWord-windows-setup.exe" $install
+            Assert-That ($code -eq 0) "installs $env:OLD_VERSION ($scope, exit $code)"
+            $appPath = (Get-Uninstall $hive).GetValue('Inno Setup: App Path')
+
+            & $dart run tool/e2e.dart windows --old $env:OLD_VERSION --new $env:NEW_VERSION `
+              --installer "$setup\$env:NEW_VERSION\VogesWord-windows-setup.exe" `
+              --scope $scope --app "$appPath\voges_word.exe"
+            Assert-That ($LASTEXITCODE -eq 0) "tool/e2e.dart passes ($scope)"
+
+            $installed = Get-Uninstall $hive
+            Assert-That ($installed.GetValue('Inno Setup: App Path') -eq $appPath) "the app stays in $appPath"
+            Assert-That ($installed.GetValue('DisplayName') -ceq 'Voges Word') 'the display name has no scope suffix'
+            Assert-That ($null -eq (Get-Uninstall $other)) 'nothing is installed in the other scope'
+            Assert-That ($null -eq (Get-Uninstall 'LocalMachine' 'Registry32')) 'nothing is installed under WOW6432Node'
+            foreach ($file in 'voges_word.exe', 'flutter_windows.dll', 'data\app.so') {
+              $expected = (Get-FileHash -LiteralPath (Join-Path $build $file)).Hash
+              $actual = (Get-FileHash -LiteralPath (Join-Path $appPath $file)).Hash
+              Assert-That ($actual -eq $expected) "the installed $file is the build's"
+            }
+
+            $code = Invoke-Setup (Join-Path $appPath 'unins000.exe') '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+            Assert-That ($code -eq 0) "uninstalls ($scope, exit $code)"
+            for ($second = 0; $second -lt 30 -and (Get-Uninstall $hive); $second++) {
+              Start-Sleep -Seconds 1
+            }
+            Assert-That ($null -eq (Get-Uninstall $hive)) "the uninstall removes the $scope key"
+          }
+
+  linux:
+    name: Linux
+    # the same system as the release build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev imagemagick \
+            policykit-1 xvfb
+      - name: Install Flutter
+        run: |
+          git clone --depth 1 --branch "$FLUTTER_VERSION" \
+            https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - run: flutter pub get
+      - name: Voges Updater tests
+        working-directory: packages/voges_updater
+        run: |
+          flutter pub get
+          flutter test
+      - name: Build
+        run: flutter build linux --release --build-name "$NEW_VERSION"
+      - name: Build the packages
+        run: |
+          for version in "$OLD_VERSION" "$NEW_VERSION"; do
+            mkdir -p "$RUNNER_TEMP/$version"
+            packaging/linux/build_deb.sh "$version" build/linux/x64/release/bundle \
+              "$RUNNER_TEMP/$version/voges-word-linux-amd64.deb"
+          done
+      - name: Install the old version
+        run: sudo apt-get install -y "$RUNNER_TEMP/$OLD_VERSION/voges-word-linux-amd64.deb"
+      # test only: nobody is at the runner to type a password in polkit's
+      # window, so the runner's user may run pkexec without one
+      - name: Allow pkexec without a password
+        run: |
+          sudo mkdir -p /etc/polkit-1/localauthority/50-local.d
+          sudo tee /etc/polkit-1/localauthority/50-local.d/ci.pkla > /dev/null <<RULE
+          [CI may run pkexec without a password]
+          Identity=unix-user:$(id -un)
+          Action=org.freedesktop.policykit.exec
+          ResultAny=yes
+          ResultInactive=yes
+          ResultActive=yes
+          RULE
+          sudo systemctl restart polkit
+      - name: Update
+        working-directory: packages/voges_updater
+        timeout-minutes: 20
+        env:
+          FLUTTER_LINUX_RENDERER: software
+        run: |
+          xvfb-run -a --server-args='-screen 0 1280x1024x24' dart run tool/e2e.dart linux \
+            --old "$OLD_VERSION" --new "$NEW_VERSION" \
+            --installer "$RUNNER_TEMP/$NEW_VERSION/voges-word-linux-amd64.deb" \
+            --old-installer "$RUNNER_TEMP/$OLD_VERSION/voges-word-linux-amd64.deb"
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Flutter
+        run: |
+          git clone --depth 1 --branch "$FLUTTER_VERSION" \
+            https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - run: flutter pub get
+      - name: Voges Updater tests
+        working-directory: packages/voges_updater
+        run: |
+          flutter pub get
+          flutter test
+      - name: Build Voges Updater
+        working-directory: packages/voges_updater
+        run: flutter build macos --release --build-name "$NEW_VERSION"
+      - name: Build
+        run: flutter build macos --release --build-name "$NEW_VERSION"
+      # one build for both versions: the .dmg holds it as built, and the old
+      # copy only changes its version and is signed again like a release
+      - name: Package both versions
+        run: |
+          helper="packages/voges_updater/build/macos/Build/Products/Release/Voges Updater.app"
+          app="build/macos/Build/Products/Release/Voges Word.app"
+          old="$RUNNER_TEMP/$OLD_VERSION"
+          mkdir -p "$old"
+          ditto "$helper" "$old/Voges Updater.app"
+          ditto "$app" "$old/Voges Word.app"
+          for bundle in "$old/Voges Updater.app" "$old/Voges Word.app"; do
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $OLD_VERSION" \
+              "$bundle/Contents/Info.plist"
+          done
+          packaging/macos/embed_updater.sh "$old/Voges Updater.app" "$old/Voges Word.app" \
+            macos/Runner/Release.entitlements
+          packaging/macos/embed_updater.sh "$helper" "$app" macos/Runner/Release.entitlements
+          packaging/macos/build_dmg.sh "$app" "$RUNNER_TEMP/VogesWord-macos.dmg"
+      - name: Install the old version
+        run: ditto "$RUNNER_TEMP/$OLD_VERSION/Voges Word.app" "/Applications/Voges Word.app"
+      - name: Update
+        working-directory: packages/voges_updater
+        timeout-minutes: 20
+        run: |
+          dart run tool/e2e.dart macos --old "$OLD_VERSION" --new "$NEW_VERSION" \
+            --installer "$RUNNER_TEMP/VogesWord-macos.dmg"

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
+import 'package:voges_updater/voges_updater.dart'
+    show UpdateCheck, UpdaterLocalizations;
 
 import 'editor/editor_screen.dart';
 import 'editor/editor_session.dart';
@@ -26,6 +28,7 @@ class VogesWordApp extends StatelessWidget {
     this.windowButtons = WindowButtonsLayout.right,
     this.recovery,
     this.spelling,
+    this.updates,
     super.key,
   });
 
@@ -38,6 +41,7 @@ class VogesWordApp extends StatelessWidget {
   final WindowButtonsLayout windowButtons;
   final RecoveryStore? recovery;
   final SpellChecker? spelling;
+  final UpdateCheck? updates;
 
   ThemeData _theme(Brightness brightness) => ThemeData(
     colorScheme: ColorScheme.fromSeed(
@@ -67,6 +71,7 @@ class VogesWordApp extends StatelessWidget {
           GlobalWidgetsLocalizations.delegate,
           GlobalCupertinoLocalizations.delegate,
           FlutterQuillLocalizations.delegate,
+          UpdaterLocalizations.delegate,
         ],
         home: EditorScreen(
           session: session,
@@ -78,6 +83,7 @@ class VogesWordApp extends StatelessWidget {
           windowButtons: windowButtons,
           recovery: recovery,
           spelling: spelling,
+          updates: updates,
         ),
       ),
     );

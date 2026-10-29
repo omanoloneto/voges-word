@@ -57,9 +57,16 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
+      - name: Voges Updater checks
+        working-directory: packages/voges_updater
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
       - run: |
           flutter build linux --release \
-            --build-name "$VERSION" --build-number "$GITHUB_RUN_NUMBER"
+            --build-name "$VERSION" --build-number "$GITHUB_RUN_NUMBER" \
+            --dart-define=VOGES_VERSION="$VERSION"
       - name: Build the .deb
         run: |
           packaging/linux/build_deb.sh "$VERSION" \
@@ -84,9 +91,22 @@ jobs:
             https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
       - run: flutter pub get
-      - run: |
+      - name: Build Voges Updater
+        working-directory: packages/voges_updater
+        run: |
+          flutter pub get
           flutter build macos --release \
             --build-name "$VERSION" --build-number "$GITHUB_RUN_NUMBER"
+      - run: |
+          flutter build macos --release \
+            --build-name "$VERSION" --build-number "$GITHUB_RUN_NUMBER" \
+            --dart-define=VOGES_VERSION="$VERSION"
+      - name: Embed Voges Updater
+        run: |
+          packaging/macos/embed_updater.sh \
+            "packages/voges_updater/build/macos/Build/Products/Release/Voges Updater.app" \
+            "build/macos/Build/Products/Release/Voges Word.app" \
+            macos/Runner/Release.entitlements
       - name: Build the .dmg
         run: |
           app="build/macos/Build/Products/Release/Voges Word.app"
@@ -117,7 +137,8 @@ jobs:
         shell: pwsh
         run: |
           flutter build windows --release `
-            --build-name $env:VERSION --build-number $env:GITHUB_RUN_NUMBER
+            --build-name $env:VERSION --build-number $env:GITHUB_RUN_NUMBER `
+            --dart-define=VOGES_VERSION=$env:VERSION
       # a fresh Windows install does not have the Visual C++ runtime
       - name: Visual C++ runtime
         shell: pwsh
@@ -145,6 +166,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
       GH_TOKEN: ${{ github.token }}
@@ -160,9 +183,25 @@ jobs:
           sha256sum VogesWord-macos.dmg VogesWord-windows-setup.exe \
             voges-word-linux-amd64.deb > SHA256SUMS.txt
           cat SHA256SUMS.txt
-      - name: Create the release
+      # GitHub attests that this workflow made SHA256SUMS.txt from this tag:
+      # the signing tool refuses a draft whose files were swapped afterwards
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/SHA256SUMS.txt
+      # the release stays a draft until the owner signs SHA256SUMS.txt with
+      # the key the apps trust, which never leaves the owner's Mac
+      - name: Create the draft release
         run: |
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --draft --verify-tag \
             --title "Voges Word $VERSION" --notes-file packaging/release-notes.md \
             dist/VogesWord-macos.dmg dist/VogesWord-windows-setup.exe \
             dist/voges-word-linux-amd64.deb dist/SHA256SUMS.txt
+          {
+            echo "Draft created. Sign and publish it on the owner's Mac:"
+            echo
+            echo '```'
+            echo "cd packages/voges_updater"
+            echo "dart run tool/release_signing.dart publish $GITHUB_REPOSITORY $GITHUB_REF_NAME"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

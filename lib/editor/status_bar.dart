@@ -13,6 +13,7 @@ class StatusBar extends StatefulWidget {
     required this.pageInfo,
     required this.zoom,
     required this.onZoomChanged,
+    this.trailing,
     super.key,
   });
 
@@ -22,6 +23,9 @@ class StatusBar extends StatefulWidget {
   final ValueListenable<(int, int)?> pageInfo;
   final double zoom;
   final ValueChanged<double> onZoomChanged;
+
+  /// Shown before the zoom, such as the update indicator.
+  final Widget? trailing;
 
   @override
   State<StatusBar> createState() => _StatusBarState();
@@ -124,6 +128,10 @@ class _StatusBarState extends State<StatusBar> {
                 ),
               ],
               const Spacer(),
+              if (widget.trailing case final trailing?) ...[
+                Flexible(child: trailing),
+                const SizedBox(width: 8),
+              ],
               SizedBox(
                 width: 140,
                 child: SliderTheme(

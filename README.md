@@ -10,6 +10,16 @@ The installers are in the [latest release](https://github.com/omanoloneto/voges-
 - **Windows** 10 or 11, 64-bit: `VogesWord-windows-setup.exe`. It installs without administrator rights and shows up in "Open with" for `.docx` and `.txt`. If SmartScreen warns you, click "More info" and then "Run anyway".
 - **Linux** (Ubuntu 22.04, Debian 12 or newer and derivatives, 64-bit): `sudo apt install ./voges-word-linux-amd64.deb`.
 
+### Updates
+
+From version 1.2.0 on, Voges Word checks for a new version every time it opens and says in the status bar whether it is up to date. When there is an update, clicking it asks about unsaved work, closes the app and opens **Voges Updater**, which lists every installed app of the Voges suite that has an update; update all of them or only some. When it finishes, Voges Word opens again. Earlier versions don't have the updater: install 1.2.0 by hand once.
+
+- The check reads the number of the latest release from github.com; nothing about you or your documents is sent.
+- Every update is verified before it is installed: its files must match the `SHA256SUMS.txt` of the release, and that file must carry the Ed25519 signature of the project's key, which is built into the app. A download that doesn't match is never installed.
+- **macOS:** the updater replaces the app in its folder; if your account can't write to it, it puts the verified `.dmg` in Downloads for you to install. Voges Word stays sandboxed: the updater is a separate app inside it (`Contents/Helpers/Voges Updater.app`).
+- **Windows:** the installer runs silently; installs for all users ask for administrator permission.
+- **Linux:** the update is installed with `apt`, after the system asks for your password (polkit). Without a password window, the updater shows the command to run in a terminal.
+
 ## What it does
 
 - Opens `.docx` and `.txt`; saves as `.docx` (default) or `.txt`.
@@ -33,6 +43,7 @@ The installers are in the [latest release](https://github.com/omanoloneto/voges-
 - Warns before closing or opening another file with unsaved changes.
 - The system's "Open with" on macOS, Android and, through the installers, Windows and Linux. A file path can also be passed on the command line.
 - Interface in English, Portuguese and Spanish. It follows the system language, and you can pick another one in the File menu.
+- Updates itself on macOS, Windows and Linux: the status bar shows when a new version exists (see [Updates](#updates)).
 
 What already exists and what is missing compared to Word's most used features is in [docs/word-feature-checklist.md](docs/word-feature-checklist.md).
 
@@ -104,7 +115,20 @@ The interface texts live in `lib/l10n/app_en.arb` (the template), `app_pt.arb` a
 
 ### Publishing a release
 
-Update `version` in `pubspec.yaml` and create the matching tag, such as `v1.2.3`. The `Release` workflow runs the tests, builds the `.dmg`, the Windows installer (Inno Setup) and the `.deb`, and publishes the release with `SHA256SUMS.txt`. On pull requests it only builds the installers. The file names are fixed because the website page links to them.
+1. Update `version` in `pubspec.yaml` and create the matching tag, such as `v1.2.3`.
+2. The `Release` workflow runs the tests, builds the `.dmg` (with Voges Updater embedded), the Windows installer (Inno Setup) and the `.deb`, and creates a **draft** release with `SHA256SUMS.txt`. On pull requests it only builds the installers. The file names are fixed because the website page and the updater rely on them.
+3. On the owner's Mac, sign and publish the draft:
+
+   ```sh
+   cd packages/voges_updater
+   dart run tool/release_signing.dart publish omanoloneto/voges-word v1.2.3
+   ```
+
+   The tool checks that the draft has exactly the expected files, signs `SHA256SUMS.txt` with the key kept in the login Keychain, uploads `SHA256SUMS.txt.sig` and publishes the release. Never publish a draft by hand: the apps refuse a release without a valid signature, so nobody gets the update.
+
+The signing key is created once with `dart run tool/release_signing.dart init`, which stores it in the login Keychain and prints its public key; that public key goes into `releaseSigningKeys` in `packages/voges_updater/lib/src/release_trust.dart` (`dart run tool/release_signing.dart public-key` prints it again). Keep a backup of the key (Keychain Access → `voges-release-signing` → Show password, into a password manager): without it, the installed apps can't verify new releases and must be updated by hand once. To replace the key, add the new public key to the list, release, and only then remove the old one.
+
+The update check can be tried locally against a fake GitHub (`packages/voges_updater/tool/fake_github.dart`) with builds made with `--dart-define=VOGES_UPDATE_TEST_ORIGIN=http://127.0.0.1:<port>` and `--dart-define=VOGES_UPDATE_TEST_KEY=<public key>`. The release workflow never passes these.
 
 The text editor is [flutter_quill](https://pub.dev/packages/flutter_quill) 11.5.0, copied into `third_party/flutter_quill` (MIT license) with pagination added; the changes are marked with `Voges Word:`.
 
@@ -119,5 +143,6 @@ The text editor is [flutter_quill](https://pub.dev/packages/flutter_quill) 11.5.
 - `lib/print/` — pages drawn off-screen, PDF assembly and printing through the system.
 - `lib/spell/` — system spell checker and underlining in the editor.
 - `tool/` — Google Fonts list generator.
-- `packaging/` — installers (`.dmg`, Inno Setup and `.deb`) used by the release workflow.
+- `packages/voges_updater/` — Voges Updater: the update check, the updater window and the per-system installers, shared by the apps of the Voges suite; its `macos/` folder builds the helper app embedded in the `.app`.
+- `packaging/` — installers (`.dmg`, Inno Setup and `.deb`) used by the release workflow, and the script that embeds Voges Updater in the `.app`.
 - `third_party/flutter_quill/` — text editor with pagination.
