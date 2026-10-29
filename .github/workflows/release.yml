@@ -166,6 +166,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
       GH_TOKEN: ${{ github.token }}
@@ -181,8 +183,13 @@ jobs:
           sha256sum VogesWord-macos.dmg VogesWord-windows-setup.exe \
             voges-word-linux-amd64.deb > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      # GitHub attests that this workflow made SHA256SUMS.txt from this tag:
+      # the signing tool refuses a draft whose files were swapped afterwards
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/SHA256SUMS.txt
       # the release stays a draft until the owner signs SHA256SUMS.txt with
-      # the offline key the apps trust; a stolen GitHub token can't do that
+      # the key the apps trust, which never leaves the owner's Mac
       - name: Create the draft release
         run: |
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \

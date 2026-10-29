@@ -61,10 +61,12 @@ final class ReleaseSigning {
   ReleaseSigning({
     required this.runner,
     required this.gh,
+    String? checkout,
     ReleaseVerifier? verifier,
     StringSink? out,
     StringSink? err,
-  }) : verifier = verifier ?? ReleaseVerifier(),
+  }) : checkout = checkout ?? _packageOf(Platform.script),
+       verifier = verifier ?? ReleaseVerifier(),
        out = out ?? stdout,
        err = err ?? stderr;
 
@@ -73,6 +75,10 @@ final class ReleaseSigning {
   /// Absolute path of the GitHub command line; null when it is missing.
   final String? gh;
 
+  /// This package in the local clone, whose tags are the owner's. Paths
+  /// given to git are relative to it, wherever the tool runs from.
+  final String checkout;
+
   /// Checks the new signature against the keys the apps trust.
   final ReleaseVerifier verifier;
 
@@ -80,8 +86,12 @@ final class ReleaseSigning {
   final StringSink err;
 
   static const security = '/usr/bin/security';
+  static const git = '/usr/bin/git';
   static const keychainService = 'voges-release-signing';
   static const keychainAccount = 'voges';
+
+  /// Who uploads every file of a release made by the release workflow.
+  static const workflowBot = 'github-actions[bot]';
 
   static const usage =
       'Usage:\n'
@@ -181,6 +191,12 @@ final class ReleaseSigning {
 
   /// Signs the checksums of the draft [tag] of [repository] and, unless
   /// [dryRun], uploads the signature and publishes the draft.
+  ///
+  /// A stolen GitHub token could replace the draft's files before they are
+  /// signed, so only files that the release workflow built from the owner's
+  /// tag are signed: the bot uploaded them, the tag is the same here and on
+  /// GitHub, and GitHub attests that this workflow made SHA256SUMS.txt from
+  /// that commit.
   Future<void> publish(
     String repository,
     String tag, {
@@ -196,7 +212,7 @@ final class ReleaseSigning {
         _refuse('$tag is not a release tag such as v1.2.0.');
     final installers = {app.macos.asset, app.windows.asset, app.linux.asset};
 
-    final (draft, assets) = _draftAndAssets(
+    final release = _releaseOf(
       await _gh(gh, [
         'release',
         'view',
@@ -204,25 +220,30 @@ final class ReleaseSigning {
         '--repo',
         repository,
         '--json',
-        'isDraft,assets',
+        'isDraft,assets,databaseId',
       ]),
     );
-    if (!draft) {
+    if (!release.draft) {
       _refuse(
         '$tag is already published: only a draft from the release '
         'workflow is signed.',
       );
     }
-    if (assets.contains(signatureAsset)) {
-      _refuse('$tag already has $signatureAsset.');
-    }
-    if (!_exactly(assets, {...installers, checksumsAsset})) {
+    final signed = release.assets.contains(signatureAsset);
+    final built = release.assets.where((name) => name != signatureAsset);
+    if (!_exactly(built, {...installers, checksumsAsset})) {
       _refuse(
         '$tag should have exactly '
         '${[...installers, checksumsAsset].join(', ')}; '
-        'it has ${assets.join(', ')}.',
+        'it has ${release.assets.join(', ')}.',
       );
     }
+    _uploadedByWorkflow(
+      await _gh(gh, ['api', 'repos/$repository/releases/${release.id}']),
+      built.toSet(),
+    );
+    final commit = await _tagCommit(gh, repository, tag);
+    await _sameTrustedKeys(tag);
 
     final folder = await Directory.systemTemp.createTemp('voges-release-');
     try {
@@ -234,12 +255,26 @@ final class ReleaseSigning {
         repository,
         '--pattern',
         checksumsAsset,
+        if (signed) ...['--pattern', signatureAsset],
         '--dir',
         folder.path,
       ]);
-      final checksums = await _readChecksums(
-        File(p.join(folder.path, checksumsAsset)),
-      );
+      final checksumsFile = File(p.join(folder.path, checksumsAsset));
+      await _gh(gh, [
+        'attestation',
+        'verify',
+        checksumsFile.path,
+        '--repo',
+        repository,
+        '--signer-workflow',
+        '$repository/.github/workflows/release.yml',
+        '--source-ref',
+        'refs/tags/$tag',
+        '--source-digest',
+        commit,
+        '--deny-self-hosted-runners',
+      ]);
+      final checksums = await _readChecksums(checksumsFile);
       final Map<String, String> sums;
       try {
         sums = parseChecksums(ascii.decode(checksums));
@@ -272,6 +307,15 @@ final class ReleaseSigning {
           'the apps would reject this release. Nothing was uploaded.',
         );
       }
+      // Ed25519 signatures are deterministic: a signature left by a publish
+      // that stopped halfway is byte for byte the one made now
+      final signatureFile = File(p.join(folder.path, signatureAsset));
+      if (signed && !_same(await signatureFile.readAsBytes(), signature)) {
+        _refuse(
+          '$tag already has a $signatureAsset that this key did not make. '
+          'Delete it only if you know where it came from.',
+        );
+      }
       if (dryRun) {
         out.writeln(
           'Dry run: $repository $tag is signed and the signature '
@@ -280,16 +324,17 @@ final class ReleaseSigning {
         return;
       }
 
-      final signatureFile = File(p.join(folder.path, signatureAsset));
-      await signatureFile.writeAsBytes(signature, flush: true);
-      await _gh(gh, [
-        'release',
-        'upload',
-        tag,
-        signatureFile.path,
-        '--repo',
-        repository,
-      ]);
+      if (!signed) {
+        await signatureFile.writeAsBytes(signature, flush: true);
+        await _gh(gh, [
+          'release',
+          'upload',
+          tag,
+          signatureFile.path,
+          '--repo',
+          repository,
+        ]);
+      }
       await _gh(gh, [
         'release',
         'edit',
@@ -303,6 +348,110 @@ final class ReleaseSigning {
     } finally {
       await folder.delete(recursive: true);
     }
+  }
+
+  /// The commit of [tag], which must be the same in this clone and on
+  /// GitHub: a tag moved on GitHub would point the build somewhere else.
+  Future<String> _tagCommit(String gh, String repository, String tag) async {
+    final local = await runner.run(git, [
+      '-C',
+      checkout,
+      'rev-parse',
+      '--verify',
+      '$tag^{commit}',
+    ]);
+    if (local.exitCode != 0) {
+      _refuse(
+        '$tag is not in this clone. Tag the commit you reviewed here and '
+        'push that tag: fetching it would trust the copy on GitHub.',
+      );
+    }
+    final commit = '${local.stdout}'.trim();
+    final remote = (await _gh(gh, [
+      'api',
+      'repos/$repository/commits/$tag',
+      '--jq',
+      '.sha',
+    ])).trim();
+    if (remote != commit) {
+      _refuse(
+        '$tag is $commit here but $remote on GitHub. Nothing was signed.',
+      );
+    }
+    return commit;
+  }
+
+  /// The release must trust the key it is signed with: the apps built from
+  /// [tag] check updates against the releaseSigningKeys of that commit.
+  Future<void> _sameTrustedKeys(String tag) async {
+    final atTag = await runner.run(git, [
+      '-C',
+      checkout,
+      'cat-file',
+      '-e',
+      '$tag:./lib/src/release_trust.dart',
+    ]);
+    if (atTag.exitCode != 0) {
+      _refuse('$tag has no lib/src/release_trust.dart in this package.');
+    }
+    final diff = await runner.run(git, [
+      '-C',
+      checkout,
+      'diff',
+      '--quiet',
+      tag,
+      '--',
+      'lib/src/release_trust.dart',
+    ]);
+    if (diff.exitCode != 0) {
+      _refuse(
+        'lib/src/release_trust.dart here differs from $tag. Check out $tag '
+        'and run publish from there.',
+      );
+    }
+  }
+
+  static void _uploadedByWorkflow(String json, Set<String> built) {
+    final Object? release;
+    try {
+      release = jsonDecode(json);
+    } on FormatException {
+      _refuse('gh api did not answer JSON for the release.');
+    }
+    if (release case {
+      'author': {'login': final String author},
+      'assets': final List<Object?> assets,
+    }) {
+      if (author != workflowBot) {
+        _refuse(
+          'The draft was created by $author, not by the release workflow.',
+        );
+      }
+      for (final asset in assets) {
+        if (asset case {
+          'name': final String name,
+          'uploader': {'login': final String uploader},
+        }) {
+          if (built.contains(name) && uploader != workflowBot) {
+            _refuse(
+              '$name was uploaded by $uploader, not by the release workflow.',
+            );
+          }
+        } else {
+          _refuse('gh api listed an asset without its name or uploader.');
+        }
+      }
+      return;
+    }
+    _refuse('gh api answered without the author and assets of the release.');
+  }
+
+  static bool _same(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   /// The key in base64, as stored by [init]. Never printed.
@@ -345,7 +494,7 @@ final class ReleaseSigning {
     return '${result.stdout}';
   }
 
-  static (bool, List<String>) _draftAndAssets(String json) {
+  static ({bool draft, List<String> assets, int id}) _releaseOf(String json) {
     final Object? release;
     try {
       release = jsonDecode(json);
@@ -355,10 +504,12 @@ final class ReleaseSigning {
     if (release case {
       'isDraft': final bool draft,
       'assets': final List<Object?> assets,
+      'databaseId': final int id,
     }) {
       return (
-        draft,
-        [
+        draft: draft,
+        id: id,
+        assets: [
           for (final asset in assets)
             if (asset case {'name': final String name})
               name
@@ -367,7 +518,7 @@ final class ReleaseSigning {
         ],
       );
     }
-    _refuse('gh release view answered without isDraft and assets.');
+    _refuse('gh release view answered without isDraft, assets and databaseId.');
   }
 
   static Future<Uint8List> _readChecksums(File file) async {
@@ -388,6 +539,9 @@ final class _Refused implements Exception {
 }
 
 Never _refuse(String message) => throw _Refused(message);
+
+/// The package folder of the tool at [script] (`<package>/tool/x.dart`).
+String _packageOf(Uri script) => p.dirname(p.dirname(script.toFilePath()));
 
 String? _onPath(String name) {
   for (final folder in (Platform.environment['PATH'] ?? '').split(':')) {
