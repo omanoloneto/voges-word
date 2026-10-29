@@ -6,4 +6,6 @@ Page with the downloads and step-by-step instructions: https://omanoloneto.pro/v
 - **Windows** (10 or 11, 64-bit): run `VogesWord-windows-setup.exe`; it does not need administrator rights. If SmartScreen warns you, click "More info" and then "Run anyway".
 - **Linux** (Ubuntu 22.04, Debian 12 or newer and derivatives, 64-bit): `sudo apt install ./voges-word-linux-amd64.deb`
 
-`SHA256SUMS.txt` lists the SHA-256 of each file, so you can verify the download.
+`SHA256SUMS.txt` lists the SHA-256 of each file, so you can verify the download, and `SHA256SUMS.txt.sig` is its signature.
+
+Voges Word 1.2.0 and newer check for updates when they open and install them with Voges Updater. Older versions don't: download the new version from this page once.
