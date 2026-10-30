@@ -43,7 +43,7 @@ class _FontPickerState extends State<FontPicker> {
         _FontPanel(
           fonts: widget.fonts,
           current: widget.current,
-          documentFonts: widget.documentFonts(),
+          documentFonts: widget.documentFonts,
           onSelected: (family) {
             _menu.close();
             widget.onSelected(family);
@@ -88,7 +88,7 @@ class _FontPanel extends StatefulWidget {
 
   final FontCatalog fonts;
   final String? current;
-  final Set<String> documentFonts;
+  final Set<String> Function() documentFonts;
   final ValueChanged<String> onSelected;
 
   @override
@@ -97,6 +97,18 @@ class _FontPanel extends StatefulWidget {
 
 class _FontPanelState extends State<_FontPanel> {
   var _query = '';
+
+  /// Read when the menu opens: it walks the whole document, and the ribbon
+  /// rebuilds the picker on every keystroke.
+  late var _documentFonts = widget.documentFonts();
+
+  @override
+  void didUpdateWidget(_FontPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.documentFonts != oldWidget.documentFonts) {
+      _documentFonts = widget.documentFonts();
+    }
+  }
 
   List<_Row> _rows() {
     final query = _query.trim().toLowerCase();
@@ -119,7 +131,7 @@ class _FontPanelState extends State<_FontPanel> {
     return [
       ...section(
         l10n.fontsInDocument,
-        widget.documentFonts.toList()
+        _documentFonts.toList()
           ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())),
       ),
       ...section(

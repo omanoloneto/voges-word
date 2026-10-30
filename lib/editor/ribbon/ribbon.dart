@@ -285,23 +285,16 @@ class _RibbonState extends State<Ribbon> {
   Widget _homeTab() => _withController((controller) {
     final l10n = context.l10n;
     final look = session.look;
-    final header = controller.valueOf<int>(Attribute.header.key) ?? 0;
+    final style = controller.getSelectionStyle();
+    final header = style.valueOf<int>(Attribute.header.key) ?? 0;
     final base = header == 0 ? look.body : look.heading(header);
-    final font =
-        controller.valueOf<String>(Attribute.font.key) ?? base.fontFamily;
-    final sizeValue = controller
-        .getSelectionStyle()
-        .attributes[Attribute.size.key]
-        ?.value;
+    final font = style.valueOf<String>(Attribute.font.key) ?? base.fontFamily;
+    final sizeValue = style.attributes[Attribute.size.key]?.value;
     final size = num.tryParse('${sizeValue ?? ''}') ?? base.fontSize;
-    final align = controller.valueOf<String>(Attribute.align.key) ?? 'left';
-    final list = controller.valueOf<String>(Attribute.list.key);
+    final align = style.valueOf<String>(Attribute.align.key) ?? 'left';
+    final list = style.valueOf<String>(Attribute.list.key);
     final lineSpacing =
-        (controller
-                    .getSelectionStyle()
-                    .attributes[Attribute.lineHeight.key]
-                    ?.value
-                as num?)
+        (style.attributes[Attribute.lineHeight.key]?.value as num?)
             ?.toDouble() ??
         look.lineSpacing;
 
@@ -379,7 +372,7 @@ class _RibbonState extends State<Ribbon> {
                     RibbonIconButton(
                       icon: icon,
                       tooltip: tip,
-                      selected: controller.isActive(attribute),
+                      selected: style.isActive(attribute),
                       onPressed: () => controller.toggle(attribute),
                     ),
                   RibbonIconButton(
@@ -403,7 +396,7 @@ class _RibbonState extends State<Ribbon> {
                 tooltip: l10n.fontColor,
                 quick: _quickTextColors,
                 palette: _textPalette,
-                current: controller.valueOf<String>(Attribute.color.key),
+                current: style.valueOf<String>(Attribute.color.key),
                 lastUsed: _lastTextColor,
                 clearLabel: l10n.automaticColor,
                 onSelected: (hex) => _apply(() {
@@ -417,7 +410,7 @@ class _RibbonState extends State<Ribbon> {
                 tooltip: l10n.highlightColor,
                 quick: _quickHighlights,
                 palette: _highlightPalette,
-                current: controller.valueOf<String>(Attribute.background.key),
+                current: style.valueOf<String>(Attribute.background.key),
                 lastUsed: _lastHighlight,
                 clearLabel: l10n.noHighlight,
                 onSelected: (hex) => _apply(() {
