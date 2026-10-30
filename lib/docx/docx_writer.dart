@@ -699,7 +699,8 @@ class _BlockWriter {
             ind?.getAttribute('w:left') ?? ind?.getAttribute('w:start') ?? '',
           ) ??
           styleProps.indentLeft;
-      if ((currentLeft / 720).round() != indent) {
+      // The reader shows outdents as level 0 and stops at 8.
+      if ((currentLeft / 720).round().clamp(0, 8) != indent) {
         final element = ind ?? _w('ind');
         final key = element.getAttribute('w:start') != null
             ? 'w:start'
@@ -768,7 +769,10 @@ class _BlockWriter {
     final out = StringBuffer();
     String? openLink;
     for (final segment in segments) {
-      final link = segment.link;
+      final link = switch (segment.link) {
+        final link? => stripInvalidXmlChars(link),
+        null => null,
+      };
       if (link != openLink) {
         if (openLink != null) out.write('</w:hyperlink>');
         if (link != null) {
@@ -816,7 +820,14 @@ class _BlockWriter {
 
   String _plainRun(String text) {
     if (text.isEmpty) return '';
-    return '<w:r><w:t xml:space="preserve">${escapeXmlText(stripInvalidXmlChars(text))}</w:t></w:r>';
+    final content = [
+      for (final part in text.split('\u2028'))
+        if (part.isEmpty)
+          ''
+        else
+          '<w:t xml:space="preserve">${escapeXmlText(stripInvalidXmlChars(part))}</w:t>',
+    ].join('<w:br/>');
+    return '<w:r>$content</w:r>';
   }
 
   String _textRun(

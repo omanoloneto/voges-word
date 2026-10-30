@@ -1,15 +1,18 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/painting.dart' show EdgeInsets;
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:voges_word/document/delta_blocks.dart';
 import 'package:voges_word/document/embeds.dart';
 import 'package:voges_word/document/headers_footers.dart';
 import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/docx/docx_builder.dart';
 import 'package:voges_word/docx/docx_codec.dart';
 import 'package:voges_word/docx/docx_package.dart';
+import 'package:voges_word/rtf/rtf_reader.dart';
 import 'package:xml/xml.dart';
 
 final _png = base64Decode(
@@ -37,6 +40,47 @@ Operation _op(Delta delta, String text) => _ops(delta).firstWhere(
   (operation) =>
       operation.data is String && (operation.data as String).contains(text),
 );
+
+/// The character style of each run inside a link, in order.
+List<String?> _linkRunStyles(DocxPackage package) => [
+  for (final link in XmlDocument.parse(
+    package.text('word/document.xml')!,
+  ).findAllElements('w:hyperlink'))
+    for (final run in link.findElements('w:r'))
+      run.getElement('w:rPr')?.getElement('w:rStyle')?.getAttribute('w:val'),
+];
+
+/// The left indent of each paragraph by its text.
+Map<String, String?> _leftIndents(String documentXml) {
+  final indents = <String, String?>{};
+  for (final paragraph in XmlDocument.parse(
+    documentXml,
+  ).findAllElements('w:p')) {
+    final text = paragraph.findAllElements('w:t').map((t) => t.innerText);
+    if (text.isEmpty) continue;
+    indents[text.join()] = paragraph
+        .getElement('w:pPr')
+        ?.getElement('w:ind')
+        ?.getAttribute('w:left');
+  }
+  return indents;
+}
+
+/// The text of each footnote, with its tabs.
+List<String> _footnoteTexts(DocxPackage package) => [
+  for (final note in XmlDocument.parse(
+    package.text('word/footnotes.xml')!,
+  ).findAllElements('w:footnote'))
+    if (int.parse(note.getAttribute('w:id')!) > 0)
+      [
+        for (final element in note.descendantElements)
+          if (element.name.qualified == 'w:t')
+            element.innerText
+          else if (element.name.qualified == 'w:tab' &&
+              element.parentElement?.name.qualified == 'w:r')
+            '\t',
+      ].join(),
+];
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -450,5 +494,187 @@ void main() {
     expect(package.text('word/document.xml'), contains('w:val="clear"'));
     expect(_lineAttributes(loaded.delta, 'numbered')?['list'], 'ordered');
     expect(_lineAttributes(loaded.delta, 'plain')?['list'], isNull);
+  });
+
+  group('links keep the look their source gives them', () {
+    test('a source that styles its links leaves the other runs plain', () {
+      // A table of contents line as Word writes it: only the text has the
+      // Hyperlink style, the leader tab and the page number don't.
+      final spec = DocumentSpec()
+        ..styles.add(
+          const StyleSpec.character(
+            'Hyperlink',
+            'Hyperlink',
+            run: RunFormat(color: '0000FF', underline: true),
+          ),
+        )
+        ..body.addAll(const [
+          ParagraphSpec([
+            LinkSpec('#_Toc1', [
+              TextSpec('Introduction', RunFormat(styleId: 'Hyperlink')),
+              TextSpec('\t'),
+              FieldSpec(r'PAGEREF _Toc1 \h', result: '1'),
+            ]),
+          ]),
+          ParagraphSpec([BookmarkSpec('_Toc1'), TextSpec('Introduction')]),
+        ]);
+      final package = DocxBuilder(spec).build();
+      final loaded = DocxCodec(TableStore()).read(package);
+
+      expect(_linkRunStyles(package), [
+        'Hyperlink',
+        for (var run = 0; run < 6; run++) null,
+      ]);
+      expect(_op(loaded.delta, '\t').attributes, {'link': '#_Toc1'});
+      expect(_op(loaded.delta, 'Introduction').attributes?['color'], '#0000FF');
+    });
+
+    test('a source whose links show as their runs say keeps them so', () {
+      final spec = DocumentSpec()
+        ..body.add(
+          const ParagraphSpec([
+            LinkSpec('http://example.com/', [
+              TextSpec('world'),
+            ], hyperlinkStyle: false),
+          ]),
+        );
+      final package = DocxBuilder(spec).build();
+      final loaded = DocxCodec(TableStore()).read(package);
+
+      expect(_linkRunStyles(package), [null]);
+      expect(package.text('word/styles.xml'), isNot(contains('Hyperlink')));
+      expect(_op(loaded.delta, 'world').attributes, {
+        'link': 'http://example.com/',
+      });
+    });
+
+    test('links from web pages take the Hyperlink style', () {
+      final spec = DocumentSpec()
+        ..body.add(
+          const ParagraphSpec([
+            LinkSpec('https://example.com/', [TextSpec('site')]),
+          ]),
+        );
+      final package = DocxBuilder(spec).build();
+      final loaded = DocxCodec(TableStore()).read(package);
+
+      expect(_linkRunStyles(package), ['Hyperlink']);
+      expect(
+        _op(loaded.delta, 'site').attributes,
+        allOf(
+          containsPair('underline', true),
+          containsPair('color', '#0563C1'),
+          containsPair('link', 'https://example.com/'),
+        ),
+      );
+    });
+  });
+
+  test('column breaks are kept when saved as .docx', () {
+    final codec = DocxCodec(TableStore());
+    final spec = DocumentSpec(page: const PageSpec(columns: 2))
+      ..body.add(
+        const ParagraphSpec([
+          TextSpec('Left column'),
+          BreakSpec(BreakKind.column),
+          TextSpec('Right column'),
+        ]),
+      );
+    final loaded = codec.read(DocxBuilder(spec).build());
+    final saved = DocxPackage.decode(
+      codec.encode(loaded.delta, source: loaded.source),
+    ).text('word/document.xml')!;
+
+    expect(saved, contains('<w:br w:type="column"/>'));
+    expect(saved, isNot(contains('<w:br/>')));
+    expect(
+      documentBlocks(loaded.delta).whereType<LineBlock>().first.plainText,
+      'Left column\u2028Right column',
+    );
+    final elsewhere = DocxPackage.decode(
+      codec.encode(loaded.delta),
+    ).text('word/document.xml')!;
+    expect(elsewhere, contains('<w:br/>'));
+    expect(elsewhere, isNot(contains('\u2028')));
+  });
+
+  test('outdents and deep indents are kept when saved as .docx', () {
+    final codec = DocxCodec(TableStore());
+    final spec = DocumentSpec()
+      ..styles.add(
+        const StyleSpec.paragraph(
+          'Outdent',
+          'Outdent',
+          paragraph: ParagraphFormat(indentLeft: -36),
+        ),
+      )
+      ..body.addAll(const [
+        ParagraphSpec([
+          TextSpec('margin'),
+        ], format: ParagraphFormat(indentLeft: -36)),
+        ParagraphSpec([
+          TextSpec('half'),
+        ], format: ParagraphFormat(indentLeft: -18, firstLine: 18)),
+        ParagraphSpec([
+          TextSpec('styled'),
+        ], format: ParagraphFormat(styleId: 'Outdent')),
+        ParagraphSpec([
+          TextSpec('deep'),
+        ], format: ParagraphFormat(indentLeft: 500)),
+        ParagraphSpec([
+          TextSpec('moved'),
+        ], format: ParagraphFormat(indentLeft: -36)),
+      ]);
+    final loaded = codec.read(DocxBuilder(spec).build());
+    final edited = Delta();
+    var moved = false;
+    for (final operation in loaded.delta.toList()) {
+      if (moved && operation.data == '\n') {
+        edited.insert('\n', {...?operation.attributes, 'indent': 1});
+        moved = false;
+        continue;
+      }
+      moved = moved || operation.data == 'moved';
+      edited.push(operation);
+    }
+    final saved = DocxPackage.decode(
+      codec.encode(edited, source: loaded.source),
+    ).text('word/document.xml')!;
+
+    expect(_leftIndents(saved), {
+      'margin': '-720',
+      'half': '-360',
+      'styled': null,
+      'deep': '10000',
+      'moved': '720',
+    });
+  });
+
+  test('notes keep one separator after their mark', () {
+    final spec = DocumentSpec()
+      ..body.add(
+        const ParagraphSpec([
+          TextSpec('see'),
+          NoteSpec(NoteKind.footnote, [
+            ParagraphSpec([TextSpec(' From Word.')]),
+          ]),
+          NoteSpec(NoteKind.footnote, [
+            ParagraphSpec([TextSpec('\tFrom LibreOffice.')]),
+          ]),
+          NoteSpec(NoteKind.footnote, [
+            ParagraphSpec([TextSpec('Plain.')]),
+          ]),
+        ]),
+      );
+    expect(_footnoteTexts(DocxBuilder(spec).build()), [
+      ' From Word.',
+      '\tFrom LibreOffice.',
+      ' Plain.',
+    ]);
+
+    final word = RtfReader(
+      File('test/fixtures/rtf/word.rtf').readAsBytesSync(),
+    ).read();
+    expect(_footnoteTexts(DocxBuilder(word.spec).build()), [' Texto da nota.']);
   });
 }

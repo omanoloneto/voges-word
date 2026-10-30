@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/painting.dart' show EdgeInsets;
 
+import '../document/document_codec.dart';
 import '../document/headers_footers.dart';
 import 'docx_package.dart';
 import 'image_formats.dart';
@@ -356,10 +357,15 @@ class ImageSpec extends InlineSpec {
 /// A link to a web address, e-mail or `#bookmark`; other targets keep only the
 /// text.
 class LinkSpec extends InlineSpec {
-  const LinkSpec(this.target, this.children);
+  const LinkSpec(this.target, this.children, {this.hyperlinkStyle = true});
 
   final String target;
   final List<InlineSpec> children;
+
+  /// Whether the runs take Word's Hyperlink style, the look links have in web
+  /// pages; false keeps them as the source shows them. A link with a run in a
+  /// character style never takes it, since the source styled the link itself.
+  final bool hyperlinkStyle;
 }
 
 /// A Word field such as `PAGE`; fields that could fetch content or run
@@ -560,10 +566,12 @@ String bookmarkName(String name) {
   return clean.length > 40 ? clean.substring(0, 40) : clean;
 }
 
-/// Web, e-mail and FTP addresses; null for anything else (`javascript:`,
-/// `file:`...).
+final _controlChars = RegExp(r'[\u0000-\u001F\uFFFE\uFFFF]');
+
+/// Web, e-mail and FTP addresses without control characters, which XML can't
+/// hold; null for anything else (`javascript:`, `file:`...).
 String? safeLinkTarget(String target) {
-  final trimmed = target.trim();
+  final trimmed = target.replaceAll(_controlChars, '').trim();
   final uri = Uri.tryParse(trimmed);
   if (uri == null) return null;
   return const {'http', 'https', 'mailto', 'ftp'}.contains(uri.scheme)
@@ -609,14 +617,18 @@ const _relationshipBase =
     'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
 class DocxBuilder {
-  DocxBuilder(this.spec);
+  DocxBuilder(this.spec, {this.maxOutput = 256 * 1024 * 1024});
 
   final DocumentSpec spec;
+
+  /// Characters of XML the package may have. A few bytes of some sources ask
+  /// for gigabytes of it, so past this the source is refused as too large.
+  final int maxOutput;
 
   final _parts = <String, Uint8List>{};
   final _overrides = <String, String>{};
   final _mediaExtensions = <String>{};
-  final _sharedRelationships = <String, List<_Relationship>>{};
+  final _sharedRelationships = <String, _Relationships>{};
   final _styleIds = <String>{'Normal', 'DefaultParagraphFont', 'TableNormal'};
   final _headingStyles = <int, String>{};
   final _bookmarks = <String>{};
@@ -626,6 +638,7 @@ class DocxBuilder {
   var _drawingId = 0;
   var _noteId = 0;
   var _media = 0;
+  var _output = 0;
   var _inNote = false;
   var _usesHyperlinkStyle = false;
   var _references = '';
@@ -667,7 +680,7 @@ class DocxBuilder {
 
     final body =
         _blocks(spec.body, _document, body: true) +
-        _section(spec.page, spec.lastSectionKind);
+        _counted(_section(spec.page, spec.lastSectionKind));
 
     for (final kind in NoteKind.values) {
       if ((kind == NoteKind.footnote ? _footnotes : _endnotes).isNotEmpty) {
@@ -695,7 +708,7 @@ class DocxBuilder {
   }
 
   void _addPart(String name, String xml, String type) {
-    _parts['word/$name'] = _utf8(xml);
+    _parts['word/$name'] = _utf8(_counted(xml));
     _overrides['/word/$name'] = '$_main.$type+xml';
     _document.relate('$_relationshipBase/$type', name);
   }
@@ -705,11 +718,22 @@ class DocxBuilder {
     _overrides['/${part.name}'] = contentType;
     final relationships = part.xml();
     if (relationships != null) {
-      _parts[DocxPackage.relationshipsPath(part.name)] = _utf8(relationships);
+      _parts[DocxPackage.relationshipsPath(part.name)] = _utf8(
+        _counted(relationships),
+      );
     }
   }
 
   static Uint8List _utf8(String text) => Uint8List.fromList(utf8.encode(text));
+
+  /// Counts [xml] toward [maxOutput].
+  String _counted(String xml) {
+    _output += xml.length;
+    if (_output > maxOutput) {
+      throw DocumentProblemException(DocumentProblem.tooLarge);
+    }
+    return xml;
+  }
 
   static String _namespaces() => [
     for (final prefix in const [
@@ -751,12 +775,14 @@ class DocxBuilder {
         case SectionBreakSpec():
           if (!body) continue;
           out.write(
-            '<w:p><w:pPr>${_section(block.page, block.kind)}</w:pPr></w:p>',
+            _counted(
+              '<w:p><w:pPr>${_section(block.page, block.kind)}</w:pPr></w:p>',
+            ),
           );
           endsWithParagraph = true;
       }
     }
-    if (!endsWithParagraph) out.write('<w:p/>');
+    if (!endsWithParagraph) out.write(_counted('<w:p/>'));
     return out.toString();
   }
 
@@ -799,9 +825,11 @@ class DocxBuilder {
     }
     final properties =
         _paragraphProperties(format, mark: paragraph.mark) + (section ?? '');
+    final start = _counted(
+      '<w:p>${properties.isEmpty ? '' : '<w:pPr>$properties</w:pPr>'}',
+    );
     final content = _inlines(paragraph.inlines, part, const RunFormat());
-    return '<w:p>${properties.isEmpty ? '' : '<w:pPr>$properties</w:pPr>'}'
-        '$content</w:p>';
+    return '$start$content${_counted('</w:p>')}';
   }
 
   /// In schema order; the section properties go after it.
@@ -920,16 +948,18 @@ class DocxBuilder {
         ? ''
         : '<w:tblInd w:w="${_twips(table.indent!)}" w:type="dxa"/>';
     final out = StringBuffer(
-      '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>$indent'
-      '<w:tblBorders>$sides</w:tblBorders><w:tblLayout w:type="fixed"/>'
-      '<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" '
-      'w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>'
-      '</w:tblPr><w:tblGrid>',
+      _counted(
+        '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>$indent'
+        '<w:tblBorders>$sides</w:tblBorders><w:tblLayout w:type="fixed"/>'
+        '<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" '
+        'w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>'
+        '</w:tblPr><w:tblGrid>',
+      ),
     );
     for (final width in widths) {
-      out.write('<w:gridCol w:w="${_twips(width)}"/>');
+      out.write(_counted('<w:gridCol w:w="${_twips(width)}"/>'));
     }
-    out.write('</w:tblGrid>');
+    out.write(_counted('</w:tblGrid>'));
     for (final row in rows) {
       final rowProperties = [
         if (row.height case final height? when height > 0)
@@ -937,9 +967,11 @@ class DocxBuilder {
         if (row.header) '<w:tblHeader/>',
       ].join();
       out.write(
-        rowProperties.isEmpty
-            ? '<w:tr>'
-            : '<w:tr><w:trPr>$rowProperties</w:trPr>',
+        _counted(
+          rowProperties.isEmpty
+              ? '<w:tr>'
+              : '<w:tr><w:trPr>$rowProperties</w:trPr>',
+        ),
       );
       var column = 0;
       for (final cell in row.cells) {
@@ -970,13 +1002,13 @@ class DocxBuilder {
           properties.write('<w:vAlign w:val="${align.name}"/>');
         }
         out.write(
-          '<w:tc><w:tcPr>$properties</w:tcPr>'
-          '${_blocks(cell.blocks, part)}</w:tc>',
+          '${_counted('<w:tc><w:tcPr>$properties</w:tcPr>')}'
+          '${_blocks(cell.blocks, part)}${_counted('</w:tc>')}',
         );
       }
-      out.write('</w:tr>');
+      out.write(_counted('</w:tr>'));
     }
-    out.write('</w:tbl>');
+    out.write(_counted('</w:tbl>'));
     return out.toString();
   }
 
@@ -987,34 +1019,38 @@ class DocxBuilder {
   String _inlines(List<InlineSpec> inlines, _Part part, RunFormat base) {
     final out = StringBuffer();
     for (final inline in inlines) {
-      switch (inline) {
-        case TextSpec():
-          out.write(_text(inline.text, base.merge(inline.format)));
-        case ImageSpec():
-          out.write(_image(inline, part));
-        case LinkSpec():
-          out.write(_link(inline, part, base));
-        case FieldSpec():
-          out.write(_field(inline, base));
-        case NoteSpec():
-          if (!_inNote) out.write(_noteReference(inline, base));
-        case BreakSpec():
-          out.write(switch (inline.kind) {
-            BreakKind.line => '<w:r><w:br/></w:r>',
-            BreakKind.page => '<w:r><w:br w:type="page"/></w:r>',
-            BreakKind.column => '<w:r><w:br w:type="column"/></w:r>',
-          });
-        case BookmarkSpec():
-          final name = bookmarkName(inline.name);
-          if (!_bookmarks.add(name)) continue;
-          final id = _bookmarkId++;
-          out.write(
-            '<w:bookmarkStart w:id="$id" w:name="${escapeXmlAttribute(name)}"/>'
-            '<w:bookmarkEnd w:id="$id"/>',
-          );
-      }
+      final xml = _inline(inline, part, base);
+      // A link counts its content as it writes it.
+      out.write(inline is LinkSpec ? xml : _counted(xml));
     }
     return out.toString();
+  }
+
+  String _inline(InlineSpec inline, _Part part, RunFormat base) {
+    switch (inline) {
+      case TextSpec():
+        return _text(inline.text, base.merge(inline.format));
+      case ImageSpec():
+        return _image(inline, part);
+      case LinkSpec():
+        return _link(inline, part, base);
+      case FieldSpec():
+        return _field(inline, base);
+      case NoteSpec():
+        return _inNote ? '' : _noteReference(inline, base);
+      case BreakSpec():
+        return switch (inline.kind) {
+          BreakKind.line => '<w:r><w:br/></w:r>',
+          BreakKind.page => '<w:r><w:br w:type="page"/></w:r>',
+          BreakKind.column => '<w:r><w:br w:type="column"/></w:r>',
+        };
+      case BookmarkSpec():
+        final name = bookmarkName(inline.name);
+        if (!_bookmarks.add(name)) return '';
+        final id = _bookmarkId++;
+        return '<w:bookmarkStart w:id="$id" '
+            'w:name="${escapeXmlAttribute(name)}"/><w:bookmarkEnd w:id="$id"/>';
+    }
   }
 
   String _text(String text, RunFormat format) {
@@ -1065,8 +1101,8 @@ class DocxBuilder {
     if (!inStyle && styleId != null && _styleIds.contains(styleId)) {
       out.write('<w:rStyle w:val="${escapeXmlAttribute(styleId)}"/>');
     }
-    if (format.font case final font? when font.trim().isNotEmpty) {
-      final name = escapeXmlAttribute(stripInvalidXmlChars(font.trim()));
+    if (_fontName(format.font) case final font?) {
+      final name = escapeXmlAttribute(font);
       out.write(
         '<w:rFonts w:ascii="$name" w:hAnsi="$name" w:eastAsia="$name" '
         'w:cs="$name"/>',
@@ -1105,6 +1141,13 @@ class DocxBuilder {
     return out.toString();
   }
 
+  /// Null for no name or one too long to be a real font's, which would be
+  /// written four times in every run.
+  static String? _fontName(String? font) {
+    final name = stripInvalidXmlChars(font ?? '').trim();
+    return name.isEmpty || name.length > 100 ? null : name;
+  }
+
   static void _onOff(StringBuffer out, String name, bool? value) {
     if (value == null) return;
     out.write(value ? '<w:$name/>' : '<w:$name w:val="0"/>');
@@ -1119,25 +1162,40 @@ class DocxBuilder {
     if (anchor == null && address == null) {
       return _inlines(link.children, part, base);
     }
-    _usesHyperlinkStyle = true;
-    _styleIds.add('Hyperlink');
+    final styled = link.hyperlinkStyle && !_hasCharacterStyle(link.children);
+    if (styled) {
+      _usesHyperlinkStyle = true;
+      _styleIds.add('Hyperlink');
+    }
     final content = _inlines(
       link.children,
       part,
-      base.merge(const RunFormat(styleId: 'Hyperlink')),
+      styled ? base.merge(const RunFormat(styleId: 'Hyperlink')) : base,
     );
     if (content.isEmpty) return '';
-    if (anchor != null) {
-      return '<w:hyperlink w:anchor="${escapeXmlAttribute(anchor)}" '
-          'w:history="1">$content</w:hyperlink>';
+    final String destination;
+    if (address != null) {
+      final id = part.relate(
+        '$_relationshipBase/hyperlink',
+        address,
+        external: true,
+      );
+      destination = 'r:id="$id"';
+    } else {
+      destination = 'w:anchor="${escapeXmlAttribute(anchor!)}"';
     }
-    final id = part.relate(
-      '$_relationshipBase/hyperlink',
-      address!,
-      external: true,
-    );
-    return '<w:hyperlink r:id="$id" w:history="1">$content</w:hyperlink>';
+    return '${_counted('<w:hyperlink $destination w:history="1">')}$content'
+        '${_counted('</w:hyperlink>')}';
   }
+
+  static bool _hasCharacterStyle(List<InlineSpec> inlines) => inlines.any(
+    (inline) => switch (inline) {
+      TextSpec(:final format) ||
+      FieldSpec(:final format) => format.styleId != null,
+      LinkSpec(:final children) => _hasCharacterStyle(children),
+      _ => false,
+    },
+  );
 
   String _field(FieldSpec field, RunFormat base) {
     final format = base.merge(field.format);
@@ -1181,29 +1239,50 @@ class DocxBuilder {
           ParagraphFormat(styleId: textStyle).merge(block.format),
           mark: block.mark,
         );
-        final mark = first
-            ? '<w:r><w:rPr><w:rStyle w:val="$referenceStyle"/></w:rPr>'
-                  '<w:${kind}Ref/></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>'
-            : '';
+        var mark = '';
+        if (first) {
+          mark =
+              '<w:r><w:rPr><w:rStyle w:val="$referenceStyle"/></w:rPr>'
+              '<w:${kind}Ref/></w:r>';
+          if (!_startsWithSpace(block.inlines)) {
+            mark += '<w:r><w:t xml:space="preserve"> </w:t></w:r>';
+          }
+        }
         first = false;
-        content.write(
-          '<w:p><w:pPr>$properties</w:pPr>$mark'
-          '${_inlines(block.inlines, part, const RunFormat())}</w:p>',
-        );
+        content
+          ..write(_counted('<w:p><w:pPr>$properties</w:pPr>$mark'))
+          ..write(_inlines(block.inlines, part, const RunFormat()))
+          ..write(_counted('</w:p>'));
       } else if (block is TableSpec) {
         content.write(_table(block, part));
       }
     }
     _inNote = false;
-    if (blocks.last is! ParagraphSpec) content.write('<w:p/>');
+    if (blocks.last is! ParagraphSpec) content.write(_counted('<w:p/>'));
     (footnote ? _footnotes : _endnotes).write(
-      '<w:$kind w:id="$id">$content</w:$kind>',
+      '${_counted('<w:$kind w:id="$id">')}$content${_counted('</w:$kind>')}',
     );
     final format = base
         .merge(note.format)
         .merge(RunFormat(styleId: referenceStyle));
     return '<w:r>${_runPropertiesElement(format)}'
         '<w:${kind}Reference w:id="$id"/></w:r>';
+  }
+
+  /// Whether the text has its own space or tab after the note's mark, as
+  /// notes from Word and LibreOffice do.
+  static bool _startsWithSpace(List<InlineSpec> inlines) {
+    for (final inline in inlines) {
+      switch (inline) {
+        case BookmarkSpec() || TextSpec(text: ''):
+          continue;
+        case TextSpec(:final text):
+          return text.startsWith(' ') || text.startsWith('\t');
+        default:
+          return false;
+      }
+    }
+    return false;
   }
 
   void _notes(NoteKind kind) {
@@ -1297,7 +1376,7 @@ class DocxBuilder {
     final out = StringBuffer(
       '$_declaration<w:styles xmlns:w="${Namespaces.w}">'
       '<w:docDefaults><w:rPrDefault><w:rPr>'
-      '${_runProperties(RunFormat(font: defaults.font ?? 'Arial', size: defaults.size ?? 12, color: defaults.color), inStyle: true)}'
+      '${_runProperties(RunFormat(font: _fontName(defaults.font) ?? 'Arial', size: defaults.size ?? 12, color: defaults.color), inStyle: true)}'
       '$language</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>'
       '${_paragraphProperties(ParagraphFormat(spaceBefore: paragraph.spaceBefore, spaceAfter: paragraph.spaceAfter, lineSpacing: paragraph.lineSpacing), inStyle: true)}'
       '</w:pPr></w:pPrDefault></w:docDefaults>',
@@ -1435,9 +1514,7 @@ class DocxBuilder {
       );
       for (final (level, definition) in list.levels.indexed) {
         final left = definition.indentLeft ?? 36.0 * (level + 1);
-        final font = definition.font == null
-            ? ''
-            : escapeXmlAttribute(stripInvalidXmlChars(definition.font!));
+        final font = escapeXmlAttribute(_fontName(definition.font) ?? '');
         out.write(
           '<w:lvl w:ilvl="$level">'
           '<w:start w:val="${definition.start.clamp(0, 32767)}"/>'
@@ -1519,44 +1596,46 @@ typedef _Relationship = ({
   bool external,
 });
 
+class _Relationships {
+  final all = <_Relationship>[];
+  final ids = <(String, String), String>{};
+}
+
 /// A package part and the relationships it collects.
 class _Part {
   _Part(DocxBuilder builder, this.name, {bool shared = false})
     : _relationships = shared
-          ? builder._sharedRelationships.putIfAbsent(name, () => [])
-          : [];
+          ? builder._sharedRelationships.putIfAbsent(name, _Relationships.new)
+          : _Relationships();
 
   final String name;
-  final List<_Relationship> _relationships;
+  final _Relationships _relationships;
 
   /// Path relative to the main document's folder.
   String get target => name.substring('word/'.length);
 
-  String relate(String type, String target, {bool external = false}) {
-    for (final relationship in _relationships) {
-      if (relationship.type == type && relationship.target == target) {
-        return relationship.id;
-      }
-    }
-    final id = 'rId${_relationships.length + 1}';
-    _relationships.add((
-      id: id,
-      type: type,
-      target: target,
-      external: external,
-    ));
-    return id;
-  }
+  String relate(String type, String target, {bool external = false}) =>
+      _relationships.ids.putIfAbsent((type, target), () {
+        final id = 'rId${_relationships.all.length + 1}';
+        _relationships.all.add((
+          id: id,
+          type: type,
+          target: target,
+          external: external,
+        ));
+        return id;
+      });
 
   String? xml() {
-    if (_relationships.isEmpty) return null;
+    if (_relationships.all.isEmpty) return null;
     final out = StringBuffer(
       '$_declaration<Relationships xmlns="${Namespaces.packageRelationships}">',
     );
-    for (final relationship in _relationships) {
+    for (final relationship in _relationships.all) {
+      final target = stripInvalidXmlChars(relationship.target);
       out.write(
         '<Relationship Id="${relationship.id}" Type="${relationship.type}" '
-        'Target="${escapeXmlAttribute(relationship.target)}"'
+        'Target="${escapeXmlAttribute(target)}"'
         '${relationship.external ? ' TargetMode="External"' : ''}/>',
       );
     }

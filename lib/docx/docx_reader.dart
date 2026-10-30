@@ -800,11 +800,20 @@ class _InlineReader {
       } else if (x.isW(child, 'tab') || x.isW(child, 'ptab')) {
         text.write('\t');
       } else if (x.isW(child, 'br')) {
-        if (x.attr(child, 'type') == 'page') {
-          flush();
-          ops.insert({EmbedTypes.pageBreak: 'page'});
-        } else {
-          text.write('\u2028');
+        switch (x.attr(child, 'type')) {
+          case 'page':
+            flush();
+            ops.insert({EmbedTypes.pageBreak: 'page'});
+          case 'column':
+            // Kept as it is for Word; other formats get a line break.
+            flush();
+            _opaque(
+              '<${run.name.qualified}>$rPrXml${child.toXmlString()}'
+                  '</${run.name.qualified}>',
+              '\u2028',
+            );
+          default:
+            text.write('\u2028');
         }
       } else if (x.isW(child, 'cr')) {
         text.write('\u2028');
