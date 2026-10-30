@@ -6,13 +6,19 @@ import 'package:flutter/painting.dart' show Color, EdgeInsets;
 import 'package:flutter_quill/flutter_quill.dart' show ChangeSource, Document;
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/document_look.dart';
 import 'package:voges_word/document/embeds.dart';
 import 'package:voges_word/document/headers_footers.dart';
 import 'package:voges_word/document/plain_text_codec.dart';
 import 'package:voges_word/document/tables.dart';
+import 'package:voges_word/docx/docx_builder.dart';
 import 'package:voges_word/docx/docx_codec.dart';
+import 'package:voges_word/docx/docx_package.dart';
+import 'package:voges_word/docx/docx_template.dart';
+import 'package:voges_word/docx/image_formats.dart';
+import 'package:voges_word/docx/word_xml.dart';
 import 'package:voges_word/editor/page_numbers.dart';
 import 'package:voges_word/rtf/rtf_codec.dart';
 
@@ -50,13 +56,96 @@ String _plain(Delta delta) => PlainTextCodec(
   tables: _tables,
 ).plainTextOf(delta);
 
-LoadedDocument _again(LoadedDocument document) => _codec.decode(
+/// Saves as the session does, with the opened package as the source.
+String _save(LoadedDocument document) => latin1.decode(
   _codec.encode(
     document.delta,
+    source: document.source,
     look: document.look,
     headersFooters: document.headersFooters,
   ),
 );
+
+LoadedDocument _again(LoadedDocument document) =>
+    _codec.decode(Uint8List.fromList(latin1.encode(_save(document))));
+
+LoadedDocument _openRtf(String rtf) =>
+    _codec.decode(Uint8List.fromList(latin1.encode(rtf)));
+
+/// A .docx whose body is [body]; [media] go in word/media, related from the
+/// body as rIdM1, rIdM2...
+LoadedDocument _openDocx(
+  String body, {
+  Map<String, Uint8List> media = const {},
+}) {
+  final package = newDocumentPackage();
+  final namespaces = {
+    ...Namespaces.known,
+    'cx': 'http://schemas.microsoft.com/office/drawing/2014/chartex',
+  }.entries.map((entry) => 'xmlns:${entry.key}="${entry.value}"').join(' ');
+  package
+    ..setText(
+      'word/document.xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          '<w:document $namespaces><w:body>$body'
+          '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>'
+          '</w:body></w:document>',
+    )
+    ..addRelationships('word/document.xml', [
+      for (final (index, name) in media.keys.indexed)
+        Relationship(
+          id: 'rIdM${index + 1}',
+          type: RelationshipTypes.image,
+          target: 'media/$name',
+        ),
+    ]);
+  media.forEach((name, bytes) => package.parts['word/media/$name'] = bytes);
+  return _docx.read(package);
+}
+
+/// The text and marks of each paragraph of [rtf] that holds [text].
+String _line(String rtf, String text) =>
+    rtf.split('\r\n').firstWhere((line) => line.contains(text));
+
+/// Lines of the editor's content, with block embeds by their type.
+String _shape(Delta delta) => [
+  for (final operation in delta.toList())
+    operation.data is String
+        ? operation.data as String
+        : '[${(operation.data as Map).keys.first}]',
+].join();
+
+/// The pictures of the editor's content as data URIs.
+List<String> _pictures(Delta delta) => [
+  for (final operation in delta.toList())
+    if (operation.data case {EmbedTypes.image: final String data}) data,
+];
+
+/// Text of the footnotes or endnotes of an opened document; Word's
+/// separators (ids -1 and 0) are left out.
+List<String> _noteTexts(LoadedDocument document, String kind) => [
+  for (final MapEntry(key: id, value: note)
+      in _docx.notes(document.source! as DocxPackage, kind).entries)
+    if ((int.tryParse(id) ?? 0) > 0)
+      Document.fromDelta(note).toPlainText().trim(),
+];
+
+/// The attributes of the line that holds [text].
+Map<String, dynamic>? _lineAttributes(Delta delta, String text) {
+  final operations = delta.toList();
+  final index = operations.indexWhere(
+    (operation) =>
+        operation.data is String && (operation.data as String).contains(text),
+  );
+  if (index < 0) return null;
+  for (var next = index; next < operations.length; next++) {
+    final data = operations[next].data;
+    if (data is String && data.contains('\n')) {
+      return operations[next].attributes;
+    }
+  }
+  return null;
+}
 
 TableModel _tableOf(Object? embed) => _tables[tableIdOf(embed)]!;
 
@@ -308,7 +397,7 @@ void main() {
     );
   });
 
-  test('fields of .docx headers stay fields; notes keep their number', () {
+  test('fields of .docx headers stay fields', () {
     final blank = _docx.createEmpty();
     final docx = _docx.decode(
       _docx.encode(
@@ -336,7 +425,7 @@ void main() {
     );
   });
 
-  test('bitmaps and metafiles are kept; other pictures are left out', () {
+  test('pictures are told by their bytes; GIF and TIFF go as PNG', () {
     final bitmap = Uint8List(14 + 40 + 4);
     ByteData.sublistView(bitmap)
       ..setUint8(0, 0x42)
@@ -361,9 +450,9 @@ void main() {
       ..setUint16(26, 0x300, Endian.little)
       ..setUint32(28, 12, Endian.little)
       ..setUint32(40, 3, Endian.little);
-    final gif = base64Decode(
-      'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
-    );
+    final gif = img.encodeGif(img.Image(width: 2, height: 1));
+    final tiff = img.encodeTiff(img.Image(width: 3, height: 2));
+    final jpeg = img.encodeJpg(img.Image(width: 4, height: 4));
     String uri(String mime, List<int> bytes) =>
         'data:$mime;base64,${base64Encode(bytes)}';
     final rtf = latin1.decode(
@@ -375,22 +464,33 @@ void main() {
             {'width': '50', 'height': '50'},
           )
           ..insert({EmbedTypes.image: uri('image/gif', gif)})
+          ..insert({EmbedTypes.image: uri('image/tiff', tiff)})
+          // Named photo.png, but a JPEG.
+          ..insert({EmbedTypes.image: uri('image/png', jpeg)})
+          ..insert({EmbedTypes.image: uri('image/jpeg', _png)})
           ..insert('\n'),
       ),
     );
     expect(rtf, contains(r'\dibitmap0'));
     expect(rtf, contains(r'\wmetafile8'));
-    final pictures = [
-      for (final operation
-          in _codec
-              .decode(Uint8List.fromList(latin1.encode(rtf)))
-              .delta
-              .toList())
-        if (operation.data case {EmbedTypes.image: final String data}) data,
-    ];
-    expect(pictures, hasLength(2));
-    expect(pictures.first, uri('image/bmp', bitmap));
-    expect(pictures.last, startsWith('data:image/x-wmf;base64,183GmgAA'));
+    expect(RegExp(r'\\pngblip').allMatches(rtf), hasLength(3));
+    expect(RegExp(r'\\jpegblip').allMatches(rtf), hasLength(1));
+    expect(rtf, contains(r'\pngblip\picw2\pich1\picwgoal30\pichgoal15'));
+    expect(rtf, contains(r'\pngblip\picw3\pich2\picwgoal45\pichgoal30'));
+
+    final pictures = _pictures(
+      _codec.decode(Uint8List.fromList(latin1.encode(rtf))).delta,
+    );
+    expect(pictures, hasLength(6));
+    expect(pictures[0], uri('image/bmp', bitmap));
+    expect(pictures[1], startsWith('data:image/x-wmf;base64,183GmgAA'));
+    for (final (index, size) in [(2, (2, 1)), (3, (3, 2))]) {
+      expect(pictures[index], startsWith('data:image/png;'));
+      final picture = img.decodePng(decodeDataUri(pictures[index])!.bytes)!;
+      expect((picture.width, picture.height), size);
+    }
+    expect(pictures[4], uri('image/jpeg', jpeg));
+    expect(pictures[5], uri('image/png', _png));
   });
 
   test('tables deeper than RTF readers go are kept as text', () {
@@ -440,6 +540,7 @@ void main() {
           pageNumberPosition(again.headersFooters),
           PageNumberPosition.topCenter,
         );
+        expect(_noteTexts(again, 'footnote'), ['Texto da nota.']);
       }
     });
   }
@@ -450,6 +551,431 @@ void main() {
     expect(
       Document.fromDelta(_codec.decode(saved).delta).toPlainText(),
       'Olá\n',
+    );
+  });
+
+  test('footnotes and endnotes of an .rtf keep their text', () {
+    final opened = _openRtf(
+      r'{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}'
+      r'\pard Texto{\super\chftn{\footnote\pard\plain{\super\chftn} '
+      r'Fonte: {\b IBGE}, 2020.}} e{\super\chftn{\footnote\ftnalt\pard\plain'
+      r'{\super\chftn} Ver anexo B.}} fim.\par}',
+    );
+    expect(opened.notices, isEmpty);
+
+    final saved = _save(opened);
+    _expectBalanced(saved);
+    expect(saved, contains(r'\fet2'));
+    expect(
+      saved,
+      contains(
+        r'Texto{\super\chftn{\footnote\pard\plain\ql\li0\fi0\ri0\sb0\sa0\f0\fs24 '
+        r'{\super\chftn} {\fs20 Fonte: }{\b\fs20 IBGE}{\fs20 , 2020.}'
+        '\r\n}} e',
+      ),
+    );
+    expect(
+      saved,
+      contains(
+        r'e{\super\chftn{\footnote\ftnalt\pard\plain\ql\li0\fi0\ri0\sb0\sa0'
+        r'\f0\fs24 {\super\chftn} {\fs20 Ver anexo B.}'
+        '\r\n}} fim.',
+      ),
+    );
+    final again = _openRtf(saved);
+    expect(_noteTexts(again, 'footnote'), ['Fonte: IBGE, 2020.']);
+    expect(_noteTexts(again, 'endnote'), ['Ver anexo B.']);
+    expect(_plain(again.delta), _plain(opened.delta));
+
+    // A note the package doesn't have keeps its number.
+    final bare = latin1.decode(_codec.encode(opened.delta, look: opened.look));
+    expect(bare, isNot(contains('IBGE')));
+    expect(bare, contains(r'Texto{\super 1} e{\super 2} fim.'));
+  });
+
+  test('notes of a .docx keep their paragraphs and formatting', () {
+    final spec = DocumentSpec()
+      ..body.addAll([
+        const ParagraphSpec([
+          TextSpec('Corpo'),
+          NoteSpec(NoteKind.footnote, [
+            ParagraphSpec([
+              TextSpec('Primeira '),
+              TextSpec('nota', RunFormat(italic: true)),
+            ]),
+            ParagraphSpec([TextSpec('Segundo parágrafo')]),
+          ]),
+        ]),
+        const TableSpec([
+          RowSpec([
+            CellSpec([
+              ParagraphSpec([
+                TextSpec('Célula'),
+                NoteSpec(NoteKind.endnote, [
+                  ParagraphSpec([TextSpec('Nota da célula')]),
+                ]),
+              ]),
+            ]),
+          ]),
+        ]),
+      ]);
+    final saved = _save(_docx.read(DocxBuilder(spec).build()));
+    _expectBalanced(saved);
+    expect(
+      saved,
+      contains(r'{\super\chftn} {\fs20 Primeira }{\i\fs20 nota}\par'),
+    );
+    expect(
+      saved,
+      contains(
+        r'C\u233?lula{\super\chftn{\footnote\ftnalt\pard\plain'
+        r'\ql\li0\fi0\ri0\sb0\sa0\sl240\slmult1\f0\fs24 {\super\chftn} '
+        r'{\fs20 Nota da c\u233?lula}'
+        '\r\n}}\\cell',
+      ),
+    );
+    final again = _openRtf(saved);
+    expect(_noteTexts(again, 'footnote'), ['Primeira nota\nSegundo parágrafo']);
+    expect(_noteTexts(again, 'endnote'), ['Nota da célula']);
+  });
+
+  test('single spacing is written when the document has another', () {
+    final look = _docx.createEmpty().look;
+    expect(look.lineSpacing, isNot(closeTo(1, 0.01)));
+    final bytes = _codec.encode(
+      Delta()
+        ..insert('Corpo em 1,5')
+        ..insert('\n', {'line-height': 1.5})
+        ..insert('Citação longa')
+        ..insert('\n', {'line-height': 1.0})
+        ..insert('Normal\n'),
+      look: look,
+    );
+    expect(_line(latin1.decode(bytes), 'Cita'), contains(r'\sl240\slmult1'));
+    final reopened = _codec.decode(bytes).delta;
+    expect(_lineAttributes(reopened, 'Corpo')?['line-height'], 1.5);
+    expect(_lineAttributes(reopened, 'Citação')?['line-height'], 1.0);
+    expect(_lineAttributes(reopened, 'Normal')?['line-height'], isNull);
+  });
+
+  test('numbered lists in table cells each start at 1', () {
+    Delta steps() => Delta()
+      ..insert('Passo')
+      ..insert('\n', {'list': 'ordered'})
+      ..insert('Outro passo')
+      ..insert('\n', {'list': 'ordered'});
+    final table = TableModel(
+      id: _tables.nextId(),
+      bordered: true,
+      columnWidths: [4000, 4000],
+      rows: [
+        TableRowModel(
+          cells: [
+            TableCellModel(controller: _tables.newCellController(steps())),
+            TableCellModel(controller: _tables.newCellController(steps())),
+          ],
+        ),
+      ],
+    );
+    _tables.add(table);
+    final rtf = latin1.decode(
+      _codec.encode(
+        Delta()
+          ..insert('Antes')
+          ..insert('\n', {'list': 'ordered'})
+          ..insert({EmbedTypes.table: encodeTableId(table.id)})
+          ..insert('\n')
+          ..insert('Depois')
+          ..insert('\n', {'list': 'ordered'}),
+      ),
+    );
+    final items = [
+      for (final match in RegExp(
+        r'\\ls(\d+)\\ilvl0.*?\{\\listtext\\f0 ([^\\]*)\\tab\}(\w+)',
+      ).allMatches(rtf))
+        '${match[1]} ${match[2]} ${match[3]}',
+    ];
+    expect(items, [
+      '1 1. Antes',
+      '2 1. Passo',
+      '2 2. Outro',
+      '3 1. Passo',
+      '3 2. Outro',
+      '4 1. Depois',
+    ]);
+  });
+
+  test('hidden text stays hidden instead of being deleted', () {
+    final opened = _openRtf(
+      r'{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}'
+      r'\pard Visivel {\v\b gabarito: B} fim.\par}',
+    );
+    expect(opened.notices, isEmpty);
+    final saved = _save(opened);
+    expect(
+      _line(saved, 'Visivel'),
+      contains(r'Visivel {\b\v gabarito: B} fim.'),
+    );
+    final again = _openRtf(saved);
+    final document = DocxPackage.decode(
+      _docx.encode(again.delta, source: again.source),
+    ).text('word/document.xml')!;
+    expect(document, contains('<w:vanish/>'));
+    expect(document, contains('gabarito: B'));
+  });
+
+  test('objects, VML pictures and drawing fallbacks keep their picture', () {
+    final picture = img.encodePng(img.Image(width: 4, height: 2));
+    final opened = _openDocx(
+      '<w:p><w:r><w:t xml:space="preserve">Antes </w:t></w:r>'
+      '<w:r><w:pict><v:shape style="width:30pt;height:15pt">'
+      '<v:imagedata r:id="rIdM1"/></v:shape></w:pict></w:r>'
+      '<w:r><w:t xml:space="preserve"> depois</w:t></w:r></w:p>'
+      '<w:p><w:r><w:t xml:space="preserve">Objeto </w:t></w:r>'
+      '<w:r><w:object w:dxaOrig="900" w:dyaOrig="450">'
+      '<v:shape style="width:45pt;height:22.5pt">'
+      '<v:imagedata r:id="rIdM1" o:title=""/></v:shape>'
+      '<o:OLEObject Type="Embed" ProgID="Excel.Sheet.12" r:id="rIdX"/>'
+      '</w:object></w:r></w:p>'
+      '<w:p><w:r><w:t xml:space="preserve">Gráfico </w:t></w:r>'
+      '<w:r><mc:AlternateContent><mc:Choice Requires="cx1"><w:drawing>'
+      '<wp:inline><wp:extent cx="762000" cy="381000"/><a:graphic>'
+      '<a:graphicData uri="http://schemas.microsoft.com/office/drawing/2014/chartex">'
+      '<cx:chart r:id="rIdX"/></a:graphicData></a:graphic></wp:inline>'
+      '</w:drawing></mc:Choice><mc:Fallback><w:drawing><wp:inline>'
+      '<wp:extent cx="762000" cy="381000"/><a:graphic><a:graphicData '
+      'uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+      '<pic:pic><pic:blipFill><a:blip r:embed="rIdM1"/></pic:blipFill>'
+      '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>'
+      '</mc:Fallback></mc:AlternateContent></w:r></w:p>',
+      media: {'image1.png': picture},
+    );
+    expect(_pictures(opened.delta), isEmpty, reason: 'protected content');
+
+    final saved = _save(opened);
+    expect(
+      _line(saved, 'Antes'),
+      endsWith(r'Antes {\pict\pngblip\picw4\pich2\picwgoal600\pichgoal300'),
+    );
+    expect(
+      _line(saved, 'Objeto'),
+      endsWith(r'Objeto {\pict\pngblip\picw4\pich2\picwgoal900\pichgoal450'),
+    );
+    expect(_line(saved, 'Gr'), endsWith(r'\picwgoal1200\pichgoal600'));
+    expect(
+      _pictures(_openRtf(saved).delta),
+      List.filled(3, 'data:image/png;base64,${base64Encode(picture)}'),
+    );
+  });
+
+  test('link addresses beyond ASCII are percent-encoded', () {
+    final rtf = latin1.decode(
+      _codec.encode(
+        Delta()
+          ..insert('São Paulo', {
+            'link': 'https://pt.wikipedia.org/wiki/São_Paulo',
+          })
+          ..insert(' ')
+          ..insert('voltar', {'link': '#Seção'})
+          ..insert('\n', {
+            HiddenAttributes.bookmarks: jsonEncode(['Seção']),
+          }),
+      ),
+    );
+    expect(
+      rtf,
+      contains(
+        r'HYPERLINK "https://pt.wikipedia.org/wiki/S%C3%A3o_Paulo"}}'
+        r'{\fldrslt{{\ul\cf1 S\u227?o Paulo}}}',
+      ),
+    );
+    expect(rtf, contains(r'HYPERLINK \\l "Se\u231?\u227?o"'));
+    final reopened = _openRtf(rtf).delta.toList();
+    expect(
+      reopened.firstWhere((op) => op.data == 'São Paulo').attributes?['link'],
+      'https://pt.wikipedia.org/wiki/S%C3%A3o_Paulo',
+    );
+  });
+
+  test('list items and paragraph groups add no space between them', () {
+    final look = _docx.createEmpty().look;
+    final rtf = latin1.decode(
+      _codec.encode(
+        Delta()
+          ..insert('Um')
+          ..insert('\n', {'list': 'bullet'})
+          ..insert('Dois')
+          ..insert('\n', {'list': 'bullet'})
+          ..insert('Junto um')
+          ..insert('\n', {
+            HiddenAttributes.contextualGroup: 'Normal',
+            HiddenAttributes.spaceAfter: 12.0,
+          })
+          ..insert('Junto dois')
+          ..insert('\n', {
+            HiddenAttributes.contextualGroup: 'Normal',
+            HiddenAttributes.spaceAfter: 12.0,
+          })
+          ..insert('Citação um')
+          ..insert('\n', {HiddenAttributes.contextualGroup: 'Citacao'})
+          ..insert('Citação dois')
+          ..insert('\n', {HiddenAttributes.contextualGroup: 'Citacao'})
+          ..insert('Fim\n'),
+        look: look,
+      ),
+    );
+    expect(rtf, contains(r'\contextualspace \f0\fs24 \sbasedon0\snext7 List'));
+    expect(
+      rtf,
+      contains(r'\contextualspace \f0\fs24 \sbasedon0\snext8 Citacao'),
+    );
+    expect(_line(rtf, 'Dois'), startsWith(r'\pard\plain\s7\ql\ls1'));
+    expect(_line(rtf, 'Dois'), contains(r'\contextualspace'));
+    expect(_line(rtf, 'Junto dois'), startsWith(r'\pard\plain\ql'));
+    expect(_line(rtf, 'Junto dois'), contains(r'\sa240'));
+    expect(_line(rtf, 'Junto dois'), contains(r'\contextualspace'));
+    expect(
+      _line(rtf, r'Cita\u231?\u227?o dois'),
+      startsWith(r'\pard\plain\s8'),
+    );
+    expect(_line(rtf, 'Fim'), isNot(contains(r'\contextualspace')));
+
+    final reopened = _openRtf(rtf).delta;
+    expect(_lineAttributes(reopened, 'Dois')?['list'], 'bullet');
+    final groups = [
+      for (final text in [
+        'Junto um',
+        'Junto dois',
+        'Citação um',
+        'Citação dois',
+        'Fim',
+      ])
+        _lineAttributes(reopened, text)?[HiddenAttributes.contextualGroup],
+    ];
+    expect(groups[0], isNotNull);
+    expect(groups[1], groups[0]);
+    expect(groups[2], isNotNull);
+    expect(groups[3], groups[2]);
+    expect(groups[2], isNot(groups[0]));
+    expect(groups[4], isNull);
+  });
+
+  test('bookmarks span their paragraph and REF fields name them alike', () {
+    String field(String instruction, String result) => OpaqueContent(
+      xml:
+          '<w:fldSimple w:instr="$instruction"><w:r><w:t>$result</w:t></w:r>'
+          '</w:fldSimple>',
+      text: result,
+    ).encode();
+    final rtf = latin1.decode(
+      _codec.encode(
+        Delta()
+          ..insert('Figura 1 - Mapa')
+          ..insert('\n', {
+            HiddenAttributes.bookmarks: jsonEncode(['_Ref1']),
+          })
+          ..insert('Tabela 2')
+          ..insert('\n', {
+            HiddenAttributes.bookmarks: jsonEncode(['Tabela-2']),
+          })
+          ..insert('Ver ')
+          ..insert({
+            EmbedTypes.opaqueInline: field(r' REF _Ref1 \h ', 'Figura 1'),
+          })
+          ..insert(' e ')
+          ..insert({
+            EmbedTypes.opaqueInline: field(r' PAGEREF Tabela-2 \h ', '1'),
+          })
+          ..insert('.\n'),
+      ),
+    );
+    expect(
+      _line(rtf, 'Mapa'),
+      endsWith(r'{\*\bkmkstart _Ref1}Figura 1 - Mapa{\*\bkmkend _Ref1}\par'),
+    );
+    expect(
+      _line(rtf, 'Tabela 2'),
+      endsWith(r'{\*\bkmkstart Tabela_2}Tabela 2{\*\bkmkend Tabela_2}\par'),
+    );
+    expect(rtf, contains(r'{\*\fldinst{ REF _Ref1 \\h }}'));
+    expect(rtf, contains(r'{\*\fldinst{ PAGEREF Tabela_2 \\h }}'));
+  });
+
+  test('empty paragraphs before a section break survive saving again', () {
+    final section = encodeSection(
+      '<w:sectPr xmlns:w="${Namespaces.w}">'
+      '<w:pgSz w:w="11906" w:h="16838"/></w:sectPr>',
+    );
+    final delta = Delta()
+      ..insert('Capa\n\n\n')
+      ..insert({EmbedTypes.sectionBreak: section})
+      ..insert('\n')
+      ..insert('Resumo\n')
+      ..insert({EmbedTypes.sectionBreak: section})
+      ..insert('\n')
+      ..insert('Texto\n');
+    final look = _docx.createEmpty().look;
+    final rtf = latin1.decode(_codec.encode(delta, look: look));
+    expect(rtf, contains('Resumo\\sect\r\n'));
+    final once = _codec.decode(Uint8List.fromList(latin1.encode(rtf)));
+    expect(_shape(once.delta), _shape(delta));
+    expect(_shape(_again(once).delta), _shape(delta));
+  });
+
+  test('each section says whether its first page differs', () {
+    String titlePages(String sectionXml, {required bool differentFirstPage}) {
+      final rtf = latin1.decode(
+        _codec.encode(
+          Delta()
+            ..insert('Capa\n')
+            ..insert({
+              EmbedTypes.sectionBreak: encodeSection(
+                '<w:sectPr xmlns:w="${Namespaces.w}">'
+                '<w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>'
+                '$sectionXml</w:sectPr>',
+              ),
+            })
+            ..insert('\n')
+            ..insert('Texto\n'),
+          look: _docx.createEmpty().look,
+          headersFooters: const HeadersFooters().copyWith(
+            differentFirstPage: differentFirstPage,
+          ),
+        ),
+      );
+      return [
+        for (final match in RegExp(r'\\sectd[^\r\n]*').allMatches(rtf))
+          match[0]!.contains(r'\titlepg') ? 'first' : 'same',
+      ].join(' ');
+    }
+
+    expect(titlePages('', differentFirstPage: true), 'same first');
+    expect(titlePages('<w:titlePg/>', differentFirstPage: false), 'first same');
+    expect(
+      titlePages('<w:titlePg w:val="0"/>', differentFirstPage: true),
+      'same first',
+    );
+  });
+
+  test('fields keep their character formatting', () {
+    final opened = _openRtf(
+      r'{\rtf1\ansi\deff0{\fonttbl{\f0 Arial;}}'
+      r'\sectd{\footer\pard\plain\qc {\b\fs16 Pagina }{\field{\*\fldinst'
+      r'{\b\fs16 PAGE }}{\fldrslt{\b\fs16 1}}}\par}'
+      r'\pard\plain Corpo\par}',
+    );
+    final saved = _save(opened);
+    expect(
+      _line(saved, 'PAGE'),
+      contains(r'{\field{\*\fldinst{\b\fs16 PAGE }}{\fldrslt{\b\fs16 1}}}'),
+    );
+    final again = _openRtf(saved).headersFooters.footers[PageVariant.normal]!;
+    final field = again.delta.toList().firstWhere(
+      (operation) => operation.data is Map,
+    );
+    expect(
+      OpaqueContent.decode((field.data as Map)[EmbedTypes.opaqueInline]).xml,
+      allOf(contains('<w:b/>'), contains('<w:sz w:val="16"/>')),
     );
   });
 }

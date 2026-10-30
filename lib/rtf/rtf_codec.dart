@@ -41,5 +41,5 @@ class RtfCodec implements DocumentCodec {
     HeadersFooters? headersFooters,
   }) => RtfWriter(
     docx.tables,
-  ).write(delta, look: look, headersFooters: headersFooters);
+  ).write(delta, look: look, headersFooters: headersFooters, source: source);
 }

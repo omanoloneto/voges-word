@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/painting.dart' show Color, EdgeInsets;
 import 'package:flutter_quill/quill_delta.dart';
+import 'package:image/image.dart' as img;
 import 'package:xml/xml.dart';
 
 import '../document/delta_blocks.dart';
@@ -12,6 +13,8 @@ import '../document/embeds.dart';
 import '../document/headers_footers.dart';
 import '../document/tables.dart';
 import '../docx/docx_builder.dart';
+import '../docx/docx_codec.dart';
+import '../docx/docx_package.dart';
 import '../docx/docx_styles.dart';
 import '../docx/image_formats.dart';
 import 'rtf_pictures.dart';
@@ -24,6 +27,13 @@ class RtfWriter {
   static const _maxTableDepth = 32;
   static const _hyperlinkColor = '0563C1';
 
+  /// The style of list items; the styles of paragraph groups come after it.
+  static const _listStyle = 7;
+
+  /// Larger pictures are left out instead of converted: decoding them takes
+  /// too long and too much memory.
+  static const _maxPixels = 40000000;
+
   final TableStore _tables;
   final _fonts = <String>[];
   final _colors = <String>[];
@@ -31,6 +41,9 @@ class RtfWriter {
   final _counters = <int, List<int>>{};
   final _numbered = <int, int>{};
   final _bookmarks = <String>{};
+  final _groupStyles = <String, int>{};
+  final _notes = <String, Map<String, Delta>>{};
+  final _relationships = <String, List<Relationship>>{};
   int? _bulletList;
   int? _checkedList;
   int? _uncheckedList;
@@ -41,13 +54,29 @@ class RtfWriter {
   var _differentFirstPage = false;
   var _headerDistance = 35.4;
   var _footerDistance = 35.4;
+  DocxPackage? _package;
 
+  /// The package part of what is being written, which the pictures of its
+  /// protected content are related to.
+  String? _part;
+
+  /// Notes are written in the body and its tables only.
+  var _inBody = false;
+  var _endnotes = false;
+
+  /// The reference mark that starts the first paragraph of a note.
+  String? _noteMark;
+
+  /// [source] is the opened package, where the text of notes and the
+  /// pictures of objects are.
   Uint8List write(
     Delta delta, {
     DocumentLook look = const DocumentLook(),
     HeadersFooters? headersFooters,
+    Object? source,
   }) {
     _look = look;
+    _package = source is DocxPackage ? source : null;
     _font(look.body.fontFamily ?? 'Arial');
     _differentFirstPage = headersFooters?.differentFirstPage ?? false;
     _headerDistance = headersFooters?.headerDistance ?? 35.4;
@@ -58,17 +87,22 @@ class RtfWriter {
       for (final block in blocks)
         if (block is EmbedBlock && block.type == EmbedTypes.sectionBreak)
           _PageSetup.fromSection(sectionXmlOf(block.value), look),
-      _PageSetup.fromLook(look),
+      _PageSetup.fromLook(look, titlePage: _differentFirstPage),
     ];
     final defaults =
         '{\\*\\defchp ${_characterLook(look.body)}}'
         '{\\*\\defpap ${_paragraphLook(look.body, lineSpacing: look.lineSpacing)}}'
         '\r\n';
-    final styles = _stylesheet();
     final stories = StringBuffer();
     if (headersFooters != null) _stories(stories, headersFooters);
     final body = StringBuffer();
+    _part = _package?.mainDocumentPath;
+    _inBody = true;
+    _orderedList = null;
     _blocks(body, blocks, 0, body: true);
+    _inBody = false;
+    // The text decides which list and paragraph group styles there are.
+    final styles = _stylesheet();
 
     final out = StringBuffer(r'{\rtf1\ansi\ansicpg1252\deff0\uc1')
       ..write('\r\n{\\fonttbl');
@@ -99,6 +133,8 @@ class RtfWriter {
       )
       ..write(page.landscape ? r'\landscape' : '')
       ..write(headersFooters?.differentOddEven ?? false ? r'\facingp' : '')
+      // With both kinds, \ftnalt marks the endnotes; Word puts them at the end.
+      ..write(_endnotes ? r'\fet2\aenddoc' : '')
       ..write('\\deftab720\\viewkind1\r\n')
       ..write(_sectionProperties(_sections.first))
       ..write('\r\n')
@@ -126,12 +162,13 @@ class RtfWriter {
   }
 
   String _stylesheet() {
-    final out = StringBuffer('{\\stylesheet{');
-    out
-      ..write(_paragraphLook(_look.body, lineSpacing: _look.lineSpacing))
-      ..write(' ')
-      ..write(_characterLook(_look.body))
-      ..write(' \\snext0 Normal;}');
+    final paragraph = _paragraphLook(
+      _look.body,
+      lineSpacing: _look.lineSpacing,
+    );
+    final character = _characterLook(_look.body);
+    final out = StringBuffer('{\\stylesheet{')
+      ..write('$paragraph $character \\snext0 Normal;}');
     for (var level = 1; level <= 6; level++) {
       final heading = _look.heading(level);
       out
@@ -141,8 +178,30 @@ class RtfWriter {
         ..write(_characterLook(heading))
         ..write(' \\sbasedon0\\snext0 heading $level;}');
     }
+    // Word adds no space between paragraphs of one style that say so.
+    if (_lists.isNotEmpty) {
+      out.write(
+        '{\\s$_listStyle$paragraph\\contextualspace $character '
+        '\\sbasedon0\\snext$_listStyle List Paragraph;}',
+      );
+    }
+    for (final MapEntry(key: name, value: number) in _groupStyles.entries) {
+      out.write(
+        '{\\s$number$paragraph\\contextualspace $character '
+        '\\sbasedon0\\snext$number ',
+      );
+      _escape(out, name.replaceAll(';', ''));
+      out.write(';}');
+    }
     out.write('}\r\n');
     return out.toString();
+  }
+
+  /// The style of a group of paragraphs without space between them; the
+  /// Normal group keeps the Normal style.
+  int? _groupStyle(String group) {
+    if (group.isEmpty || group == 'Normal') return null;
+    return _groupStyles[group] ??= _listStyle + 1 + _groupStyles.length;
   }
 
   static String _paragraphLook(TextLook look, {required double lineSpacing}) =>
@@ -162,9 +221,12 @@ class RtfWriter {
     return out.toString();
   }
 
-  static String _lineSpacing(double multiple) => (multiple - 1).abs() < 0.01
-      ? ''
-      : '\\sl${(multiple * 240).round().clamp(1, 31680)}\\slmult1';
+  /// Nothing for single spacing, the default of RTF readers.
+  static String _lineSpacing(double multiple) =>
+      (multiple - 1).abs() < 0.01 ? '' : _multiple(multiple);
+
+  static String _multiple(double multiple) =>
+      '\\sl${(multiple * 240).round().clamp(1, 31680)}\\slmult1';
 
   void _listTables(StringBuffer out) {
     if (_lists.isEmpty) return;
@@ -227,10 +289,12 @@ class RtfWriter {
       'nextColumn' => r'\sbkcol',
       _ => '',
     });
-    if (_differentFirstPage) out.write(r'\titlepg');
+    if (page.titlePage) out.write(r'\titlepg');
     return out.toString();
   }
 
+  /// The document's one set of headers and footers, which every section
+  /// uses.
   void _stories(StringBuffer out, HeadersFooters stories) {
     for (final (kind, all) in [
       ('header', stories.headers),
@@ -244,6 +308,8 @@ class RtfWriter {
         };
         if (keyword == null) continue;
         out.write('{\\$keyword ');
+        _part = story.partPath;
+        _orderedList = null;
         _blocks(out, documentBlocks(story.delta), 0);
         out.write('}\r\n');
       }
@@ -260,15 +326,25 @@ class RtfWriter {
     String? cellMark,
     bool body = false,
   }) {
-    final lines = [
-      for (final block in blocks)
-        if (block is EmbedBlock && block.type == EmbedTypes.opaqueBlock)
-          ..._opaqueLines(block.value)
-        else
-          block,
-    ];
+    final lines = <DocumentBlock>[];
+    // Protected content that writes nothing still ends a numbered list, as
+    // in the .docx.
+    final listEnds = Set<DocumentBlock>.identity();
+    var ended = false;
+    for (final block in blocks) {
+      if (block is EmbedBlock && block.type == EmbedTypes.opaqueBlock) {
+        final text = _opaqueLines(block.value);
+        ended = text.isEmpty;
+        lines.addAll(text);
+      } else {
+        if (ended) listEnds.add(block);
+        ended = false;
+        lines.add(block);
+      }
+    }
     for (var index = 0; index < lines.length; index++) {
       final block = lines[index];
+      if (listEnds.contains(block)) _orderedList = null;
       final next = index + 1 < lines.length ? lines[index + 1] : null;
       final sectionNext =
           body && next is EmbedBlock && next.type == EmbedTypes.sectionBreak;
@@ -307,20 +383,39 @@ class RtfWriter {
   }
 
   static List<LineBlock> _opaqueLines(Object? value) {
-    final content = OpaqueContent.decode(value);
-    if (content.hidden || content.text.isEmpty) return const [];
+    final content = _opaque(value);
+    if (content == null || content.hidden || content.text.isEmpty) {
+      return const [];
+    }
     return [
       for (final line in content.text.split('\n'))
         LineBlock([TextPiece(line, const {})], const {}),
     ];
   }
 
-  void _paragraph(StringBuffer out, LineBlock line, int level, String mark) {
+  static OpaqueContent? _opaque(Object? value) {
+    try {
+      return OpaqueContent.decode(value);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _paragraph(StringBuffer out, LineBlock line, int level, String end) {
     final heading = line.heading;
     final base = heading == null ? _look.body : _look.heading(heading);
     final preserved = _Preserved.of(line.attributes);
+    final list = line.list;
+    final group = line.attributes[HiddenAttributes.contextualGroup];
     out.write(r'\pard\plain');
-    if (heading != null) out.write('\\s$heading\\outlinelevel${heading - 1}');
+    if (heading != null) {
+      out.write('\\s$heading\\outlinelevel${heading - 1}');
+    } else if (list != null) {
+      out.write('\\s$_listStyle');
+    } else if (group is String) {
+      final style = _groupStyle(group);
+      if (style != null) out.write('\\s$style');
+    }
     // TextEdit keeps the last nesting level unless \itap says it.
     if (level > 0) out.write('\\intbl\\itap$level');
     out.write(switch (line.align) {
@@ -329,7 +424,6 @@ class RtfWriter {
       'justify' => r'\qj',
       _ => r'\ql',
     });
-    final list = line.list;
     if (list == null) _orderedList = null;
     final listNumber = list == null ? null : _listNumber(line);
     final listLevel = line.indent.clamp(0, 8);
@@ -348,11 +442,19 @@ class RtfWriter {
       ..write('\\ri${_twips(line.indentRight ?? base.indentRight)}')
       ..write('\\sb${_twips(line.spaceBefore ?? base.spaceBefore)}')
       ..write('\\sa${_twips(line.spaceAfter ?? base.spaceAfter)}');
+    final height = line.lineHeight;
     final exact = preserved?.exactLine;
-    if (line.lineHeight == null && exact != null) {
+    if (height != null && height.isFinite && height > 0) {
+      // Single spacing too: the document's spacing may be another.
+      out.write(_multiple(height));
+    } else if (exact != null) {
       out.write('\\sl$exact\\slmult0');
     } else {
-      out.write(_lineSpacing(line.lineHeight ?? _look.lineSpacing));
+      out.write(_lineSpacing(_look.lineSpacing));
+    }
+    // The editor adds no space between list items, nor inside a group.
+    if (group is String || (list != null && heading == null)) {
+      out.write(r'\contextualspace');
     }
     if (preserved != null) {
       if (preserved.keepNext) out.write(r'\keepn');
@@ -369,20 +471,39 @@ class RtfWriter {
       _escape(out, _listText(listNumber, list!, listLevel));
       out.write(r'\tab}');
     }
+    final content = StringBuffer();
+    if (_noteMark case final mark?) {
+      content.write(mark);
+      _noteMark = null;
+    }
+    final names = <String>[];
     final bookmarks = line.attributes[HiddenAttributes.bookmarks];
     if (bookmarks is String) {
       for (final name in _decodeNames(bookmarks)) {
         final clean = bookmarkName(name);
         if (!_bookmarks.add(clean)) continue;
-        out.write(r'{\*\bkmkstart ');
-        _escape(out, clean);
-        out.write(r'}{\*\bkmkend ');
-        _escape(out, clean);
-        out.write('}');
+        names.add(clean);
+        content.write(r'{\*\bkmkstart ');
+        _escape(content, clean);
+        content.write('}');
       }
     }
-    _pieces(out, line.pieces);
-    out.write('$mark\r\n');
+    _pieces(content, line.pieces);
+    // The bookmark spans the paragraph, so REF fields show its text.
+    for (final name in names) {
+      content.write(r'{\*\bkmkend ');
+      _escape(content, name);
+      content.write('}');
+    }
+    if (end == r'\sect' && content.isEmpty) {
+      // LibreOffice, TextEdit and Voges drop an empty paragraph that \sect
+      // ends; \par keeps it.
+      out.write('\\par\r\n\\pard\\plain\\sect\r\n');
+      return;
+    }
+    out
+      ..write(content)
+      ..write('$end\r\n');
   }
 
   static List<String> _decodeNames(String json) {
@@ -496,7 +617,7 @@ class RtfWriter {
         out.write(r'\\l ');
         _quoted(out, link.substring(1));
       } else {
-        _quoted(out, link);
+        _quoted(out, _percentEncoded(link));
       }
       out.write(r'}}{\fldrslt{');
       for (final piece in pieces.sublist(index, end)) {
@@ -519,6 +640,22 @@ class RtfWriter {
     return safeLinkTarget(trimmed);
   }
 
+  /// Characters beyond ASCII as UTF-8 escapes: TextEdit stops reading an
+  /// address at its first `\uN`.
+  static String _percentEncoded(String address) {
+    final out = StringBuffer();
+    for (final rune in address.runes) {
+      if (rune < 0x80) {
+        out.writeCharCode(rune);
+        continue;
+      }
+      for (final byte in utf8.encode(String.fromCharCode(rune))) {
+        out.write('%${byte.toRadixString(16).toUpperCase().padLeft(2, '0')}');
+      }
+    }
+    return out.toString();
+  }
+
   /// A quoted field argument: `"` and `\` get a backslash.
   static void _quoted(StringBuffer out, String text) {
     out.write('"');
@@ -538,23 +675,49 @@ class RtfWriter {
           _run(out, format, text);
         }
       case EmbedPiece(type: EmbedTypes.image):
-        _picture(out, piece);
+        _image(out, piece);
       case EmbedPiece(type: EmbedTypes.pageBreak):
         out.write(r'\page ');
       case EmbedPiece(type: EmbedTypes.pageNumber):
         _field(out, 'PAGE', '1', format);
       case EmbedPiece(type: EmbedTypes.opaqueInline):
-        final content = OpaqueContent.decode(piece.value);
-        if (content.hidden) return;
-        final field = _fieldOf(content.xml);
-        if (field != null) {
-          _field(out, field, content.text, format);
-        } else if (content.text.isNotEmpty) {
-          final note = content.label == OpaqueLabels.note ? r'\super' : '';
-          _run(out, '$format$note', content.text);
-        }
+        final content = _opaque(piece.value);
+        if (content != null) _protected(out, content, format);
       case EmbedPiece():
         return;
+    }
+  }
+
+  /// Word content the editor keeps as it is: hidden text, fields and notes
+  /// as such, objects by their picture, the rest by its text.
+  void _protected(StringBuffer out, OpaqueContent content, String format) {
+    late final root = _fragment(content.xml);
+    if (content.hidden) {
+      final text = _xmlText(root);
+      if (text.isNotEmpty) _run(out, '${_xmlFormat(root)}$format\\v', text);
+      return;
+    }
+    final field = content.xml.contains('instr') ? _fieldOf(root) : null;
+    if (field != null) {
+      _field(out, field, content.text, '${_xmlFormat(root)}$format');
+      return;
+    }
+    if (content.label == OpaqueLabels.note && _note(out, content, format)) {
+      return;
+    }
+    if (content.xml.contains('imagedata') || content.xml.contains('blip')) {
+      if (_objectPicture(content, root) case final picture?) {
+        _picture(
+          out,
+          picture.bytes,
+          width: picture.width,
+          height: picture.height,
+        );
+      }
+    }
+    if (content.text.isNotEmpty) {
+      final note = content.label == OpaqueLabels.note ? r'\super' : '';
+      _run(out, '$format$note', content.text);
     }
   }
 
@@ -565,38 +728,44 @@ class RtfWriter {
     out.write('}');
   }
 
+  /// The instruction and result have the same formatting: Word gives the
+  /// instruction's to the result when it updates the field.
   static void _field(
     StringBuffer out,
     String instruction,
     String result,
     String format,
   ) {
-    out.write(r'{\field{\*\fldinst{ ');
+    out.write('{\\field{\\*\\fldinst{$format ');
     _escape(out, instruction);
     out.write(r' }}{\fldrslt');
     _run(out, format, result);
     out.write('}}');
   }
 
-  /// The instruction of a Word field that shows the document's own data.
-  static String? _fieldOf(String xml) {
-    if (!xml.contains('instr')) return null;
+  /// A fragment of Word XML as the editor keeps it; null if it is damaged.
+  static XmlElement? _fragment(String xml) {
     try {
-      final root = XmlDocument.parse('<r>$xml</r>').rootElement;
-      final parts = <String>[];
-      for (final element in root.descendantElements) {
-        if (element.name.local == 'fldSimple') {
-          final instruction = element.getAttribute('w:instr');
-          if (instruction != null) parts.add(instruction);
-        } else if (element.name.local == 'instrText') {
-          parts.add(element.innerText);
-        }
-      }
-      final instruction = parts.join().trim();
-      return isSafeField(instruction) ? instruction : null;
+      return XmlDocument.parse('<r>$xml</r>').rootElement;
     } on XmlException {
       return null;
     }
+  }
+
+  /// The instruction of a Word field that shows the document's own data.
+  static String? _fieldOf(XmlElement? root) {
+    if (root == null) return null;
+    final parts = <String>[];
+    for (final element in root.descendantElements) {
+      if (element.name.local == 'fldSimple') {
+        final instruction = element.getAttribute('w:instr');
+        if (instruction != null) parts.add(instruction);
+      } else if (element.name.local == 'instrText') {
+        parts.add(element.innerText);
+      }
+    }
+    final instruction = parts.join().trim();
+    return isSafeField(instruction) ? _bookmarkReferences(instruction) : null;
   }
 
   /// Character formatting from the editor's attributes; [link] text is
@@ -652,46 +821,342 @@ class RtfWriter {
     _ => pointsValue(value),
   };
 
+  /// REF, PAGEREF and NOTEREF name their bookmark as it is written here.
+  static String _bookmarkReferences(String instruction) =>
+      instruction.replaceFirstMapped(
+        RegExp(
+          r'^(REF|PAGEREF|NOTEREF)(\s+)(?:"([^"]*)"|([^\s"]+))',
+          caseSensitive: false,
+        ),
+        (match) =>
+            '${match[1]}${match[2]}${bookmarkName(match[3] ?? match[4]!)}',
+      );
+
+  /// The text of Word runs, with their tabs and breaks.
+  static String _xmlText(XmlElement? root) {
+    final out = StringBuffer();
+    for (final element in root?.descendantElements ?? <XmlElement>[]) {
+      out.write(switch (element.name.local) {
+        't' => element.innerText,
+        'tab' || 'ptab' => '\t',
+        'br' || 'cr' => '\u2028',
+        'noBreakHyphen' => '\u2011',
+        'softHyphen' => '\u00AD',
+        _ => '',
+      });
+    }
+    return out.toString();
+  }
+
+  /// The first character formatting (`w:rPr`) of Word XML.
+  String _xmlFormat(XmlElement? root) {
+    XmlElement? properties;
+    for (final element in root?.descendantElements ?? <XmlElement>[]) {
+      if (element.name.local == 'rPr') {
+        properties = element;
+        break;
+      }
+    }
+    if (properties == null) return '';
+    final out = StringBuffer();
+    for (final element in properties.childElements) {
+      final value = element.getAttribute('w:val');
+      final on = !const {'0', 'false', 'off'}.contains(value);
+      switch (element.name.local) {
+        case 'b':
+          out.write(on ? r'\b' : r'\b0');
+        case 'i':
+          out.write(on ? r'\i' : r'\i0');
+        case 'strike':
+          out.write(on ? r'\strike' : r'\strike0');
+        case 'caps' when on:
+          out.write(r'\caps');
+        case 'smallCaps' when on:
+          out.write(r'\scaps');
+        case 'u':
+          out.write(value == 'none' ? r'\ulnone' : r'\ul');
+        case 'sz':
+          final half = int.tryParse(value ?? '');
+          if (half != null && half > 0) out.write('\\fs${half.clamp(2, 3276)}');
+        case 'color':
+          if (hexColor(value) case final color?) {
+            out.write('\\cf${_color(color)}');
+          }
+        case 'rFonts':
+          final font =
+              (element.getAttribute('w:ascii') ??
+                      element.getAttribute('w:hAnsi'))
+                  ?.trim();
+          if (font != null && font.isNotEmpty) out.write('\\f${_font(font)}');
+        case 'vertAlign':
+          out.write(switch (value) {
+            'superscript' => r'\super',
+            'subscript' => r'\sub',
+            _ => '',
+          });
+      }
+    }
+    return out.toString();
+  }
+
+  // Notes
+
+  /// A footnote or endnote with its text from the opened package; false
+  /// when the package doesn't have it, and only its number is written.
+  bool _note(StringBuffer out, OpaqueContent content, String format) {
+    final package = _package;
+    if (!_inBody || package == null || content.packageId != package.id) {
+      return false;
+    }
+    final reference = RegExp(
+      r'<w:(footnote|endnote)Reference\b[^>]*?\bw:id="(-?\d+)"',
+    ).firstMatch(content.xml);
+    if (reference == null) return false;
+    final kind = reference[1]!;
+    final note = (_notes[kind] ??= _readNotes(package, kind))[reference[2]];
+    if (note == null) return false;
+    final endnote = kind == 'endnote';
+    _endnotes |= endnote;
+    out.write('{$format\\super\\chftn{\\footnote${endnote ? r'\ftnalt' : ''}');
+    final part = _part;
+    final ordered = _orderedList;
+    _part = _relatedPart(package, package.mainDocumentPath, '${kind}s');
+    _inBody = false;
+    _orderedList = null;
+    _noteMark = r'{\super\chftn} ';
+    final blocks = documentBlocks(note);
+    _blocks(
+      out,
+      [
+        if (blocks.firstOrNull is! LineBlock) const LineBlock([], {}),
+        ...blocks,
+      ],
+      0,
+      cellMark: '',
+    );
+    _noteMark = null;
+    _part = part;
+    _orderedList = ordered;
+    _inBody = true;
+    out.write('}}');
+    return true;
+  }
+
+  Map<String, Delta> _readNotes(DocxPackage package, String kind) {
+    try {
+      return DocxCodec(_tables).notes(package, kind);
+    } catch (_) {
+      // A damaged notes part keeps only the numbers.
+      return const {};
+    }
+  }
+
+  List<Relationship> _relationshipsOf(DocxPackage package, String part) =>
+      _relationships[part] ??= () {
+        try {
+          return package.relationships(part);
+        } catch (_) {
+          return const <Relationship>[];
+        }
+      }();
+
+  /// The part [part] relates to with [type] (`footnotes`, `endnotes`).
+  String? _relatedPart(DocxPackage package, String part, String type) {
+    for (final relationship in _relationshipsOf(package, part)) {
+      if (relationship.hasType(type) && !relationship.external) {
+        return DocxPackage.resolve(part, relationship.target);
+      }
+    }
+    return null;
+  }
+
   // Pictures
 
-  void _picture(StringBuffer out, EmbedPiece piece) {
-    final decoded = decodeDataUri(piece.value as String? ?? '');
+  void _image(StringBuffer out, EmbedPiece piece) {
+    final value = piece.value;
+    final decoded = value is String ? decodeDataUri(value) : null;
     if (decoded == null) return;
-    final bytes = decoded.bytes;
-    final (keyword, data, metafile) = switch (decoded.mime) {
-      'image/png' when isPng(bytes) => (r'\pngblip', bytes, false),
-      'image/jpeg' when isJpeg(bytes) => (r'\jpegblip', bytes, false),
-      'image/bmp' => (r'\dibitmap0', dibFromBitmap(bytes), false),
-      'image/x-emf' when isEmf(bytes) => (r'\emfblip', bytes, true),
-      'image/x-wmf' => (r'\wmetafile8', rawWmf(bytes), true),
-      _ => (null, null, false),
-    };
-    if (keyword == null || data == null || data.isEmpty) return;
-    final pixels = metafile ? null : imagePixelSize(bytes);
-    final width =
-        pointsValue(piece.attributes['width']) ??
-        (pixels == null ? 72 : pixels.width * 0.75);
-    final height =
-        pointsValue(piece.attributes['height']) ??
-        (pixels == null ? 72 : pixels.height * 0.75);
-    if (!width.isFinite || !height.isFinite || width <= 0 || height <= 0) {
-      return;
+    _picture(
+      out,
+      decoded.bytes,
+      width: pointsValue(piece.attributes['width']),
+      height: pointsValue(piece.attributes['height']),
+    );
+  }
+
+  /// The picture Word keeps for an object, a VML picture, or a drawing
+  /// other programs can't show (its fallback), with its size in points.
+  ({Uint8List bytes, double? width, double? height})? _objectPicture(
+    OpaqueContent content,
+    XmlElement? root,
+  ) {
+    final package = _package;
+    final part = _part;
+    if (root == null ||
+        package == null ||
+        part == null ||
+        content.packageId != package.id) {
+      return null;
     }
-    final ownWidth = metafile
-        ? (width * 2540 / 72).round()
-        : pixels?.width ?? (width / 0.75).round();
-    final ownHeight = metafile
-        ? (height * 2540 / 72).round()
-        : pixels?.height ?? (height / 0.75).round();
+    for (final element in root.descendantElements) {
+      final String? id;
+      double? width;
+      double? height;
+      switch (element.name.local) {
+        case 'imagedata':
+          id =
+              _relationshipId(element, 'id') ?? element.getAttribute('o:relid');
+          final style = element.parentElement?.getAttribute('style');
+          width = _cssPoints(style, 'width');
+          height = _cssPoints(style, 'height');
+        case 'blip':
+          final fallback = element.ancestorElements
+              .where((ancestor) => ancestor.name.local == 'Fallback')
+              .firstOrNull;
+          if (fallback == null) continue;
+          id = _relationshipId(element, 'embed');
+          final extent = fallback.descendantElements
+              .where((descendant) => descendant.name.local == 'extent')
+              .firstOrNull;
+          width = _emuPoints(extent?.getAttribute('cx'));
+          height = _emuPoints(extent?.getAttribute('cy'));
+        default:
+          continue;
+      }
+      final relationship = _relationshipsOf(package, part)
+          .where((candidate) => candidate.id == id && !candidate.external)
+          .firstOrNull;
+      if (relationship == null) continue;
+      final bytes =
+          package.parts[DocxPackage.resolve(part, relationship.target)];
+      if (bytes == null || bytes.isEmpty) continue;
+      return (bytes: bytes, width: width, height: height);
+    }
+    return null;
+  }
+
+  static String? _relationshipId(XmlElement element, String local) {
+    for (final attribute in element.attributes) {
+      if (attribute.name.local == local && attribute.name.prefix == 'r') {
+        return attribute.value;
+      }
+    }
+    return null;
+  }
+
+  /// A length of a VML style (`width:72pt;height:1in`), in points.
+  static double? _cssPoints(String? style, String property) {
+    if (style == null) return null;
+    final match = RegExp(
+      '(?:^|;)\\s*$property\\s*:\\s*([0-9.]+)\\s*(pt|in|cm|mm|pc|px)?',
+      caseSensitive: false,
+    ).firstMatch(style);
+    final value = double.tryParse(match?[1] ?? '');
+    if (value == null) return null;
+    return value *
+        switch (match![2]?.toLowerCase()) {
+          'pt' => 1,
+          'in' => 72,
+          'cm' => 72 / 2.54,
+          'mm' => 72 / 25.4,
+          'pc' => 12,
+          _ => 0.75,
+        };
+  }
+
+  static double? _emuPoints(String? value) {
+    final emu = int.tryParse(value ?? '');
+    return emu == null ? null : emu / 12700;
+  }
+
+  /// [width] and [height] in points; without them the picture takes its own
+  /// size, and without one of them it keeps its proportions.
+  void _picture(
+    StringBuffer out,
+    Uint8List bytes, {
+    double? width,
+    double? height,
+  }) {
+    final blip = _blip(bytes);
+    if (blip == null || blip.data.isEmpty) return;
+    final pixels = blip.pixels;
+    final natural = pixels == null || pixels.width <= 0 || pixels.height <= 0
+        ? null
+        : (width: pixels.width * 0.75, height: pixels.height * 0.75);
+    final ratio = natural == null ? 1.0 : natural.height / natural.width;
+    double? positive(double? value) =>
+        value != null && value.isFinite && value > 0 ? value : null;
+    final givenWidth = positive(width);
+    final givenHeight = positive(height);
+    final goalWidth =
+        givenWidth ??
+        (givenHeight != null ? givenHeight / ratio : natural?.width ?? 72);
+    final goalHeight = givenHeight ?? goalWidth * ratio;
+    final ownWidth = blip.metafile
+        ? (goalWidth * 2540 / 72).round()
+        : pixels?.width ?? (goalWidth / 0.75).round();
+    final ownHeight = blip.metafile
+        ? (goalHeight * 2540 / 72).round()
+        : pixels?.height ?? (goalHeight / 0.75).round();
+    final data = blip.data;
     out.write(
-      '{\\pict$keyword\\picw$ownWidth\\pich$ownHeight'
-      '\\picwgoal${_twips(width)}\\pichgoal${_twips(height)}\r\n',
+      '{\\pict${blip.keyword}\\picw$ownWidth\\pich$ownHeight'
+      '\\picwgoal${_twips(goalWidth)}\\pichgoal${_twips(goalHeight)}\r\n',
     );
     for (var index = 0; index < data.length; index++) {
       out.write(_hexBytes[data[index]]);
       if (index % 64 == 63) out.write('\r\n');
     }
     out.write('}');
+  }
+
+  /// RTF holds PNG, JPEG, metafiles and bitmaps, told by their bytes
+  /// whatever their type says; other pictures go as PNG.
+  static _Blip? _blip(Uint8List bytes) {
+    if (isPng(bytes)) return _Blip(r'\pngblip', bytes, imagePixelSize(bytes));
+    if (isJpeg(bytes)) {
+      return _Blip(r'\jpegblip', bytes, imagePixelSize(bytes));
+    }
+    if (isEmf(bytes)) return _Blip(r'\emfblip', bytes, null, metafile: true);
+    if (rawWmf(bytes) case final metafile?) {
+      return _Blip(r'\wmetafile8', metafile, null, metafile: true);
+    }
+    if (dibFromBitmap(bytes) case final bitmap?) {
+      return _Blip(r'\dibitmap0', bitmap, imagePixelSize(bytes));
+    }
+    return _png(bytes);
+  }
+
+  /// GIF, TIFF, WebP and bitmaps RTF can't hold, as PNG; null for what
+  /// can't be decoded or is too large.
+  static _Blip? _png(Uint8List bytes) {
+    for (final decoder in <img.Decoder>[
+      img.GifDecoder(),
+      img.TiffDecoder(),
+      img.WebPDecoder(),
+      img.BmpDecoder(),
+    ]) {
+      try {
+        if (!decoder.isValidFile(bytes)) continue;
+        final info = decoder.startDecode(bytes);
+        if (info == null ||
+            info.width < 1 ||
+            info.height < 1 ||
+            info.width * info.height > _maxPixels) {
+          return null;
+        }
+        final image = decoder.decode(bytes, frame: 0);
+        if (image == null) return null;
+        return _Blip(r'\pngblip', img.encodePng(image), (
+          width: image.width,
+          height: image.height,
+        ));
+      } catch (_) {
+        // Decoders of pictures from untrusted files may throw anything.
+        return null;
+      }
+    }
+    return null;
   }
 
   static final _hexBytes = [
@@ -705,6 +1170,7 @@ class RtfWriter {
     if (level > _maxTableDepth) {
       for (final row in table.rows) {
         for (final cell in row.cells) {
+          _orderedList = null;
           _blocks(
             out,
             documentBlocks(cell.controller.document.toDelta()),
@@ -712,6 +1178,7 @@ class RtfWriter {
           );
         }
       }
+      _orderedList = null;
       return;
     }
     final columns = table.rows.fold(
@@ -764,6 +1231,8 @@ class RtfWriter {
       }
       if (level == 1) out.write('$definition\r\n');
       for (final cell in row.cells) {
+        // Each cell numbers its lists from 1, as the editor shows them.
+        _orderedList = null;
         _blocks(
           out,
           documentBlocks(cell.controller.document.toDelta()),
@@ -778,6 +1247,7 @@ class RtfWriter {
             : '{\\*\\nesttableprops$definition\\nestrow}\r\n',
       );
     }
+    _orderedList = null;
   }
 
   // Text
@@ -823,6 +1293,16 @@ class RtfWriter {
       .toUpperCase();
 }
 
+/// A picture as RTF holds it; metafiles have no pixel size.
+class _Blip {
+  const _Blip(this.keyword, this.data, this.pixels, {this.metafile = false});
+
+  final String keyword;
+  final Uint8List data;
+  final ({int width, int height})? pixels;
+  final bool metafile;
+}
+
 enum _ListKind {
   bullet,
   ordered,
@@ -850,22 +1330,31 @@ class _PageSetup {
     this.columns = 1,
     this.columnSpacing = 720,
     this.start,
+    this.titlePage = false,
   });
 
-  factory _PageSetup.fromLook(DocumentLook look) =>
-      _PageSetup.fromPoints(look.pageWidth, look.pageHeight, look.margins);
+  /// The last section, whose first page the editor's setting decides.
+  factory _PageSetup.fromLook(DocumentLook look, {bool titlePage = false}) =>
+      _PageSetup.fromPoints(
+        look.pageWidth,
+        look.pageHeight,
+        look.margins,
+        titlePage: titlePage,
+      );
 
   factory _PageSetup.fromPoints(
     double width,
     double height,
-    EdgeInsets margins,
-  ) => _PageSetup(
+    EdgeInsets margins, {
+    bool titlePage = false,
+  }) => _PageSetup(
     width: RtfWriter._twips(width),
     height: RtfWriter._twips(height),
     left: RtfWriter._twips(margins.left),
     right: RtfWriter._twips(margins.right),
     top: RtfWriter._twips(margins.top),
     bottom: RtfWriter._twips(margins.bottom),
+    titlePage: titlePage,
   );
 
   /// From a .docx section (`w:sectPr`); what it lacks comes from [look].
@@ -890,6 +1379,7 @@ class _PageSetup {
     final size = child('pgSz');
     final margins = child('pgMar');
     final columns = child('cols');
+    final titlePage = child('titlePg');
     return _PageSetup(
       width: number(size, 'w') ?? fallback.width,
       height: number(size, 'h') ?? fallback.height,
@@ -902,6 +1392,13 @@ class _PageSetup {
       columns: (number(columns, 'num') ?? 1).clamp(1, 45),
       columnSpacing: number(columns, 'space') ?? 720,
       start: child('type')?.getAttribute('w:val'),
+      titlePage:
+          titlePage != null &&
+          !const {
+            '0',
+            'false',
+            'off',
+          }.contains(titlePage.getAttribute('w:val')),
     );
   }
 
@@ -918,6 +1415,9 @@ class _PageSetup {
 
   /// How the section starts (`w:type`): nextPage, continuous...
   final String? start;
+
+  /// The section's first page has its own header and footer.
+  final bool titlePage;
 
   bool get landscape => width > height;
 }
