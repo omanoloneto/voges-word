@@ -25,17 +25,9 @@ class ImageEmbedBuilder extends EmbedBuilder {
   @override
   Widget build(BuildContext context, EmbedContext embedContext) {
     final node = embedContext.node;
-    double? sizeOf(String key) {
-      final value = double.tryParse(
-        '${node.style.attributes[key]?.value ?? ''}',
-      );
-      return value == null || value <= 0 ? null : value;
-    }
-
-    return EmbeddedImage(
-      source: node.value.data as String,
-      width: sizeOf(Attribute.width.key),
-      height: sizeOf(Attribute.height.key),
+    return EmbeddedImage.fromAttributes(
+      node.value.data as String,
+      node.style.toJson(),
     );
   }
 }
@@ -48,6 +40,23 @@ class EmbeddedImage extends StatelessWidget {
     super.key,
   });
 
+  /// The picture of an image embed, sized by the embed's attributes.
+  factory EmbeddedImage.fromAttributes(
+    String source,
+    Map<String, dynamic>? attributes,
+  ) {
+    double? sizeOf(String key) {
+      final value = double.tryParse('${attributes?[key] ?? ''}');
+      return value == null || value <= 0 ? null : value;
+    }
+
+    return EmbeddedImage(
+      source: source,
+      width: sizeOf(Attribute.width.key),
+      height: sizeOf(Attribute.height.key),
+    );
+  }
+
   final String source;
 
   /// Size in points; the surrounding text already applies the zoom to embeds.
@@ -57,20 +66,41 @@ class EmbeddedImage extends StatelessWidget {
   static final _cache = <String, ({Uint8List bytes, String mime})?>{};
 
   /// Decodes before drawing off-screen (PDF and printing); it uses the same
-  /// bytes as the widget, so the Image finds the picture in the cache.
-  static Future<void> precache(String source, BuildContext context) async {
+  /// provider as the widget, so the Image finds the picture in the cache.
+  Future<void> precache(BuildContext context) async {
     final decoded = _decode(source);
-    if (decoded == null || !_isDrawable(decoded)) return;
+    if (decoded == null || !isDisplayable(decoded.mime)) return;
+    final pixels = imagePixelSize(decoded.bytes);
+    if (_isTooLarge(pixels)) return;
     await precacheImage(
-      PictureImage(decoded.bytes),
+      _picture(context, decoded.bytes, _sizeFor(pixels)),
       context,
       onError: (error, stackTrace) {},
     );
   }
 
-  static bool _isDrawable(({Uint8List bytes, String mime}) decoded) =>
-      isDisplayable(decoded.mime) &&
-      !_isTooLarge(imagePixelSize(decoded.bytes));
+  /// Size in points; without one in the document, the picture's own pixels
+  /// at 96 dpi.
+  Size _sizeFor(({int width, int height})? pixels) {
+    final width = this.width ?? (pixels?.width ?? 200) * 0.75;
+    final naturalRatio = pixels == null || pixels.height == 0
+        ? 4 / 3
+        : pixels.width / pixels.height;
+    return Size(width, height ?? width / naturalRatio);
+  }
+
+  static PictureImage _picture(
+    BuildContext context,
+    Uint8List bytes,
+    Size size,
+  ) => PictureImage(
+    bytes,
+    drawnPictureSize(
+      size.width,
+      size.height,
+      MediaQuery.maybeDevicePixelRatioOf(context) ?? 1,
+    ),
+  );
 
   static bool _isTooLarge(({int width, int height})? pixels) =>
       pixels != null && exceedsPictureLimit(pixels.width, pixels.height);
@@ -91,11 +121,7 @@ class EmbeddedImage extends StatelessWidget {
   Widget build(BuildContext context) {
     final decoded = _decode(source);
     final pixels = decoded == null ? null : imagePixelSize(decoded.bytes);
-    final width = this.width ?? (pixels?.width ?? 200) * 0.75;
-    final naturalRatio = pixels == null || pixels.height == 0
-        ? 4 / 3
-        : pixels.width / pixels.height;
-    final height = this.height ?? width / naturalRatio;
+    final size = _sizeFor(pixels);
     final l10n = context.l10n;
     final unsupported = l10n.unsupportedImage(
       decoded == null ? '' : extensionForMime(decoded.mime).toUpperCase(),
@@ -107,7 +133,7 @@ class EmbeddedImage extends StatelessWidget {
       image = _placeholder(context, l10n.pictureTooLarge);
     } else {
       image = Image(
-        image: PictureImage(decoded.bytes),
+        image: _picture(context, decoded.bytes, size),
         fit: BoxFit.fill,
         gaplessPlayback: true,
         errorBuilder: (context, error, stackTrace) => _placeholder(
@@ -122,8 +148,8 @@ class EmbeddedImage extends StatelessWidget {
       image: true,
       label: context.l10n.picture,
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: width),
-        child: AspectRatio(aspectRatio: width / height, child: image),
+        constraints: BoxConstraints(maxWidth: size.width),
+        child: AspectRatio(aspectRatio: size.aspectRatio, child: image),
       ),
     );
   }

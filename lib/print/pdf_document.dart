@@ -4,6 +4,9 @@ import 'dart:ui';
 
 import 'package:archive/archive.dart';
 
+/// Page resolution in the PDF and when printing.
+const printDpi = 200.0;
+
 /// A PDF page: the page image as it looks in the editor, with each line's
 /// invisible text on top so it can be searched and copied.
 class PdfPageContent {

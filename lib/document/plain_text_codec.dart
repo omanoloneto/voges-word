@@ -41,14 +41,14 @@ class PlainTextCodec implements DocumentCodec {
     for (final operation in delta.toList()) {
       final data = operation.data;
       if (data is String) {
-        out.write(data.replaceAll('\u2028', '\n'));
+        out.write(_withLineBreaks(data));
         continue;
       }
       if (data is! Map) continue;
       final value = data.values.first;
       switch (data.keys.first) {
         case EmbedTypes.opaqueInline || EmbedTypes.opaqueBlock:
-          out.write(OpaqueContent.decode(value).text);
+          out.write(_withLineBreaks(OpaqueContent.decode(value).text));
         case EmbedTypes.pageBreak:
           out.write('\n');
         case EmbedTypes.table:
@@ -71,4 +71,6 @@ class PlainTextCodec implements DocumentCodec {
     }
     return out.toString();
   }
+
+  static String _withLineBreaks(String text) => text.replaceAll('\u2028', '\n');
 }

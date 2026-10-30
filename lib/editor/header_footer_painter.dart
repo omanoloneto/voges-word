@@ -122,17 +122,30 @@ class HeaderFooterPainter extends ChangeNotifier {
   static bool _isField(String type) =>
       type == EmbedTypes.pageNumber || type == EmbedTypes.opaqueInline;
 
+  /// Each picture is decoded once, at the largest size it is drawn.
   Future<void> _decodeImages() async {
-    final sources = {
-      for (final story in _all)
-        for (final op in story.delta.toList())
-          if (op.data case {EmbedTypes.image: final String source}) source,
-    };
-    for (final source in sources) {
+    final sizes = <String, Size>{};
+    for (final story in _all) {
+      for (final op in story.delta.toList()) {
+        if (op.data case {EmbedTypes.image: final String source}) {
+          final size = _imageSize(op.attributes);
+          final other = sizes[source] ?? Size.zero;
+          sizes[source] = Size(
+            math.max(size.width, other.width),
+            math.max(size.height, other.height),
+          );
+        }
+      }
+    }
+    final pixelRatio = _devicePixelRatio;
+    for (final MapEntry(key: source, value: size) in sizes.entries) {
       final decoded = decodeDataUri(source);
-      if (decoded == null) continue;
+      if (decoded == null || size.isEmpty) continue;
       try {
-        final codec = await openPicture(decoded.bytes);
+        final codec = await openPicture(
+          decoded.bytes,
+          drawnSize: drawnPictureSize(size.width, size.height, pixelRatio),
+        );
         final frame = await codec.getNextFrame();
         codec.dispose();
         if (_disposed) {
@@ -147,6 +160,16 @@ class HeaderFooterPainter extends ChangeNotifier {
     }
   }
 
+  /// The sharpest screen's: the pictures stay sharp when the window moves to
+  /// another screen.
+  static double get _devicePixelRatio {
+    final platform = PaintingBinding.instance.platformDispatcher;
+    return [
+      for (final view in platform.views) view.devicePixelRatio,
+      for (final display in platform.displays) display.devicePixelRatio,
+    ].fold(1.0, math.max);
+  }
+
   @override
   void dispose() {
     _disposed = true;
@@ -156,6 +179,13 @@ class HeaderFooterPainter extends ChangeNotifier {
     super.dispose();
   }
 }
+
+/// Size in points from the image embed's attributes; nothing is drawn
+/// without one.
+Size _imageSize(Map<String, dynamic>? attributes) => Size(
+  double.tryParse('${attributes?[Attribute.width.key]}') ?? 0,
+  double.tryParse('${attributes?[Attribute.height.key]}') ?? 0,
+);
 
 class _PlacedText {
   const _PlacedText(this.painter, this.offset, this.images);
@@ -281,10 +311,7 @@ class _StoryLayout {
               }
             case EmbedTypes.image:
               final attributes = node.style.attributes;
-              final size = Size(
-                double.tryParse('${attributes['width']?.value}') ?? 0,
-                double.tryParse('${attributes['height']?.value}') ?? 0,
-              );
+              final size = _imageSize(node.style.toJson());
               final xml =
                   '${attributes[HiddenAttributes.drawing]?.value ?? ''}';
               final source = value.data as String;

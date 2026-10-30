@@ -140,6 +140,7 @@ void main() {
         saved(DocumentFormat.markdown),
         matches(RegExp(r'Left column(\\|  )\nRight column')),
       );
+      expect(saved(DocumentFormat.plainText), 'Left column\nRight column\n');
     },
   );
 }
