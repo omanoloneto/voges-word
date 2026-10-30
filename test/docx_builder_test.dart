@@ -367,4 +367,39 @@ void main() {
     expect(saved.text('word/endnotes.xml'), contains('end'));
     expect(saved.text('word/document.xml'), contains('w:endnoteReference'));
   });
+
+  test('notes are read with their formatting and without the mark', () {
+    final spec = DocumentSpec()
+      ..body.add(
+        const ParagraphSpec([
+          TextSpec('see'),
+          NoteSpec(NoteKind.footnote, [
+            ParagraphSpec([
+              TextSpec('Bold', RunFormat(bold: true)),
+              TextSpec(' and '),
+              LinkSpec('https://example.com/', [TextSpec('a link')]),
+            ]),
+            ParagraphSpec([TextSpec('second')]),
+          ]),
+        ]),
+      );
+    final package = DocxBuilder(spec).build();
+    final notes = DocxCodec(TableStore()).notes(package, 'footnote');
+    final id = RegExp(
+      r'w:footnoteReference w:id="(\d+)"',
+    ).firstMatch(package.text('word/document.xml')!)![1]!;
+    final note = notes[id]!;
+
+    expect(note.toList().first.data, 'Bold');
+    expect(note.toList().first.attributes?['bold'], isTrue);
+    expect(_op(note, 'a link').attributes?['link'], 'https://example.com/');
+    expect(
+      note
+          .toList()
+          .map((operation) => operation.data)
+          .whereType<String>()
+          .join(),
+      'Bold and a link\nsecond\n',
+    );
+  });
 }

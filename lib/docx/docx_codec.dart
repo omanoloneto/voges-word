@@ -26,6 +26,11 @@ class DocxCodec implements DocumentCodec {
   LoadedDocument read(DocxPackage package) =>
       DocxReader(package, tables).read();
 
+  /// The footnotes or endnotes of an opened package by id, for formats that
+  /// write them as notes of their own; [kind] is `footnote` or `endnote`.
+  Map<String, Delta> notes(DocxPackage package, String kind) =>
+      DocxReader(package, tables).notes(kind);
+
   LoadedDocument createEmpty() => create(DocumentTemplate.blank);
 
   /// [language] goes into the new document so Word checks its spelling in

@@ -136,6 +136,78 @@ class DocxReader {
     return HeaderFooterStory(delta: delta, partPath: path);
   }
 
+  /// The footnotes or endnotes ([kind] is `footnote` or `endnote`) by id,
+  /// read like the body, without the reference mark that starts each one.
+  Map<String, Delta> notes(String kind) {
+    final main = package.mainDocumentPath;
+    final relationships = package.relationships(main);
+    String? partOf(String type) {
+      for (final relationship in relationships) {
+        if (relationship.hasType(type) && !relationship.external) {
+          return DocxPackage.resolve(main, relationship.target);
+        }
+      }
+      return null;
+    }
+
+    final path = partOf('${kind}s');
+    final root = path == null ? null : package.xml(path)?.rootElement;
+    if (path == null || root == null) return const {};
+    final x = WordXml(root);
+    final context = _ReadContext(
+      package: package,
+      documentPath: path,
+      x: x,
+      styles: DocxStyles.parse(
+        _xmlOf(partOf('styles')),
+        _xmlOf(partOf('theme')),
+      ),
+      numbering: DocxNumbering.parse(_xmlOf(partOf('numbering'))),
+      relationships: {for (final r in package.relationships(path)) r.id: r},
+      tables: tables,
+    );
+    final notes = <String, Delta>{};
+    for (final note in root.childElements) {
+      final id = x.attr(note, 'id');
+      if (!x.isW(note, kind) || id == null) continue;
+      final delta = Delta();
+      _BlockReader(context, delta).read(note.childElements);
+      notes[id] = _withoutNoteMark(delta);
+    }
+    return notes;
+  }
+
+  static Delta _withoutNoteMark(Delta delta) {
+    final out = Delta();
+    var leading = true;
+    var marked = false;
+    for (final op in delta.toList()) {
+      final data = op.data;
+      if (leading && data is Map) {
+        final value = data[EmbedTypes.opaqueInline];
+        if (!marked &&
+            value != null &&
+            RegExp(
+              r'<w:(footnoteRef|endnoteRef)\b',
+            ).hasMatch(OpaqueContent.decode(value).xml)) {
+          marked = true;
+          continue;
+        }
+      }
+      if (leading && marked && data is String) {
+        final trimmed = data.replaceFirst(RegExp(r'^[ \t]+'), '');
+        if (trimmed.isEmpty) continue;
+        out.insert(trimmed, op.attributes);
+        leading = false;
+        continue;
+      }
+      leading = false;
+      out.push(op);
+    }
+    if (out.isEmpty || !_endsWithNewline(out)) out.insert('\n');
+    return out;
+  }
+
   XmlDocument? _xmlOf(String? path) => path == null ? null : package.xml(path);
 
   static bool _endsWithNewline(Delta delta) {
