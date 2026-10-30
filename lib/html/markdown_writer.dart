@@ -25,8 +25,41 @@ class MarkdownWriter {
   final ListCounter _counter;
 
   String write(Delta delta) {
-    final chunks = _blocks(documentBlocks(delta));
+    final blocks = documentBlocks(delta);
+    final front = _frontMatter(blocks);
+    final chunks = [
+      ?front?.text,
+      ..._blocks(front == null ? blocks : blocks.sublist(front.blocks)),
+    ];
     return chunks.isEmpty ? '' : '${chunks.join('\n\n')}\n';
+  }
+
+  /// Front matter at the top of the document, which the Markdown reader
+  /// shows as monospace lines: written back as it was, without a fence.
+  ({String text, int blocks})? _frontMatter(List<DocumentBlock> blocks) {
+    final lines = <String>[];
+    for (var index = 0; index < blocks.length; index++) {
+      final block = blocks[index];
+      if (block is! LineBlock ||
+          block.list != null ||
+          !(_isCode(block) || (index > 0 && block.isEmpty))) {
+        return null;
+      }
+      final start = lines.length;
+      lines.addAll(block.plainText.split('\u2028'));
+      final fence = lines.first.trimRight();
+      if ((fence != '---' && fence != '+++') ||
+          (lines.length > 1 && lines[1].trim().isEmpty)) {
+        return null;
+      }
+      for (var line = math.max(start, 1); line < lines.length; line++) {
+        final text = lines[line].trimRight();
+        if (text != fence && (fence != '---' || text != '...')) continue;
+        if (line < lines.length - 1) return null;
+        return (text: lines.join('\n'), blocks: index + 1);
+      }
+    }
+    return null;
   }
 
   List<String> _blocks(List<DocumentBlock> blocks) {
@@ -34,16 +67,32 @@ class MarkdownWriter {
     final items = <String>[];
     final levels = <_Level>[];
     final code = <String>[];
+    // The list level whose item holds the code being gathered; null when it
+    // is at the top.
+    int? codeLevel;
+    var continued = false;
     void endList() {
       if (items.isEmpty) return;
       chunks.add(items.join('\n'));
       items.clear();
       levels.clear();
+      continued = false;
     }
 
     void endCode() {
       if (code.isEmpty) return;
-      chunks.add(_fence(code));
+      final level = codeLevel;
+      if (level == null) {
+        chunks.add(_fence(code));
+      } else {
+        final indent = ' ' * levels[level].offset;
+        final lines = [
+          for (final line in _fence(code).split('\n'))
+            line.isEmpty ? line : '$indent$line',
+        ];
+        items.add('\n${lines.join('\n')}');
+        continued = true;
+      }
       code.clear();
     }
 
@@ -51,22 +100,42 @@ class MarkdownWriter {
       final block = blocks[index];
       if (block is LineBlock && block.list != null) {
         endCode();
-        items.add(_item(block, levels));
+        items.add(_item(block, levels, continued: continued));
+        continued = false;
         continue;
       }
-      endList();
+      final level = _continuationLevel(block, levels.length);
       if (block is LineBlock && _isCode(block)) {
+        if (code.isNotEmpty && codeLevel != level) endCode();
+        if (level == null) endList();
+        codeLevel = level;
         code.addAll(block.plainText.split('\u2028'));
         continue;
       }
-      if (block is LineBlock &&
-          block.isEmpty &&
-          code.isNotEmpty &&
-          _codeFollows(blocks, index)) {
-        code.add('');
-        continue;
+      if (code.isNotEmpty && _isBlank(block)) {
+        // Empty lines between two code lines of the same block stay in it.
+        var next = index + 1;
+        while (next < blocks.length && _isBlank(blocks[next])) {
+          next++;
+        }
+        final following = next < blocks.length ? blocks[next] : null;
+        if (following is LineBlock &&
+            following.list == null &&
+            _isCode(following) &&
+            _continuationLevel(following, levels.length) == codeLevel) {
+          code.addAll(List.filled(next - index, ''));
+          index = next - 1;
+          continue;
+        }
       }
       endCode();
+      if (level != null && block is LineBlock) {
+        levels.length = level + 1;
+        items.add('\n${_continuation(block, levels[level].offset)}');
+        continued = true;
+        continue;
+      }
+      endList();
       _counter.breakRun();
       switch (block) {
         case LineBlock():
@@ -84,12 +153,42 @@ class MarkdownWriter {
           break;
       }
     }
-    endList();
     endCode();
+    endList();
     return [
       for (final chunk in chunks)
         if (chunk.trim().isNotEmpty) chunk,
     ];
+  }
+
+  static bool _isBlank(DocumentBlock block) =>
+      block is LineBlock && block.list == null && block.isEmpty;
+
+  /// The list level whose item [block] goes on: an indented paragraph or code
+  /// line right after the items of a list [depth] levels deep, without the
+  /// right indent of quotes. Null for anything else.
+  static int? _continuationLevel(DocumentBlock block, int depth) {
+    if (block is! LineBlock ||
+        block.list != null ||
+        block.heading != null ||
+        block.isEmpty ||
+        block.indent < 1 ||
+        block.indent > depth ||
+        (block.indentRight ?? 0) > 0 ||
+        block.pieces.any(
+          (piece) => piece is EmbedPiece && piece.type == EmbedTypes.pageBreak,
+        )) {
+      return null;
+    }
+    return block.indent - 1;
+  }
+
+  /// A paragraph of a list item after its first one, aligned with the
+  /// item's text at [offset].
+  String _continuation(LineBlock line, int offset) {
+    final indent = ' ' * offset;
+    final text = _inline(line.pieces, indent: indent).trim();
+    return '$indent${_anchors(line)}$text';
   }
 
   // Paragraphs and headings
@@ -137,15 +236,6 @@ class MarkdownWriter {
             isMonospace(piece.attributes['font']),
       );
 
-  bool _codeFollows(List<DocumentBlock> blocks, int index) {
-    for (var next = index + 1; next < blocks.length; next++) {
-      final block = blocks[next];
-      if (block is LineBlock && block.list == null && block.isEmpty) continue;
-      return block is LineBlock && block.list == null && _isCode(block);
-    }
-    return false;
-  }
-
   static String _fence(List<String> lines) {
     var longest = 0;
     for (final line in lines) {
@@ -159,14 +249,19 @@ class MarkdownWriter {
 
   // Lists
 
-  String _item(LineBlock line, List<_Level> levels) {
+  /// The item's Markdown. It starts with an empty line after a paragraph or
+  /// code that [continued] the item before, and where Markdown would read it
+  /// as part of the text above.
+  String _item(LineBlock line, List<_Level> levels, {bool continued = false}) {
     final level = math.min(line.indent, levels.length);
     final indent = level == 0 ? 0 : levels[level - 1].offset;
     final previous = level < levels.length ? levels[level] : null;
+    final parent = level == 0 ? null : levels[level - 1];
     final ordered = line.isOrdered;
     final key = ordered ? _counter.keyOf(line) : 'bullets';
     var delimiter = '.';
     var marker = '-';
+    var number = 1;
     if (ordered) {
       if (previous != null && previous.ordered) {
         // A list right after another one at the same level needs another
@@ -175,9 +270,15 @@ class MarkdownWriter {
             ? previous.delimiter
             : (previous.delimiter == '.' ? ')' : '.');
       }
-      marker = '${_counter.next(line)}$delimiter';
+      number = _counter.next(line);
+      marker = '$number$delimiter';
     }
     final offset = indent + marker.length + 1;
+    final (:checkbox, :pieces) = _task(line);
+    final text = _inline(pieces, indent: ' ' * offset).trim();
+    final item = '${' ' * indent}$marker $checkbox${_anchors(line)}$text'
+        .trimRight();
+    final empty = item.length == indent + marker.length;
     levels
       ..length = level
       ..add(
@@ -186,27 +287,53 @@ class MarkdownWriter {
           key: key,
           ordered: ordered,
           delimiter: delimiter,
+          empty: empty,
         ),
       );
-    final checkbox = switch (line.list) {
-      'checked' => '[x] ',
-      'unchecked' => '[ ] ',
-      _ => '',
-    };
+    // Another list right after a list needs a blank line: one that doesn't
+    // start at 1 can't interrupt the item before. Under the text of its
+    // parent, neither can an empty item or a list not starting at 1.
+    final another =
+        previous != null &&
+        (previous.ordered != ordered || previous.key != key);
+    final interrupts =
+        previous == null &&
+        parent != null &&
+        !parent.empty &&
+        (empty || number != 1);
+    return another || interrupts || continued ? '\n$item' : item;
+  }
+
+  /// The item's task box: a checklist item of the editor, or an item that
+  /// starts with ☐ or ☑, as GitHub's task lists are read. The pieces come
+  /// without the box and without page breaks.
+  static ({String checkbox, List<InlinePiece> pieces}) _task(LineBlock line) {
     final pieces = [
       for (final piece in line.pieces)
         if (piece is! EmbedPiece || piece.type != EmbedTypes.pageBreak) piece,
     ];
-    final text = _inline(pieces, indent: ' ' * offset).trim();
-    final item = '${' ' * indent}$marker $checkbox${_anchors(line)}$text'
-        .trimRight();
-    // Another list right after a list needs a blank line: one that doesn't
-    // start at 1 can't interrupt the item before.
-    final another =
-        previous != null &&
-        (previous.ordered != ordered || previous.key != key);
-    return another ? '\n$item' : item;
+    switch (line.list) {
+      case 'checked':
+        return (checkbox: '[x] ', pieces: pieces);
+      case 'unchecked':
+        return (checkbox: '[ ] ', pieces: pieces);
+    }
+    final first = pieces.firstOrNull;
+    final box = first is TextPiece ? _taskBox.firstMatch(first.text) : null;
+    if (first is! TextPiece || box == null) {
+      return (checkbox: '', pieces: pieces);
+    }
+    final rest = first.text.substring(box.end);
+    return (
+      checkbox: box[1] == '☑' ? '[x] ' : '[ ] ',
+      pieces: [
+        if (rest.isNotEmpty) TextPiece(rest, first.attributes),
+        ...pieces.skip(1),
+      ],
+    );
   }
+
+  static final _taskBox = RegExp('^([☐☑])(?: |\$)');
 
   // Tables
 
@@ -288,9 +415,9 @@ class MarkdownWriter {
     for (final piece in pieces) {
       final attributes = piece.attributes;
       final marks = {
-        if (attributes['strike'] == true) _Mark.strike,
         if (bold && attributes['bold'] == true) _Mark.bold,
         if (attributes['italic'] == true) _Mark.italic,
+        if (attributes['strike'] == true) _Mark.strike,
       };
       final link = exportLink(piece.link);
       switch (piece) {
@@ -315,6 +442,7 @@ class MarkdownWriter {
           break;
       }
     }
+    _endWithoutBreak(raw);
     final runs = <_Run>[];
     for (var index = 0; index < raw.length; index++) {
       final run = raw[index];
@@ -360,6 +488,29 @@ class MarkdownWriter {
     return runs;
   }
 
+  /// Drops line breaks with only spaces after them: at the end of a block
+  /// Markdown reads the `\` of a break as text.
+  static void _endWithoutBreak(List<_Run> runs) {
+    var end = runs.length;
+    while (end > 0) {
+      final run = runs[end - 1];
+      if (run.kind != _RunKind.lineBreak &&
+          (run.kind != _RunKind.text ||
+              run.style != _Style.plain ||
+              run.text.trim().isNotEmpty)) {
+        break;
+      }
+      end--;
+    }
+    if (runs.skip(end).any((run) => run.kind == _RunKind.lineBreak)) {
+      runs.length = end;
+    }
+  }
+
+  /// Adds the runs of [text]. Monospace text right after monospace text
+  /// with the same formatting and link joins it: Markdown has none of what
+  /// tells them apart, and two code spans side by side would join their
+  /// backticks.
   static void _textRuns(
     String text,
     Map<String, dynamic> attributes,
@@ -375,13 +526,24 @@ class MarkdownWriter {
     final lines = text.split(_lineBreaks);
     for (var index = 0; index < lines.length; index++) {
       if (index > 0) runs.add(_Run.lineBreak(link));
-      if (lines[index].isNotEmpty) {
+      if (lines[index].isEmpty) continue;
+      final last = runs.lastOrNull;
+      if (index == 0 &&
+          style == _Style.code &&
+          last != null &&
+          last.kind == _RunKind.text &&
+          last.style == _Style.code &&
+          last.link == link &&
+          last.marks.length == marks.length &&
+          last.marks.containsAll(marks)) {
+        last.parts.add(lines[index]);
+      } else {
         runs.add(_Run.text(lines[index], marks, link, style));
       }
     }
   }
 
-  static final _lineBreaks = RegExp('[ \n\u000B]');
+  static final _lineBreaks = RegExp('[\u2028\n\u000B]');
   static final _backticks = RegExp('`+');
   static final _controlCharacters = RegExp(r'[\u0000-\u0008\u000A-\u001F]');
 
@@ -433,7 +595,7 @@ class MarkdownWriter {
     void setLink(String? target) {
       if (target == link) return;
       closeAll();
-      if (link != null) out.write('](${_destination(link!)})');
+      if (link != null) out.write('](${_destination(link!, table: table)})');
       if (target != null) out.write('[');
       link = target;
       lineStart = false;
@@ -528,13 +690,17 @@ class MarkdownWriter {
 
   static bool _isPunctuation(String char) => _punctuation.hasMatch(char);
 
+  /// Punctuation as GitHub and package:markdown tell it: ASCII punctuation
+  /// and Unicode's, not symbols like € or ✓.
   static final _punctuation = RegExp(
-    r'''[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~\p{P}\p{S}]''',
+    r'''[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~\p{P}]''',
     unicode: true,
   );
 
   /// Text with Markdown's special characters escaped, so it reads back as
-  /// the same text.
+  /// the same text. The start of web and e-mail addresses is escaped too:
+  /// GitHub's Markdown links them, reading what follows as part of the
+  /// address.
   static String _escape(
     String text, {
     bool lineStart = false,
@@ -551,6 +717,10 @@ class MarkdownWriter {
         out.write(r'\|');
       } else if (char == '&' && _entity.matchAsPrefix(text, index) != null) {
         out.write(r'\&');
+      } else if ((char == ':' && text.startsWith('//', index + 1)) ||
+          (char == '.' && _afterWww(text, index)) ||
+          (char == '@' && _inAddress(text, index))) {
+        out.write('\\$char');
       } else {
         out.write(char);
       }
@@ -566,6 +736,19 @@ class MarkdownWriter {
     }
     return escaped;
   }
+
+  static bool _afterWww(String text, int index) =>
+      index >= 3 && text.substring(index - 3, index).toLowerCase() == 'www';
+
+  /// Whether the `@` at [index] sits between characters of an e-mail
+  /// address.
+  static bool _inAddress(String text, int index) =>
+      index + 1 < text.length &&
+      _domainCharacter.hasMatch(text[index + 1]) &&
+      (index == 0 || _localCharacter.hasMatch(text[index - 1]));
+
+  static final _localCharacter = RegExp(r'[-_.+A-Za-z0-9]');
+  static final _domainCharacter = RegExp(r'[-_A-Za-z0-9]');
 
   static final _entity = RegExp(
     r'&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{0,31});',
@@ -594,15 +777,19 @@ class MarkdownWriter {
   }
 
   /// A link destination with spaces and angle brackets percent-encoded and
-  /// parentheses and backslashes escaped.
-  static String _destination(String url) {
+  /// parentheses and backslashes escaped. In a [table] pipes are escaped
+  /// too, or they would split the cell.
+  static String _destination(String url, {required bool table}) {
     final out = StringBuffer();
     for (final rune in url.runes) {
       if (rune <= 0x20 || rune == 0x7F || rune == 0x3C || rune == 0x3E) {
         for (final byte in utf8.encode(String.fromCharCode(rune))) {
           out.write('%${byte.toRadixString(16).padLeft(2, '0').toUpperCase()}');
         }
-      } else if (rune == 0x28 || rune == 0x29 || rune == 0x5C) {
+      } else if (rune == 0x28 ||
+          rune == 0x29 ||
+          rune == 0x5C ||
+          (rune == 0x7C && table)) {
         out.write('\\${String.fromCharCode(rune)}');
       } else {
         out.writeCharCode(rune);
@@ -618,6 +805,7 @@ class _Level {
     required this.key,
     required this.ordered,
     required this.delimiter,
+    required this.empty,
   });
 
   /// Column where the item's content starts.
@@ -625,32 +813,43 @@ class _Level {
   final Object key;
   final bool ordered;
   final String delimiter;
+
+  /// The item has no text, so an item under it doesn't follow a paragraph.
+  final bool empty;
 }
 
-enum _Mark { strike, bold, italic }
+/// Delimiters open in this order, so strikethrough sits inside bold and
+/// italic: package:markdown misreads `~~**$10**~~`.
+enum _Mark { bold, italic, strike }
 
 enum _RunKind { text, markdown, lineBreak }
 
 enum _Style { plain, code, superscript, subscript }
 
 class _Run {
-  _Run.text(this.text, this.marks, this.link, this.style)
-    : kind = _RunKind.text;
+  _Run.text(String text, this.marks, this.link, this.style)
+    : kind = _RunKind.text,
+      parts = [text];
 
   /// Already Markdown, like a picture.
-  _Run.markdown(this.text, this.marks, this.link)
+  _Run.markdown(String text, this.marks, this.link)
     : kind = _RunKind.markdown,
-      style = _Style.plain;
+      style = _Style.plain,
+      parts = [text];
 
   _Run.lineBreak(this.link)
     : kind = _RunKind.lineBreak,
-      text = '',
+      parts = [],
       marks = const {},
       style = _Style.plain;
 
   final _RunKind kind;
-  final String text;
+
+  /// Pieces of text that make up the run.
+  final List<String> parts;
   final Set<_Mark> marks;
   final String? link;
   final _Style style;
+
+  String get text => parts.length == 1 ? parts.first : parts.join();
 }

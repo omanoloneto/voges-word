@@ -29,7 +29,10 @@ class MarkdownCodec implements DocumentCodec {
     if (bytes.length > maxBytes) {
       throw DocumentProblemException(DocumentProblem.tooLarge);
     }
-    return guardParse(() => openHtml(markdownHtml(decodeText(bytes)), docx));
+    return guardParse(() {
+      final (:html, :notices) = markdownHtml(decodeText(bytes));
+      return openHtml(html, docx).withNotices(notices);
+    });
   }
 
   @override
