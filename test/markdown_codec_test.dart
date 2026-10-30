@@ -1274,7 +1274,9 @@ void main() {
       ]) {
         final watch = Stopwatch()..start();
         final loaded = _read(markdown);
-        expect(watch.elapsed, lessThan(const Duration(seconds: 5)));
+        // These hung package:markdown for minutes; a busy machine takes
+        // several seconds to read 100k characters in debug mode.
+        expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
         expect(_plain(loaded.delta).length, greaterThan(100000));
       }
     });

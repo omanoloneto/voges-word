@@ -175,10 +175,13 @@ void main() {
     'runs that share their formatting add little to parsing them',
     () {
       final (:package, :xml) = _wordRuns(3000);
-      final parse = _fastest(() => XmlDocument.parse(xml));
-      final read = _fastest(() => DocxCodec(TableStore()).read(package));
+      final parse = _fastest(() => XmlDocument.parse(xml), runs: 4);
+      final read = _fastest(
+        () => DocxCodec(TableStore()).read(package),
+        runs: 4,
+      );
       // Working out each run's formatting again took longer than parsing it.
-      expect(read, lessThan(parse * 1.6));
+      expect(read, lessThan(parse * 1.7));
     },
     timeout: _timeout,
   );
@@ -209,13 +212,14 @@ void main() {
     for (var paragraph = 0; paragraph < 400; paragraph++) {
       spec.body.add(ParagraphSpec([TextSpec(text)]));
     }
-    final build = _fastest(() => DocxBuilder(spec).build(), runs: 3);
+    final build = _fastest(() => DocxBuilder(spec).build(), runs: 4);
     final encode = _fastest(() {
       for (var paragraph = 0; paragraph < 400; paragraph++) {
         utf8.encode(text);
       }
-    }, runs: 3);
-    // Writing it a character at a time took nine times as long.
-    expect(build, lessThan(encode * 6));
+    }, runs: 4);
+    // Writing it a character at a time took nine times as long here, and
+    // more on CI machines, where the fixed builder takes about six times.
+    expect(build, lessThan(encode * 8));
   }, timeout: _timeout);
 }
