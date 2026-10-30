@@ -2560,6 +2560,11 @@ class _LevelText extends _Destination {
   @override
   bool get showsText => true;
 
+  /// Word writes it in the document's code page whatever the level's font,
+  /// as LibreOffice reads it.
+  @override
+  int? codePage(RtfReader reader) => reader._codePage;
+
   @override
   void text(RtfReader reader, String text) =>
       _appendUpTo(_text, text, RtfReader._maxNameLength);

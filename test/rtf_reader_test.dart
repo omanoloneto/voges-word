@@ -419,6 +419,23 @@ void main() {
         _package(document).text('word/numbering.xml'),
         contains('<w:lvlText w:val="%1${_chars(950, '、')}"/>'),
       );
+
+      // Word 2010 in Taiwan: the default font is Western, the level text is
+      // still in Big5.
+      final heading = _read(
+        r"{\rtf1\ansi\ansicpg950\deff0{\fonttbl{\f0\froman\fcharset0 Times "
+        r"New Roman;}}{\*\listtable{\list\listid1{\listlevel\levelnfc0"
+        r"\levelfollow1{\leveltext"
+        "\r\n"
+        r"\'05\'b2\'c4 \'00 \'b3\'b9;}{\levelnumbers\'03;}}}}"
+        r"{\*\listoverridetable{\listoverride\listid1\ls1}}\pard\ls1 Test\par}",
+      );
+      expect(
+        _package(heading).text('word/numbering.xml'),
+        contains(
+          '<w:lvlText w:val="${_chars(950, '第')} %1 ${_chars(950, '章')}"/>',
+        ),
+      );
     });
 
     test(r'\uc says how many fallback characters follow \u', () {

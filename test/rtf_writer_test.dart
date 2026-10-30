@@ -7,6 +7,7 @@ import 'package:flutter_quill/flutter_quill.dart' show ChangeSource, Document;
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:voges_word/document/delta_blocks.dart';
 import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/document_look.dart';
 import 'package:voges_word/document/embeds.dart';
@@ -20,6 +21,7 @@ import 'package:voges_word/docx/docx_template.dart';
 import 'package:voges_word/docx/image_formats.dart';
 import 'package:voges_word/docx/word_xml.dart';
 import 'package:voges_word/editor/page_numbers.dart';
+import 'package:voges_word/html/writing.dart';
 import 'package:voges_word/rtf/rtf_codec.dart';
 
 final _png = base64Decode(
@@ -74,11 +76,12 @@ LoadedDocument _openRtf(String rtf) =>
 
 /// A .docx whose body is [body] and whose last section has [section]'s
 /// properties; [media] go in word/media, related from the body as rIdM1,
-/// rIdM2...
+/// rIdM2..., and [numbering] is its numbering part.
 LoadedDocument _openDocx(
   String body, {
   Map<String, Uint8List> media = const {},
   String section = '',
+  String? numbering,
 }) {
   final package = newDocumentPackage();
   final namespaces = {
@@ -100,8 +103,15 @@ LoadedDocument _openDocx(
           type: RelationshipTypes.image,
           target: 'media/$name',
         ),
+      if (numbering != null)
+        const Relationship(
+          id: 'rIdNumbering',
+          type: RelationshipTypes.numbering,
+          target: 'numbering.xml',
+        ),
     ]);
   media.forEach((name, bytes) => package.parts['word/media/$name'] = bytes);
+  if (numbering != null) package.setText('word/numbering.xml', numbering);
   return _docx.read(package);
 }
 
@@ -282,7 +292,11 @@ void main() {
     final checked = expected.indexWhere(
       (operation) => (operation['attributes'] as Map?)?['list'] == 'checked',
     );
-    (expected[checked]['attributes'] as Map)['list'] = 'bullet';
+    // Boxes come back as bullets until the .docx reader makes their levels
+    // checklists again.
+    final box = (visible[checked]['attributes'] as Map?)?['list'];
+    expect(box, anyOf('checked', 'bullet'));
+    (expected[checked]['attributes'] as Map)['list'] = box;
     expect(visible, expected);
 
     final spaced = reopened.delta.toList().firstWhere(
@@ -1017,6 +1031,168 @@ void main() {
     expect(
       OpaqueContent.decode((field.data as Map)[EmbedTypes.opaqueInline]).xml,
       allOf(contains('<w:b/>'), contains('<w:sz w:val="16"/>')),
+    );
+  });
+
+  test('Word lists keep their number formats, starts and counting', () async {
+    String level(int level, String format, String text) =>
+        '<w:lvl w:ilvl="$level"><w:start w:val="1"/>'
+        '<w:numFmt w:val="$format"/><w:lvlText w:val="$text"/><w:pPr>'
+        '<w:ind w:left="${720 * (level + 1)}" w:hanging="360"/></w:pPr>'
+        '</w:lvl>';
+    String item(String text, [int? numId, int level = 0]) =>
+        '<w:p>${numId == null ? '' : '<w:pPr><w:numPr><w:ilvl w:val="$level"/>'
+                  '<w:numId w:val="$numId"/></w:numPr></w:pPr>'}'
+        '<w:r><w:t>$text</w:t></w:r></w:p>';
+    final opened = _openDocx(
+      [
+        item('Alpha', 1),
+        item('Beta', 1),
+        item('Beta sub', 1, 1),
+        item('One', 2),
+        item('One one', 2, 1),
+        item('Break'),
+        item('Two', 2),
+        item('Roman', 3),
+        item('Roman two', 3),
+        item('Five', 4),
+        item('Six', 4),
+        item('Fruit', 5),
+        item('Apple', 5, 1),
+        item('Pear', 5, 1),
+        item('Leaf', 5),
+        item('Leek', 5, 1),
+      ].join(),
+      numbering:
+          '<w:numbering xmlns:w="${Namespaces.w}">'
+          '<w:abstractNum w:abstractNumId="1">'
+          '${level(0, 'lowerLetter', '%1)')}${level(1, 'lowerRoman', '(%2)')}'
+          '</w:abstractNum><w:abstractNum w:abstractNumId="2">'
+          '${level(0, 'decimal', '%1.')}${level(1, 'decimal', '%1.%2.')}'
+          '</w:abstractNum><w:abstractNum w:abstractNumId="3">'
+          '${level(0, 'upperRoman', '%1.')}'
+          '</w:abstractNum><w:abstractNum w:abstractNumId="4">'
+          '${level(0, 'bullet', '–')}${level(1, 'decimal', '%2.')}'
+          '</w:abstractNum>'
+          '<w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>'
+          '<w:num w:numId="2"><w:abstractNumId w:val="2"/></w:num>'
+          '<w:num w:numId="3"><w:abstractNumId w:val="3"/></w:num>'
+          '<w:num w:numId="4"><w:abstractNumId w:val="2"/><w:lvlOverride '
+          'w:ilvl="0"><w:startOverride w:val="5"/></w:lvlOverride></w:num>'
+          '<w:num w:numId="5"><w:abstractNumId w:val="4"/></w:num>'
+          '</w:numbering>',
+    );
+    final rtf = _save(opened);
+    _expectBalanced(rtf);
+    // The number readers without lists show, without its punctuation.
+    String shown(String text) => RegExp(
+      r'\{\\listtext\\f\d+ (\w+)[^}]*\\tab\}'
+      '${RegExp.escape(text)}'
+      r'\\par',
+    ).firstMatch(rtf)![1]!;
+    expect(shown('Beta'), 'b');
+    expect(shown('Beta sub'), 'i');
+    expect(shown('Two'), '2', reason: 'an interrupted list goes on');
+    expect(shown('Roman two'), 'II');
+    expect(shown('Five'), '5');
+    expect(shown('Six'), '6');
+    expect(shown('Leek'), '1', reason: 'numbers restart under each bullet');
+
+    final reopened = _again(opened);
+    final numbering = ListNumbering.of(reopened.source);
+    final lines = {
+      for (final block in documentBlocks(reopened.delta))
+        if (block is LineBlock) block.plainText: block,
+    };
+    int numId(String text) =>
+        (lines[text]!.attributes[HiddenAttributes.numbering] as num).toInt();
+    String? format(String text, [int level = 0]) =>
+        numbering.level(numId(text), level)?.format;
+    expect(format('Alpha'), 'lowerLetter');
+    expect(format('Alpha', 1), 'lowerRoman');
+    expect(format('One', 1), 'decimal');
+    expect(format('Roman'), 'upperRoman');
+    expect(format('Fruit'), 'bullet');
+    expect(format('Fruit', 1), 'decimal');
+    expect(numbering.level(numId('Five'), 0)?.start, 5);
+    expect(numId('Two'), numId('One'));
+    expect(numId('Five'), isNot(numId('One')));
+    expect(numId('Leek'), numId('Fruit'));
+    expect(lines['Leek']!.list, 'ordered');
+    expect(lines['Leaf']!.list, 'bullet');
+
+    final textutil = File('/usr/bin/textutil');
+    if (!textutil.existsSync()) return;
+    final folder = Directory.systemTemp.createTempSync('rtf_lists');
+    addTearDown(() => folder.deleteSync(recursive: true));
+    final file = File('${folder.path}/lists.rtf')
+      ..writeAsStringSync(rtf, encoding: latin1);
+    final result = await Process.run(textutil.path, [
+      '-convert',
+      'html',
+      file.path,
+      '-stdout',
+    ]);
+    expect(result.exitCode, 0);
+    expect(
+      result.stdout,
+      allOf(
+        contains('list-style-type: lower-alpha'),
+        contains('list-style-type: lower-roman'),
+        contains('list-style-type: upper-roman'),
+        contains('Leek'),
+      ),
+    );
+  });
+
+  test('checklist items are bullets of boxes in Segoe UI Symbol', () {
+    final rtf = latin1.decode(
+      _codec.encode(
+        Delta()
+          ..insert('Done')
+          ..insert('\n', {'list': 'checked'})
+          ..insert('Open')
+          ..insert('\n', {'list': 'unchecked'})
+          ..insert('Inside')
+          ..insert('\n', {'list': 'checked', 'indent': 1}),
+        look: _docx.createEmpty().look,
+      ),
+    );
+    final font = RegExp(
+      r'\{\\f(\d+)\\fnil\\fcharset0 Segoe UI Symbol;\}',
+    ).firstMatch(rtf)![1];
+    for (final (marker, box) in [('check', '9745'), ('box', '9744')]) {
+      expect(
+        rtf,
+        contains(
+          '{\\*\\levelmarker \\{$marker\\}}'
+          "{\\leveltext\\'01\\u$box?;}{\\levelnumbers;}\\f$font\\fi-360\\li720",
+        ),
+      );
+    }
+    expect(_line(rtf, 'Done'), contains('{\\listtext\\f$font \\u9745?\\tab}'));
+    expect(_line(rtf, 'Open'), contains('{\\listtext\\f$font \\u9744?\\tab}'));
+    expect(_line(rtf, 'Inside'), contains(r'\ilvl1'));
+
+    final reopened = _openRtf(rtf);
+    final numbering = (reopened.source! as DocxPackage).text(
+      'word/numbering.xml',
+    )!;
+    for (final box in ['☑', '☐']) {
+      expect(
+        numbering,
+        contains('<w:numFmt w:val="bullet"/><w:lvlText w:val="$box"/>'),
+      );
+    }
+    expect(
+      RegExp('w:ascii="Segoe UI Symbol"').allMatches(numbering),
+      hasLength(18),
+    );
+    expect(
+      _lineAttributes(reopened.delta, 'Done')?[HiddenAttributes.numbering],
+      isNot(
+        _lineAttributes(reopened.delta, 'Open')?[HiddenAttributes.numbering],
+      ),
     );
   });
 }

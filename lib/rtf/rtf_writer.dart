@@ -19,6 +19,7 @@ import '../docx/docx_codec.dart';
 import '../docx/docx_package.dart';
 import '../docx/docx_styles.dart';
 import '../docx/image_formats.dart';
+import '../html/writing.dart' show ListLevel, ListNumbering;
 import 'rtf_pictures.dart';
 
 /// Writes the editor's content as RTF that Word, LibreOffice and TextEdit
@@ -36,12 +37,36 @@ class RtfWriter {
   /// too long and too much memory.
   static const _maxPixels = 40000000;
 
+  /// Checklist boxes are bullets in this font, as the other readers build
+  /// task items.
+  static const _checkboxFont = 'Segoe UI Symbol';
+  static const _bullets = ['•', '◦', '▪'];
+
+  /// RTF's `\levelnfc` of Word's number formats; the others count 1, 2, 3.
+  static const _numberFormats = {
+    'decimal': 0,
+    'upperRoman': 1,
+    'lowerRoman': 2,
+    'upperLetter': 3,
+    'lowerLetter': 4,
+    'ordinal': 5,
+    'cardinalText': 6,
+    'ordinalText': 7,
+    'decimalZero': 22,
+  };
+
   final TableStore _tables;
   final _fonts = <String>[];
   final _colors = <String>[];
-  final _lists = <_ListKind>[];
-  final _counters = <int, List<int>>{};
-  final _numbered = <int, int>{};
+
+  /// The levels of each list of the list table; its `\ls` is its place
+  /// from 1.
+  final _lists = <List<_Level>>[];
+  final _counters = <int, List<int?>>{};
+
+  /// The `\ls` of each Word list of the opened package, by its numId.
+  final _wordLists = <int, int>{};
+  var _numbering = ListNumbering.of(null);
   final _bookmarks = <String>{};
   final _groupStyles = <String, int>{};
   final _notes = <String, Map<String, Delta>>{};
@@ -79,6 +104,7 @@ class RtfWriter {
   }) {
     _look = look;
     _package = source is DocxPackage ? source : null;
+    _numbering = ListNumbering.of(source);
     _font(look.body.fontFamily ?? 'Arial');
     _differentFirstPage = headersFooters?.differentFirstPage ?? false;
     _headerDistance = headersFooters?.headerDistance ?? 35.4;
@@ -237,23 +263,27 @@ class RtfWriter {
   void _listTables(StringBuffer out) {
     if (_lists.isEmpty) return;
     out.write(r'{\*\listtable');
-    for (final (index, kind) in _lists.indexed) {
+    for (final (index, levels) in _lists.indexed) {
       final id = index + 1;
       out.write('\r\n{\\list\\listtemplateid$id\\listhybrid');
-      for (var level = 0; level < 9; level++) {
+      for (final (level, definition) in levels.indexed) {
         final indent = 720 * (level + 1);
-        final (format, text) = switch (kind) {
-          _ListKind.ordered => (
-            const [0, 4, 2][level % 3],
-            "\\'02\\'0$level.;}{\\levelnumbers\\'01;}",
-          ),
-          _ => (23, '\\\'01${_unicode(kind.marker(level))};}{\\levelnumbers;}'),
-        };
-        out.write(
-          '{\\listlevel\\levelnfc$format\\levelnfcn$format\\leveljc0'
-          '\\leveljcn0\\levelfollow0\\levelstartat1\\levelspace0'
-          '\\levelindent0{\\leveltext$text\\fi-360\\li$indent\\lin$indent }',
-        );
+        final format = definition.format;
+        out
+          ..write(
+            '{\\listlevel\\levelnfc$format\\levelnfcn$format\\leveljc0'
+            '\\leveljcn0\\levelfollow0\\levelstartat${definition.start}'
+            '\\levelspace0\\levelindent0',
+          )
+          // TextEdit shows its own check or box instead of the bullet.
+          ..write(switch (definition.text) {
+            '☑' => r'{\*\levelmarker \{check\}}',
+            '☐' => r'{\*\levelmarker \{box\}}',
+            _ => '',
+          })
+          ..write(_levelText(definition.text))
+          ..write(definition.font == null ? '' : '\\f${definition.font}')
+          ..write('\\fi-360\\li$indent\\lin$indent }');
       }
       out.write('{\\listname ;}\\listid$id}');
     }
@@ -267,10 +297,27 @@ class RtfWriter {
     out.write('}\r\n');
   }
 
-  static String _unicode(String text) {
-    final out = StringBuffer();
-    _escape(out, text);
-    return out.toString();
+  /// `\leveltext`: its length, then its characters, where `\'0N` stands for
+  /// the number of level N + 1; and `\levelnumbers`: where those numbers are.
+  static String _levelText(String text) {
+    final characters = StringBuffer();
+    final numbers = StringBuffer();
+    var length = 0;
+    for (var index = 0; index < text.length && length < 255; index++) {
+      final unit = text.codeUnitAt(index);
+      if (unit < 0x20) continue;
+      length++;
+      final next = index + 1 < text.length ? text.codeUnitAt(index + 1) : 0;
+      if (unit == 0x25 && next >= 0x31 && next <= 0x39) {
+        characters.write("\\'${_hexBytes[next - 0x31]}");
+        numbers.write("\\'${_hexBytes[length]}");
+        index++;
+      } else {
+        _escape(characters, String.fromCharCode(unit));
+      }
+    }
+    return "{\\leveltext\\'${_hexBytes[length]}$characters;}"
+        '{\\levelnumbers$numbers;}';
   }
 
   // Sections, headers and footers
@@ -523,8 +570,10 @@ class RtfWriter {
       ..write(_characterLook(base))
       ..write(' ');
     if (listNumber != null) {
-      out.write('{\\listtext\\f0 ');
-      _escape(out, _listText(listNumber, list!, listLevel));
+      out.write(
+        '{\\listtext\\f${_lists[listNumber - 1][listLevel].font ?? 0} ',
+      );
+      _escape(out, _listText(listNumber, listLevel));
       out.write(r'\tab}');
     }
     final content = StringBuffer();
@@ -573,46 +622,136 @@ class RtfWriter {
 
   // Lists
 
-  /// The `\ls` of the paragraph's list: one for all bullets, one per
-  /// numbered list, so each numbered list starts at 1.
+  /// The `\ls` of the paragraph's list: one per Word list of the opened
+  /// package, which goes on counting after other paragraphs as in Word; one
+  /// for each kind of the editor's bullets and checklists; one per run of
+  /// the editor's numbered items, so each starts at 1.
   int _listNumber(LineBlock line) {
-    switch (line.list) {
-      case 'ordered':
-        final original = line.attributes[HiddenAttributes.numbering];
-        if (original is num) {
-          return _numbered[original.toInt()] ??= _addList(_ListKind.ordered);
-        }
-        return _orderedList ??= _addList(_ListKind.ordered);
-      case 'checked':
-        _orderedList = null;
-        return _checkedList ??= _addList(_ListKind.checked);
-      case 'unchecked':
-        _orderedList = null;
-        return _uncheckedList ??= _addList(_ListKind.unchecked);
-      default:
-        _orderedList = null;
-        return _bulletList ??= _addList(_ListKind.bullet);
+    final numId = _wordList(line);
+    if (line.list != 'ordered' || numId != null) _orderedList = null;
+    if (numId != null) {
+      return _wordLists[numId] ??= _addList(_wordLevels(numId));
     }
+    return switch (line.list) {
+      'ordered' => _orderedList ??= _addList(_levels(_ListKind.ordered)),
+      'checked' => _checkedList ??= _addList(_levels(_ListKind.checked)),
+      'unchecked' => _uncheckedList ??= _addList(_levels(_ListKind.unchecked)),
+      _ => _bulletList ??= _addList(_levels(_ListKind.bullet)),
+    };
   }
 
-  int _addList(_ListKind kind) {
-    _lists.add(kind);
+  int _addList(List<_Level> levels) {
+    _lists.add(levels);
     return _lists.length;
   }
 
-  /// What readers without lists show: the number or bullet.
-  String _listText(int number, String list, int level) {
-    if (list != 'ordered') return _lists[number - 1].marker(level);
-    final counters = _counters.putIfAbsent(number, () => List.filled(9, 0));
-    counters[level]++;
-    counters.fillRange(level + 1, 9, 0);
-    final value = counters[level];
-    return '${switch (level % 3) {
-      1 => _letters(value),
-      2 => _roman(value),
-      _ => '$value',
-    }}.';
+  /// The Word list [line] keeps from the opened package, while the line is
+  /// still the kind of list its level is, as the .docx writer keeps it.
+  int? _wordList(LineBlock line) {
+    final value = line.attributes[HiddenAttributes.numbering];
+    if (value is! num || !value.isFinite) return null;
+    final numId = value.toInt();
+    final format = _numbering.level(numId, line.indent.clamp(0, 8))?.format;
+    final kept = switch (line.list) {
+      'ordered' => format != null && format != 'bullet' && format != 'none',
+      'bullet' => format == 'bullet',
+      _ => false,
+    };
+    return kept ? numId : null;
   }
+
+  /// The levels of a Word list as its definition in the opened package
+  /// numbers them; the levels it leaves out are the editor's.
+  List<_Level> _wordLevels(int numId) {
+    final bullets = _numbering.level(numId, 0)?.format == 'bullet';
+    final fallback = _levels(bullets ? _ListKind.bullet : _ListKind.ordered);
+    return [
+      for (var level = 0; level < 9; level++)
+        switch (_numbering.level(numId, level)) {
+          final defined? => _wordLevel(defined, level),
+          null => fallback[level],
+        },
+    ];
+  }
+
+  /// [ListNumbering] knows a level's format and start only: numbers take
+  /// Word's default text and bullets the editor's.
+  static _Level _wordLevel(ListLevel level, int index) =>
+      switch (level.format) {
+        'bullet' => (
+          format: 23,
+          text: _bullets[index % 3],
+          start: 1,
+          font: null,
+        ),
+        'none' => (format: 255, text: '', start: 1, font: null),
+        final format => (
+          format: _numberFormats[format] ?? 0,
+          text: '%${index + 1}.',
+          start: level.start.clamp(0, 32767),
+          font: null,
+        ),
+      };
+
+  /// The editor's lists: numbers go 1, a, i by level; checklist boxes are
+  /// bullets.
+  List<_Level> _levels(_ListKind kind) {
+    final boxes = kind == _ListKind.checked || kind == _ListKind.unchecked;
+    final font = boxes ? _font(_checkboxFont) : null;
+    return [
+      for (var level = 0; level < 9; level++)
+        switch (kind) {
+          _ListKind.ordered => (
+            format: const [0, 4, 2][level % 3],
+            text: '%${level + 1}.',
+            start: 1,
+            font: null,
+          ),
+          _ListKind.checked => (format: 23, text: '☑', start: 1, font: font),
+          _ListKind.unchecked => (format: 23, text: '☐', start: 1, font: font),
+          _ListKind.bullet => (
+            format: 23,
+            text: _bullets[level % 3],
+            start: 1,
+            font: null,
+          ),
+        },
+    ];
+  }
+
+  /// What readers without lists show: the level's text with the numbers of
+  /// the item and its parents, counted as Word counts them.
+  String _listText(int number, int level) {
+    final levels = _lists[number - 1];
+    final counters = _counters.putIfAbsent(
+      number,
+      () => List<int?>.filled(9, null),
+    );
+    counters[level] = switch (counters[level]) {
+      final count? => count + 1,
+      null => levels[level].start,
+    };
+    counters.fillRange(level + 1, 9, null);
+    return levels[level].text.replaceAllMapped(_placeholder, (match) {
+      final shown = int.parse(match[1]!) - 1;
+      final definition = levels[shown];
+      return _numberText(
+        counters[shown] ?? definition.start,
+        definition.format,
+      );
+    });
+  }
+
+  static final _placeholder = RegExp('%([1-9])');
+
+  static String _numberText(int value, int format) => switch (format) {
+    1 => _roman(value).toUpperCase(),
+    2 => _roman(value),
+    3 => _letters(value).toUpperCase(),
+    4 => _letters(value),
+    22 => '$value'.padLeft(2, '0'),
+    _ => '$value',
+  };
 
   static String _letters(int value) {
     final out = StringBuffer();
@@ -1359,18 +1498,12 @@ class _Blip {
   final bool metafile;
 }
 
-enum _ListKind {
-  bullet,
-  ordered,
-  checked,
-  unchecked;
+enum _ListKind { bullet, ordered, checked, unchecked }
 
-  String marker(int level) => switch (this) {
-    checked => '\u2611',
-    unchecked => '\u2610',
-    _ => const ['\u2022', '\u25E6', '\u25AA'][level % 3],
-  };
-}
+/// A level of a list of the list table: its number format (`\levelnfc`),
+/// its text, where %1 to %9 stand for the numbers of those levels, its first
+/// number and its font in the font table.
+typedef _Level = ({int format, String text, int start, int? font});
 
 /// Page size, margins, start and page numbers of a section, in twips.
 class _PageSetup {
