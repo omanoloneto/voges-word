@@ -1,13 +1,13 @@
 # Voges Word
 
-A lightweight document editor in the spirit of Word, without a million options. It opens and saves real `.docx` files and runs on macOS, Windows, Linux, Android, iOS and the web (Flutter).
+A lightweight document editor in the spirit of Word, without a million options. It opens and saves real `.docx` files, as well as OpenDocument, RTF, HTML, Markdown and plain text, opens Word 97–2003 `.doc` files, and runs on macOS, Windows, Linux, Android, iOS and the web (Flutter).
 
 ## Install
 
 The installers are in the [latest release](https://github.com/omanoloneto/voges-word/releases/latest) and on the [omanoloneto.pro/voges/word](https://omanoloneto.pro/voges/word/) page.
 
 - **macOS** 10.15 or newer, Apple Silicon and Intel: open `VogesWord-macos.dmg` and drag Voges Word to Applications. The app is not notarized by Apple; the first time, allow it in System Settings → Privacy & Security → Open Anyway.
-- **Windows** 10 or 11, 64-bit: `VogesWord-windows-setup.exe`. It installs without administrator rights and shows up in "Open with" for `.docx` and `.txt`. If SmartScreen warns you, click "More info" and then "Run anyway".
+- **Windows** 10 or 11, 64-bit: `VogesWord-windows-setup.exe`. It installs without administrator rights and shows up in "Open with" for every format it opens (`.docx`, `.docm`, `.dotx`, `.dotm`, `.doc`, `.dot`, `.odt`, `.ott`, `.rtf`, `.html`, `.htm`, `.xhtml`, `.md`, `.markdown` and `.txt`), without becoming the default program. If SmartScreen warns you, click "More info" and then "Run anyway".
 - **Linux** (Ubuntu 22.04, Debian 12 or newer and derivatives, 64-bit): `sudo apt install ./voges-word-linux-amd64.deb`.
 
 ### Updates
@@ -22,7 +22,7 @@ From version 1.2.0 on, Voges Word checks for a new version every time it opens a
 
 ## What it does
 
-- Opens `.docx` and `.txt`; saves as `.docx` (default) or `.txt`.
+- Opens and saves Word (`.docx`, `.docm`), OpenDocument (`.odt`), RTF, HTML, Markdown and plain text, and opens Word 97–2003 `.doc` files (see [File formats](#file-formats)).
 - Paged document, like Word: text flows to the next page on its own, paragraphs split across pages (no single line left alone at the bottom or top), headings are not left stranded at the end of a page and tables break by row. There is also a continuous mode and zoom from 50% to 200%. On narrow screens the text fits the width.
 - Tabbed ribbon (Home, Insert, Layout, View and Table, which appears while editing a cell), with a style gallery and quick colors.
 - On desktop, the window buttons sit inside the blue ribbon: on the left on the Mac, on the right on Windows and, on Linux, on the side set in the system (the right if nothing is set). Undo, redo, copy, cut and paste always sit on the opposite side.
@@ -41,15 +41,39 @@ From version 1.2.0 on, Voges Word checks for a new version every time it opens a
 - Tables editable cell by cell, including merged cells.
 - Find and replace, word count, undo/redo.
 - Warns before closing or opening another file with unsaved changes.
-- The system's "Open with" on macOS, Android and, through the installers, Windows and Linux. A file path can also be passed on the command line.
+- The system's "Open with" for every format it opens, on macOS, Android and, through the installers, Windows and Linux, without becoming the default app. A file path can also be passed on the command line.
 - Interface in English, Portuguese and Spanish. It follows the system language, and you can pick another one in the File menu.
 - Updates itself on macOS, Windows and Linux: the status bar shows when a new version exists (see [Updates](#updates)).
 
 What already exists and what is missing compared to Word's most used features is in [docs/word-feature-checklist.md](docs/word-feature-checklist.md).
 
+## File formats
+
+| Format | Extensions | Opens | Saves |
+| --- | --- | --- | --- |
+| Word document | `.docx`; templates `.dotx` and `.dotm` | Yes | Yes, the default |
+| Word document with macros | `.docm` | Yes | Yes; the macros are kept but never run |
+| Word 97–2003 document | `.doc`; template `.dot` | Yes | No: saving creates a `.docx` copy |
+| OpenDocument Text | `.odt`; template `.ott` | Yes | Yes |
+| Rich Text Format | `.rtf` | Yes | Yes |
+| Web page | `.html`, `.htm`, `.xhtml` | Yes | Yes, without the page setup, headers and footers |
+| Markdown | `.md`, `.markdown` | Yes | Yes, with basic formatting only |
+| Plain text | `.txt` | Yes | Yes, only the text |
+| PDF | `.pdf` | No | Export only |
+
+- **Save** keeps the format of the file. **Save as** creates a `.docx`, which keeps everything; **Other formats**, next to it in the File menu, saves as `.odt`, `.rtf`, `.html`, `.md` or `.txt`. When the document's format keeps less than a `.docx` or saves differently, the status bar says so and its tooltip explains why.
+- Templates open as new, untitled documents, as in Word.
+- `.doc` files are never written, so the original can't be damaged: saving one creates a `.docx` copy and leaves the original untouched.
+- The macros of a `.docm` are kept when it is saved and are never run. **Save as** leaves them out, because Word refuses a `.docx` with macros.
+- A file opens by its content, not by its name: a `.doc` that is really RTF or a web page opens as one.
+- Text files are read as UTF-8, UTF-16 or Windows' Western code page, and saved as UTF-8.
+- Share sends a `.docx`, a PDF or, when the format of the file is one Voges Word saves, the document in that format.
+
 ## Fidelity when opening and saving
 
-Voges Word rewrites only the document body. Headers, footers, styles, theme, numbering, footnotes, images and page settings stay in the file as they came. What the editor shows but does not edit (table of contents, fields such as page numbers, equations, charts, text boxes, notes) is protected and goes back into the file exactly as it was.
+In `.docx` and `.docm` files, Voges Word rewrites only the document body. Headers, footers, styles, theme, numbering, footnotes, images and page settings stay in the file as they came. What the editor shows but does not edit (table of contents, fields such as page numbers, equations, charts, text boxes, notes) is protected and goes back into the file exactly as it was.
+
+The other formats are converted when they open, and saving in them writes what the editor has. When a file has parts the editor can't show, a notice says so as it opens; those parts are left out when the file is saved.
 
 Known limitations:
 
@@ -62,7 +86,8 @@ Known limitations:
 - There is no spell checker on Windows, Linux or the web yet.
 - Comments are not shown; tracked changes are accepted on open.
 - Hanging indent (the opposite of a first-line indent) is kept in the file, but the screen shows the paragraph without it.
-- Old `.doc` files (Word 97–2003) are not supported.
+- Word 97–2003 files (`.doc`, `.dot`) open but are not saved in their own format: saving creates a `.docx` copy. Files from Word 95 and older don't open.
+- Pages (`.pages`) and WordPerfect (`.wpd`) files don't open, and PDF is only exported.
 
 ## Shortcuts
 
@@ -135,6 +160,8 @@ The text editor is [flutter_quill](https://pub.dev/packages/flutter_quill) 11.5.
 ## Structure
 
 - `lib/docx/` — reading and writing `.docx` (zip package, styles, numbering, conversion to the editor's model and back).
+- `lib/formats/` — the reader and writer of each format, and how a file's content tells its format.
+- `lib/odt/`, `lib/rtf/`, `lib/html/` (web pages and Markdown) and `lib/doc/` (Word 97–2003, read only) — the other formats. Their readers build a `.docx` package in memory, which the `.docx` reader opens.
 - `lib/document/` — document model: formats, page appearance, tables and protected content.
 - `lib/editor/` — screen, pages, ribbon, File menu, tables, search and session (open, save, changes).
 - `lib/files/` — file dialogs, files opened by the system, and recent files.

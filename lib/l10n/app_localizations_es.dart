@@ -414,10 +414,10 @@ class AppLocalizationsEs extends AppLocalizations {
   String get shareAs => 'Compartir como';
 
   @override
-  String get shareWordDocument => 'Documento de Word (.docx)';
+  String get shareWordDocumentHint => 'Quien lo reciba puede editarlo';
 
   @override
-  String get shareWordDocumentHint => 'Quien lo reciba puede editarlo';
+  String get shareCurrentFormatHint => 'En el mismo formato que el archivo';
 
   @override
   String get sharePdf => 'PDF';
@@ -554,11 +554,11 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get noticeContentNotImported =>
-      'Algunas partes del archivo no se muestran en Voges Word y pueden perderse al guardar.';
+      'Algunas partes de este archivo no se muestran en Voges Word y se omiten al guardar.';
 
   @override
   String get noticeSavesAsDocx =>
-      'Este archivo tiene el formato de Word 97–2003. Al guardar se crea una copia .docx; el original queda como está.';
+      'Este es un archivo de Word 97–2003. Al guardar se crea una copia .docx y el original queda intacto.';
 
   @override
   String get recoverFailed => 'No se pudo recuperar el documento.';
@@ -769,6 +769,34 @@ class AppLocalizationsEs extends AppLocalizations {
   String get plainText => 'Texto sin formato';
 
   @override
+  String get markdownWarning =>
+      'Los archivos .md guardan solo el formato básico. Usa “Guardar como” para conservar todo el formato.';
+
+  @override
+  String get markdown => 'Markdown';
+
+  @override
+  String get webPageWarning =>
+      'Las páginas web no guardan la configuración de página, el encabezado ni el pie de página. Usa “Guardar como” para conservarlos.';
+
+  @override
+  String get webPage => 'Página web';
+
+  @override
+  String get word97Warning =>
+      'Voges Word no escribe archivos de Word 97–2003: al guardar se crea una copia .docx y el original queda intacto.';
+
+  @override
+  String get word97 => 'Word 97–2003';
+
+  @override
+  String get wordMacrosWarning =>
+      'Las macros se conservan al guardar, pero Voges Word nunca las ejecuta. “Guardar como” crea un .docx sin ellas.';
+
+  @override
+  String get wordMacros => 'Word con macros';
+
+  @override
   String get minimize => 'Minimizar';
 
   @override
@@ -801,7 +829,31 @@ class AppLocalizationsEs extends AppLocalizations {
   String get open => 'Abrir';
 
   @override
-  String get plainTextFile => 'Texto (.txt)';
+  String get otherFormats => 'Otros formatos';
+
+  @override
+  String get formatDocx => 'Documento de Word (.docx)';
+
+  @override
+  String get formatDocm => 'Documento de Word con macros (.docm)';
+
+  @override
+  String get formatDoc => 'Documento de Word 97–2003 (.doc)';
+
+  @override
+  String get formatOdt => 'Texto de OpenDocument (.odt)';
+
+  @override
+  String get formatRtf => 'Formato de texto enriquecido (.rtf)';
+
+  @override
+  String get formatHtml => 'Página web (.html)';
+
+  @override
+  String get formatMarkdown => 'Markdown (.md)';
+
+  @override
+  String get formatPlainText => 'Texto sin formato (.txt)';
 
   @override
   String get print => 'Imprimir';

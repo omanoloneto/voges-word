@@ -657,23 +657,32 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   }
 
   Future<void> _share() async {
-    final format = await askShareFormat(context);
+    final format = await askShareFormat(context, session.format);
     if (format != null) await _shareAs(format);
   }
 
   Future<void> _shareAs(ShareFormat format) async {
+    final document = switch (format) {
+      ShareFormat.docx => DocumentFormat.docx,
+      ShareFormat.current => session.format,
+      ShareFormat.pdf => null,
+    };
     final Uint8List? bytes;
     final String name;
     final String mime;
-    if (format == ShareFormat.pdf) {
+    if (document == null) {
       bytes = await _buildPdf();
       name = _pdfName;
       mime = 'application/pdf';
     } else {
-      bytes = session.encode(DocumentFormat.docx);
-      name = '${safeFileName(session.baseName)}.docx';
-      mime =
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      try {
+        bytes = session.encode(document);
+      } catch (error) {
+        _showError((l10n) => l10n.shareFailed);
+        return;
+      }
+      name = '${safeFileName(session.baseName)}.${document.extension}';
+      mime = mimeTypeOf(document);
     }
     if (bytes == null || !mounted) return;
     final size = MediaQuery.sizeOf(context);

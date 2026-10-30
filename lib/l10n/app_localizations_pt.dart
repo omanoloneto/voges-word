@@ -414,10 +414,10 @@ class AppLocalizationsPt extends AppLocalizations {
   String get shareAs => 'Compartilhar como';
 
   @override
-  String get shareWordDocument => 'Documento do Word (.docx)';
+  String get shareWordDocumentHint => 'Quem receber pode editar';
 
   @override
-  String get shareWordDocumentHint => 'Quem receber pode editar';
+  String get shareCurrentFormatHint => 'No mesmo formato do arquivo';
 
   @override
   String get sharePdf => 'PDF';
@@ -554,11 +554,11 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get noticeContentNotImported =>
-      'Algumas partes do arquivo não aparecem no Voges Word e podem se perder ao salvar.';
+      'Algumas partes deste arquivo não aparecem no Voges Word e ficam de fora ao salvar.';
 
   @override
   String get noticeSavesAsDocx =>
-      'Este arquivo está no formato do Word 97–2003. Ao salvar, é criada uma cópia .docx; o original continua como está.';
+      'Este é um arquivo do Word 97–2003. Ao salvar, é criada uma cópia .docx e o original fica intacto.';
 
   @override
   String get recoverFailed => 'Não foi possível recuperar o documento.';
@@ -769,6 +769,34 @@ class AppLocalizationsPt extends AppLocalizations {
   String get plainText => 'Texto simples';
 
   @override
+  String get markdownWarning =>
+      'Arquivos .md guardam só a formatação básica. Use “Salvar como” para manter toda a formatação.';
+
+  @override
+  String get markdown => 'Markdown';
+
+  @override
+  String get webPageWarning =>
+      'Páginas da web não guardam a configuração da página, o cabeçalho nem o rodapé. Use “Salvar como” para mantê-los.';
+
+  @override
+  String get webPage => 'Página da web';
+
+  @override
+  String get word97Warning =>
+      'O Voges Word não grava arquivos do Word 97–2003: ao salvar, é criada uma cópia .docx e o original fica intacto.';
+
+  @override
+  String get word97 => 'Word 97–2003';
+
+  @override
+  String get wordMacrosWarning =>
+      'As macros são mantidas ao salvar, mas o Voges Word nunca as executa. “Salvar como” cria um .docx sem elas.';
+
+  @override
+  String get wordMacros => 'Word com macros';
+
+  @override
   String get minimize => 'Minimizar';
 
   @override
@@ -801,7 +829,31 @@ class AppLocalizationsPt extends AppLocalizations {
   String get open => 'Abrir';
 
   @override
-  String get plainTextFile => 'Texto (.txt)';
+  String get otherFormats => 'Outros formatos';
+
+  @override
+  String get formatDocx => 'Documento do Word (.docx)';
+
+  @override
+  String get formatDocm => 'Documento do Word com macros (.docm)';
+
+  @override
+  String get formatDoc => 'Documento do Word 97–2003 (.doc)';
+
+  @override
+  String get formatOdt => 'Texto OpenDocument (.odt)';
+
+  @override
+  String get formatRtf => 'Formato Rich Text (.rtf)';
+
+  @override
+  String get formatHtml => 'Página da web (.html)';
+
+  @override
+  String get formatMarkdown => 'Markdown (.md)';
+
+  @override
+  String get formatPlainText => 'Texto simples (.txt)';
 
   @override
   String get print => 'Imprimir';

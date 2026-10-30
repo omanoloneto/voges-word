@@ -20,19 +20,19 @@ The "20%" is the Pareto principle: the few features that cover almost all usage,
 - `[ ]`: missing.
 - `[ ]` with **Partial**: partly done; the note says what is missing.
 
-Status as of October 28, 2026, version 1.0.0:
+Status as of October 29, 2026, after version 1.2.0:
 
 | Status | Items |
 | --- | --- |
-| Done | 39 |
+| Done | 41 |
 | Partial | 8 |
-| Missing | 30 |
+| Missing | 28 |
 | **Total** | **77** |
 
 ## 1. The core: the most used commands
 
 - [x] **Paste** (Ctrl+V). It is Word's most used command. Pastes text with formatting from other programs (bold, colors, size, font, links) and pastes images.
-- [x] **Save** (Ctrl+S), as `.docx` (default) or `.txt`.
+- [x] **Save** (Ctrl+S), in the format of the file: `.docx` (default), `.docm`, `.odt`, `.rtf`, `.html`, `.md` or `.txt`. A Word 97–2003 `.doc` is saved as a `.docx` copy.
 - [x] **Copy** (Ctrl+C).
 - [x] **Undo and Redo** (Ctrl+Z and Ctrl+Y).
 - [x] **Bold** (Ctrl+B).
@@ -43,7 +43,7 @@ Status as of October 28, 2026, version 1.0.0:
 - [x] **Alignment**: Align Left, Center, Align Right and Justify (Ctrl+L, E, R, J).
 - [x] **Open** (Ctrl+O) and **Recent files**.
 - [x] **New document** (Ctrl+N), with the blank, single spacing, school paper (ABNT, the Brazilian standard for academic papers) and résumé templates.
-- [x] **Save As** (Ctrl+Shift+S).
+- [x] **Save As** (Ctrl+Shift+S), as `.docx`; the File menu's Other formats saves as `.odt`, `.rtf`, `.html`, `.md` or `.txt`.
 - [x] **Print** (Ctrl+P). On Mac and Android it opens the system print dialog; on Windows and Linux it opens the PDF in the viewer, and you print from there.
 - [x] **Select All** (Ctrl+A).
 
@@ -129,9 +129,9 @@ Status as of October 28, 2026, version 1.0.0:
 
 - [x] **Export PDF**, matching the screen and with searchable text.
 - [x] **Recovery**: if the app closes without saving, it offers to recover the document the next time it opens.
-- [ ] **Partial: Share** as `.docx` or PDF. Works on every system except Linux.
-- [ ] **Open `.doc`** (Word 97–2003), **`.odt`** and **`.rtf`**.
-- [ ] Save as `.odt`, `.rtf` or HTML.
+- [ ] **Partial: Share** as `.docx`, PDF or the format of the file. Works on every system except Linux.
+- [x] **Open `.doc`** (Word 97–2003), **`.odt`** and **`.rtf`**, as well as HTML, Markdown, `.docm` (macros kept, never run) and the templates `.dotx`, `.dotm`, `.dot` and `.ott`, which open as new documents. A file opens by its content, even with the wrong extension.
+- [x] Save as `.odt`, `.rtf`, HTML, Markdown or `.txt`. The status bar warns when the format keeps less than a `.docx`.
 - [ ] AutoSave to the file itself. Today the app only keeps a recovery copy and never writes to the user's file on its own, by design.
 - [ ] Protect the document with a password.
 - [ ] Cloud and collaborative editing, such as OneDrive and co-authoring.
@@ -147,7 +147,6 @@ The order takes into account the estimated usage and who uses Voges Word (studen
 5. Spacing before and after the paragraph, and a ruler with indents.
 6. Automatic table of contents and footnotes, the two that matter most in an ABNT paper.
 7. Merge cells, symbols and automatic lists while typing.
-8. Open `.doc`, `.odt` and `.rtf`.
 
 ## Sources
 

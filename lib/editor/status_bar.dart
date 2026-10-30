@@ -117,15 +117,9 @@ class _StatusBarState extends State<StatusBar> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (session.format == DocumentFormat.plainText) ...[
+              if (_FormatNote.of(l10n, session.format) case final note?) ...[
                 const SizedBox(width: 12),
-                Tooltip(
-                  message: l10n.plainTextWarning,
-                  child: Text(
-                    l10n.plainText,
-                    style: small?.copyWith(color: theme.colorScheme.error),
-                  ),
-                ),
+                _FormatChip(note),
               ],
               const Spacer(),
               if (widget.trailing case final trailing?) ...[
@@ -166,6 +160,85 @@ class _StatusBarState extends State<StatusBar> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// What saving in the document's format leaves out or does differently.
+class _FormatNote {
+  const _FormatNote(this.label, this.message, {required this.losesContent});
+
+  /// Null for the formats that keep what the editor shows.
+  static _FormatNote? of(AppLocalizations l10n, DocumentFormat format) =>
+      switch (format) {
+        DocumentFormat.plainText => _FormatNote(
+          l10n.plainText,
+          l10n.plainTextWarning,
+          losesContent: true,
+        ),
+        DocumentFormat.markdown => _FormatNote(
+          l10n.markdown,
+          l10n.markdownWarning,
+          losesContent: true,
+        ),
+        DocumentFormat.html => _FormatNote(
+          l10n.webPage,
+          l10n.webPageWarning,
+          losesContent: true,
+        ),
+        DocumentFormat.doc => _FormatNote(
+          l10n.word97,
+          l10n.word97Warning,
+          losesContent: false,
+        ),
+        DocumentFormat.docm => _FormatNote(
+          l10n.wordMacros,
+          l10n.wordMacrosWarning,
+          losesContent: false,
+        ),
+        DocumentFormat.docx || DocumentFormat.odt || DocumentFormat.rtf => null,
+      };
+
+  final String label;
+  final String message;
+  final bool losesContent;
+}
+
+class _FormatChip extends StatelessWidget {
+  const _FormatChip(this.note);
+
+  final _FormatNote note;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = note.losesContent
+        ? theme.colorScheme.error
+        : theme.colorScheme.onSurfaceVariant;
+    // On phones only the icon fits beside the zoom.
+    final compact = MediaQuery.sizeOf(context).width < 480;
+    return Tooltip(
+      message: note.message,
+      triggerMode: TooltipTriggerMode.tap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            note.losesContent
+                ? Icons.warning_amber_rounded
+                : Icons.info_outline,
+            size: 14,
+            color: color,
+          ),
+          if (!compact) ...[
+            const SizedBox(width: 4),
+            Text(
+              note.label,
+              style: theme.textTheme.bodySmall?.copyWith(color: color),
+            ),
+          ],
+        ],
       ),
     );
   }

@@ -413,10 +413,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get shareAs => 'Share as';
 
   @override
-  String get shareWordDocument => 'Word document (.docx)';
+  String get shareWordDocumentHint => 'Whoever receives it can edit it';
 
   @override
-  String get shareWordDocumentHint => 'Whoever receives it can edit it';
+  String get shareCurrentFormatHint => 'Same format as the file';
 
   @override
   String get sharePdf => 'PDF';
@@ -551,11 +551,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get noticeContentNotImported =>
-      'Some parts of the file don’t show in Voges Word and may be lost when you save it.';
+      'Some parts of this file can’t be shown in Voges Word and will be left out when you save it.';
 
   @override
   String get noticeSavesAsDocx =>
-      'This file is in the Word 97–2003 format. Saving creates a .docx copy; the original stays as it is.';
+      'This is a Word 97–2003 file. Saving creates a .docx copy and leaves the original untouched.';
 
   @override
   String get recoverFailed => 'Couldn’t recover the document.';
@@ -766,6 +766,34 @@ class AppLocalizationsEn extends AppLocalizations {
   String get plainText => 'Plain text';
 
   @override
+  String get markdownWarning =>
+      '.md files keep only basic formatting. Use “Save as” to keep all of it.';
+
+  @override
+  String get markdown => 'Markdown';
+
+  @override
+  String get webPageWarning =>
+      'Web pages don’t keep the page setup, headers or footers. Use “Save as” to keep them.';
+
+  @override
+  String get webPage => 'Web page';
+
+  @override
+  String get word97Warning =>
+      'Voges Word doesn’t write Word 97–2003 files: saving creates a .docx copy and leaves the original untouched.';
+
+  @override
+  String get word97 => 'Word 97–2003';
+
+  @override
+  String get wordMacrosWarning =>
+      'Macros are kept when you save, but Voges Word never runs them. “Save as” creates a .docx without them.';
+
+  @override
+  String get wordMacros => 'Word with macros';
+
+  @override
   String get minimize => 'Minimize';
 
   @override
@@ -798,7 +826,31 @@ class AppLocalizationsEn extends AppLocalizations {
   String get open => 'Open';
 
   @override
-  String get plainTextFile => 'Text (.txt)';
+  String get otherFormats => 'Other formats';
+
+  @override
+  String get formatDocx => 'Word document (.docx)';
+
+  @override
+  String get formatDocm => 'Word document with macros (.docm)';
+
+  @override
+  String get formatDoc => 'Word 97–2003 document (.doc)';
+
+  @override
+  String get formatOdt => 'OpenDocument Text (.odt)';
+
+  @override
+  String get formatRtf => 'Rich Text Format (.rtf)';
+
+  @override
+  String get formatHtml => 'Web page (.html)';
+
+  @override
+  String get formatMarkdown => 'Markdown (.md)';
+
+  @override
+  String get formatPlainText => 'Plain text (.txt)';
 
   @override
   String get print => 'Print';
