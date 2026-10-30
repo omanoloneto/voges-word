@@ -17,6 +17,14 @@ bool isPng(Uint8List bytes) =>
 bool isJpeg(Uint8List bytes) =>
     bytes.length > 3 && bytes[0] == 0xFF && bytes[1] == 0xD8;
 
+/// Some writers put GIF data in a `\pngblip`.
+bool isGif(Uint8List bytes) =>
+    bytes.length > 10 &&
+    bytes[0] == 0x47 &&
+    bytes[1] == 0x49 &&
+    bytes[2] == 0x46 &&
+    bytes[3] == 0x38;
+
 bool isEmf(Uint8List bytes) =>
     bytes.length > 44 &&
     ByteData.sublistView(bytes).getUint32(0, _little) == 1 &&

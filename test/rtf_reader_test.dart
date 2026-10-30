@@ -4,10 +4,12 @@ import 'dart:typed_data';
 
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/embeds.dart';
 import 'package:voges_word/document/headers_footers.dart';
 import 'package:voges_word/document/tables.dart';
+import 'package:voges_word/document/text_encodings.dart';
 import 'package:voges_word/docx/docx_codec.dart';
 import 'package:voges_word/docx/docx_package.dart';
 import 'package:voges_word/editor/page_numbers.dart';
@@ -63,6 +65,21 @@ String _cellText(TableCellModel cell) => cell.controller.document.toPlainText();
 
 DocxPackage _package(LoadedDocument document) =>
     document.source! as DocxPackage;
+
+String _hex(List<int> bytes) =>
+    bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+
+/// [text] read in [codePage]: without its table each character is replaced
+/// instead of misread.
+String _chars(int codePage, String text) =>
+    isKnownCodePage(codePage) ? text : '\u{FFFD}' * text.length;
+
+Operation _picture(Delta delta) => _ops(delta).firstWhere(
+  (operation) => switch (operation.data) {
+    {EmbedTypes.image: String _} => true,
+    _ => false,
+  },
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -341,6 +358,69 @@ void main() {
       );
     });
 
+    test('Chinese, Japanese and Korean text in double-byte code pages', () {
+      // TextEdit writes each byte as \'hh; Word writes a trail byte that is
+      // ASCII as it is.
+      final fonts = _read(
+        r"{\rtf1\ansi\ansicpg1252{\fonttbl{\f0\fnil\fcharset128 Hiragino;}"
+        r"{\f1\fnil\fcharset136 PMingLiU;}}\f0 \'82\'b1\'82\'f1\'82\'c9\'82"
+        r"\'bf\'82\'cd \'83A\'b1 {\f1 \'bc\'d0\'c3D}\par}",
+      );
+      // Raw bytes: the last character's lead byte ends a text token.
+      final document = _read(
+        r"{\rtf1\ansi\ansicpg932{\fonttbl{\f0 MS Mincho;}}\f0 \'93\'fa\'96"
+        r"\'7b"
+        '\x82\xb1\x82'
+        r"\'f1\par}",
+      );
+      expect(
+        _text(fonts.delta),
+        '${_chars(932, 'こんにちは')} ${_chars(932, 'ア')}ｱ '
+        '${_chars(950, '標題')}\n',
+      );
+      expect(_text(document.delta), '${_chars(932, '日本こん')}\n');
+      expect(
+        [...fonts.notices, ...document.notices],
+        isKnownCodePage(932) && isKnownCodePage(950)
+            ? isEmpty
+            : contains(DocumentNotice.contentNotImported),
+      );
+      final unicode = _read(
+        r"{\rtf1\ansi\ansicpg932{\fonttbl{\f0\fcharset128 MS Mincho;}}\f0"
+        r"\uc2 \u"
+        r"26085\'93\'fa\u"
+        r"26412\'96\'7b\par}",
+      );
+      expect(_text(unicode.delta), '日本\n');
+      expect(unicode.notices, isEmpty);
+
+      // Word on these systems writes font names in their code page, with
+      // another name in \falt.
+      final names = _read(
+        r"{\rtf1\ansi\ansicpg950{\fonttbl{\f0 Times New Roman;}{\f1"
+        r"\fcharset136 \'b7\'73\'b2\'d3\'a9\'fa\'c5\'e9{\*\falt PMingLiU};}}"
+        r"\f0 x{\f1\uc2 \u"
+        r"27161\'bc\'d0}\par}",
+      );
+      expect(
+        _op(names.delta, '標').attributes?['font'],
+        isKnownCodePage(950) ? '新細明體' : 'PMingLiU',
+      );
+      expect(names.notices, isEmpty);
+    });
+
+    test('list level text in a double-byte code page', () {
+      final document = _read(
+        r"{\rtf1\ansi\ansicpg950{\*\listtable{\list\listid1{\listlevel"
+        r"\levelnfc0{\leveltext\'02\'00\'a1B;}{\levelnumbers\'01;}}}}"
+        r"{\*\listoverridetable{\listoverride\listid1\ls1}}\pard\ls1 one\par}",
+      );
+      expect(
+        _package(document).text('word/numbering.xml'),
+        contains('<w:lvlText w:val="%1${_chars(950, '、')}"/>'),
+      );
+    });
+
     test(r'\uc says how many fallback characters follow \u', () {
       expect(
         _text(
@@ -484,6 +564,82 @@ void main() {
       expect(section, contains('<w:type w:val="continuous"/>'));
     });
 
+    test(r'a \sect at the end adds no empty section', () {
+      final document = _read(
+        r'{\rtf1 \sectd\lndscpsxn\pgwsxn15840\pghsxn12240 Last page text\par'
+        r'\sect\sectd}',
+      );
+      expect(
+        _embeds<Object?>(document.delta, EmbedTypes.sectionBreak),
+        isEmpty,
+      );
+      expect(_text(document.delta), 'Last page text\n');
+      expect(document.look.pageWidth, 792);
+    });
+
+    test('headers and footers of earlier sections', () {
+      final changed = _read(
+        r'{\rtf1\sectd{\header\pard\plain Chapter One header\par}\pard Chapter'
+        r' one text\par\sect\sectd{\header\pard\plain Chapter Two header\par}'
+        r'\pard Chapter two text\par}',
+      );
+      expect(
+        _text(changed.headersFooters.headers[PageVariant.normal]!.delta),
+        'Chapter Two header\n',
+      );
+      expect(changed.notices, [DocumentNotice.contentNotImported]);
+
+      final repeated = _read(
+        r'{\rtf1\sectd{\header\pard\plain Same\par}{\footer\pard\plain Early'
+        r' footer\par}\pard one\par\sect\sectd{\header\pard\plain Same\par}'
+        r'\pard two\par}',
+      );
+      expect(
+        _text(repeated.headersFooters.headers[PageVariant.normal]!.delta),
+        'Same\n',
+      );
+      expect(
+        _text(repeated.headersFooters.footers[PageVariant.normal]!.delta),
+        'Early footer\n',
+      );
+      expect(repeated.notices, isEmpty);
+    });
+
+    test('a drop cap stays the first letter of its paragraph', () {
+      final delta = _read(
+        r'{\rtf1 {\pard\pvpara\phpg\posx1000\dropcapli3\dropcapt1\fs96 T\par}'
+        r'\pard he rest of the paragraph\par}',
+      ).delta;
+      expect(_text(delta), 'The rest of the paragraph\n');
+    });
+
+    test(r'numbering from \pn when \ls names no list', () {
+      final delta = _read(
+        r'{\rtf1\ansi\deff0{\fonttbl{\f0 Helvetica;}{\f2 Symbol;}}'
+        r'\pard{\pntext\f2 1.\tab}{\*\pn\pnlvlbody\pnstart1\pndec\ls3\ilvl0'
+        r'\pnhang{\pntxta .}}\ls3\ilvl0\fi-360\li360 One\par'
+        r'{\pntext\f2 2.\tab}Two\par}',
+      ).delta;
+      expect(_line(delta, 'One')['list'], 'ordered');
+      expect(
+        _line(delta, 'Two')[HiddenAttributes.numbering],
+        _line(delta, 'One')[HiddenAttributes.numbering],
+      );
+    });
+
+    test(r'\pnlvlcont paragraphs continue the numbering', () {
+      final delta = _read(
+        r'{\rtf1 \pard{\*\pn\pnlvlbody\pndec{\pntxta .}}one\par'
+        r'\pard{\*\pn\pnlvlcont}continued\par'
+        r'\pard{\*\pn\pnlvlbody\pndec{\pntxta .}}two\par}',
+      ).delta;
+      expect(_line(delta, 'continued')['list'], isNull);
+      expect(
+        _line(delta, 'two')[HiddenAttributes.numbering],
+        _line(delta, 'one')[HiddenAttributes.numbering],
+      );
+    });
+
     test('headers for left and right pages', () {
       final document = _read(
         r'{\rtf1\facingp {\headerr odd\par}{\headerl even\par}body\par}',
@@ -525,6 +681,38 @@ void main() {
       expect(_op(delta, 'three').attributes?['link'], isNull);
     });
 
+    test('contents and cross-references keep the bookmarks they point at', () {
+      final document = _read(
+        r'{\rtf1 {\field{\*\fldinst TOC \\o "1-3" \\h}{\fldrslt '
+        r'{\field{\*\fldinst HYPERLINK \\l "_Toc100"}{\fldrslt Intro}}\par}}'
+        r'\pard {\*\bkmkstart _Toc100}Intro{\*\bkmkend _Toc100}\par'
+        r'\pard See {\field{\*\fldinst PAGEREF _Toc100 \\h}{\fldrslt 1}} and '
+        r'{\field{\*\fldinst REF _Ref200 \\h}{\fldrslt Table 1}}\par'
+        r'\pard {\*\bkmkstart _Ref200}Table 1{\*\bkmkend _Ref200}\par}',
+      );
+      final saved = DocxPackage.decode(
+        DocxCodec(_tables).encode(document.delta, source: document.source),
+      ).text('word/document.xml')!;
+      expect(saved, contains('w:anchor="_Toc100"'));
+      expect(saved, contains('PAGEREF _Toc100'));
+      expect(saved, contains('REF _Ref200'));
+      // Each bookmark covers the text that REF shows.
+      for (final (name, text) in [
+        ('_Toc100', 'Intro'),
+        ('_Ref200', 'Table 1'),
+      ]) {
+        expect(
+          saved,
+          matches(
+            RegExp(
+              'w:name="$name"/><w:r><w:t[^>]*>$text</w:t></w:r>'
+              '<w:bookmarkEnd',
+            ),
+          ),
+        );
+      }
+    });
+
     test('a result over several paragraphs keeps its paragraphs', () {
       final delta = _read(
         r'{\rtf1 {\field{\*\fldinst TOC \\o "1-3"}{\fldrslt one\par two}}'
@@ -540,6 +728,37 @@ void main() {
       expect(_package(alternate).text('word/endnotes.xml'), contains('end'));
       final endnotes = _read(r'{\rtf1\fet1 a{\footnote \pard note\par}\par}');
       expect(_package(endnotes).text('word/endnotes.xml'), contains('note'));
+    });
+
+    test(r'\ftnalt marks an endnote whatever \fet says', () {
+      final package = _package(
+        _read(
+          r'{\rtf1\ansi\aenddoc\fet1 Body{\super \chftn{\*\footnote\ftnalt '
+          r'\chftn\pard\plain Endnote text.}}\par}',
+        ),
+      );
+      expect(package.text('word/endnotes.xml'), contains('Endnote text.'));
+      expect(package.text('word/footnotes.xml'), isNull);
+    });
+
+    test('pictures inside grouped shapes are kept', () {
+      final png = _hex(img.encodePng(img.Image(width: 1, height: 1)));
+      // LibreOffice's fdo89496.rtf has GIF data in its \pngblip.
+      final gif = _hex(img.encodeGif(img.Image(width: 1, height: 1)));
+      final document = _read(
+        '{\\rtf1 {\\shpgrp{\\*\\shpinst{\\shp{\\*\\shpinst{\\sp{\\sn shapeType}'
+        '{\\sv 75}}{\\sp{\\sn pib}{\\sv {\\pict\\pngblip\\picw1\\pich1 $png}}}}}'
+        '{\\shp{\\*\\shpinst{\\sp{\\sn pib}{\\sv {\\pict\\pngblip $gif}}}}}'
+        '}}Text\\par}',
+      );
+      expect(_embeds<Object?>(document.delta, EmbedTypes.image), hasLength(2));
+      expect(_text(document.delta), 'Text\n');
+      expect(document.notices, isEmpty);
+      final nowhere = _read(
+        '{\\rtf1 {\\field{\\*\\fldinst {\\pict\\pngblip $png}}{\\fldrslt x}}'
+        '\\par}',
+      );
+      expect(nowhere.notices, [DocumentNotice.contentNotImported]);
     });
 
     test('text boxes with more than text and drawings are not imported', () {
@@ -568,6 +787,41 @@ void main() {
       expect(_cellText(inner.rows.single.cells[1]), 'in2\n');
       expect(_text(cell), endsWith('after\n'));
       expect(_text(delta), endsWith('end\n'));
+    });
+
+    test(r'a paragraph without \intbl in an unfinished row stays in it', () {
+      final delta = _read(
+        r'{\rtf1 before\par\trowd\cellx3000\cellx6000\cellx9000'
+        r'\pard\intbl A1\cell B1\cell\pard C1\par\pard\intbl \cell'
+        r'\pard\intbl{\trowd\cellx3000\cellx6000\cellx9000\row}\pard after\par}',
+      ).delta;
+      expect(_embeds<Object?>(delta, EmbedTypes.table), hasLength(1));
+      expect(_table(delta).rows.single.cells.map(_cellText), [
+        'A1\n',
+        'B1\n',
+        'C1\n\n',
+      ]);
+      expect(_text(delta), 'before\n\nafter\n');
+    });
+
+    test(r'cells without a \cellx share the width of the row', () {
+      final delta = _read(
+        r'{\rtf1 \trowd\cellx9000\pard\intbl A\cell B\cell C\cell D\cell\row'
+        r'\pard after\par}',
+      ).delta;
+      expect(_table(delta).columnWidths, [2250, 2250, 2250, 2250]);
+    });
+
+    test(r'cells of rows with their own \trleft line up with the others', () {
+      final delta = _read(
+        r'{\rtf1 \trowd\trleft0\cellx2000\cellx4000\pard\intbl a\cell b\cell'
+        r'\row\trowd\trleft1000\cellx3000\cellx5000\pard\intbl c\cell d\cell'
+        r'\row\pard after\par}',
+      ).delta;
+      final table = _table(delta);
+      expect(table.columnWidths, [2000, 1000, 1000, 1000]);
+      expect(table.rows[0].cells.map((cell) => cell.gridSpan), [1, 2]);
+      expect(table.rows[1].cells.map((cell) => cell.gridSpan), [2, 2]);
     });
 
     test('rows without cell definitions or with too many of them', () {
@@ -644,6 +898,37 @@ void main() {
       expect(package.parts[media[2]]!.sublist(0, 2), [0x42, 0x4D]);
       expect(package.parts[media[3]]!.length, 14 + 40 + 8 + 4);
       expect(document.notices, isEmpty);
+    });
+
+    test('cropped pictures show only what is left, at its size', () {
+      final png = img.encodePng(img.Image(width: 4, height: 4));
+      final cropped = _picture(
+        _read(
+          '{\\rtf1 {\\pict\\pngblip\\picw4\\pich4\\picwgoal1440\\pichgoal1440'
+          '\\piccropl720\\piccropb720 ${_hex(png)}}\\par}',
+        ).delta,
+      );
+      expect(cropped.attributes?['width'], '36');
+      expect(cropped.attributes?['height'], '36');
+      final source = (cropped.data as Map)[EmbedTypes.image] as String;
+      final picture = img.decodePng(base64Decode(source.split(',').last))!;
+      expect([picture.width, picture.height], [2, 2]);
+
+      // Metafiles can't be cut: the whole picture shows, not stretched.
+      final wmf = Uint8List(44);
+      ByteData.sublistView(wmf)
+        ..setUint16(0, 1, Endian.little)
+        ..setUint16(2, 9, Endian.little)
+        ..setUint16(4, 0x300, Endian.little)
+        ..setUint32(6, 22, Endian.little)
+        ..setUint32(18, 3, Endian.little);
+      final whole = _package(
+        _read(
+          '{\\rtf1 {\\pict\\wmetafile8\\picw5080\\pich2540\\picwgoal2880'
+          '\\pichgoal1440\\piccropl1440 ${_hex(wmf)}}\\par}',
+        ),
+      ).text('word/document.xml')!;
+      expect(whole, contains('<wp:extent cx="1828800" cy="914400"/>'));
     });
 
     test('pictures that cannot be shown are reported', () {

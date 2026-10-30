@@ -170,6 +170,27 @@ void main() {
     expect(watch.elapsed, lessThan(const Duration(seconds: 20)));
   });
 
+  test('font names are capped however they are written', () {
+    final document = _read(
+      '{\\rtf1{\\fonttbl{\\f0 Arial;}{\\f1 ${'a' * 10000};}}{\\f1 x}\\par}',
+    );
+    final font = document.delta.toList().first.attributes?['font'] as String;
+    expect(font.length, inInclusiveRange(1, 256));
+  });
+
+  test('formatting repeated on every paragraph counts toward the limit', () {
+    final tabs = [for (var tab = 1; tab <= 64; tab++) '\\tx${tab * 100}'];
+    final watch = Stopwatch()..start();
+    expect(
+      () => _read(
+        '{\\rtf1{\\fonttbl{\\f0 Arial;}{\\f1 ${'a' * 250};}}'
+        '\\pard${tabs.join()}\\f1 ${'\\par ' * 10000}}',
+      ),
+      _problem(DocumentProblem.tooLarge),
+    );
+    expect(watch.elapsed, lessThan(const Duration(seconds: 20)));
+  });
+
   test('large tables of fonts, colors, styles and lists are capped', () {
     final rtf = StringBuffer(r'{\rtf1{\fonttbl');
     for (var index = 0; index < 20000; index++) {
@@ -207,9 +228,11 @@ void main() {
             : Uint8List.sublistView(bytes, 0, random.nextInt(bytes.length)),
       );
     }
+    const doubleByte = [932, 936, 949, 950, 1361];
     for (var round = 0; round < 10; round++) {
+      final codePage = round.isEven ? 1252 : doubleByte[round ~/ 2];
       _survives([
-        ...latin1.encode(r'{\rtf1 '),
+        ...latin1.encode('{\\rtf1\\ansicpg$codePage '),
         for (var index = 0; index < 20000; index++) random.nextInt(256),
       ]);
     }

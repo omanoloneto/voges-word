@@ -5,8 +5,10 @@ import 'package:flutter/painting.dart' show EdgeInsets;
 
 import '../document/document_codec.dart';
 import '../document/headers_footers.dart';
+import '../document/picture_crop.dart';
 import '../document/text_encodings.dart';
 import '../docx/docx_builder.dart';
+import '../docx/image_formats.dart';
 import 'rtf_languages.dart';
 import 'rtf_pictures.dart';
 import 'rtf_story.dart';
@@ -30,6 +32,10 @@ class RtfReader {
   static const _maxPictureBytes = 64 * 1024 * 1024;
   static const _maxPicturesBytes = 160 * 1024 * 1024;
 
+  /// Pixels of the cropped pictures cut to what shows, about ten seconds of
+  /// decoding; later ones show whole.
+  static const _maxCroppedPixels = 40000000;
+
   final Uint8List _bytes;
   final _budget = RtfBudget();
   final _notices = <DocumentNotice>{};
@@ -42,6 +48,12 @@ class RtfReader {
   var _skip = 0;
   var _borderPending = false;
   var _pictureBytes = 0;
+  var _croppedPixels = 0;
+
+  /// The first byte of a double-byte character whose second byte is still to
+  /// come, in the next token; -1 when there is none.
+  var _leadByte = -1;
+  var _leadCodePage = 0;
 
   var _codePage = 1252;
   int? _defaultFont;
@@ -61,6 +73,9 @@ class RtfReader {
   /// Written by TextEdit (Cocoa).
   var _cocoa = false;
   var _section = _Section();
+
+  /// Whether the section the last `\sect` ended has a different first page.
+  var _endedTitlePage = false;
 
   final _fonts = <int, _Font>{};
   final _colors = <String?>[];
@@ -83,6 +98,7 @@ class RtfReader {
         case RtfToken.end:
           break loop;
         case RtfToken.groupStart:
+          _flushBytes();
           _skip = 0;
           if (_stack.length > _maxDepth) {
             throw DocumentProblemException(DocumentProblem.damaged);
@@ -92,10 +108,12 @@ class RtfReader {
           }
           _stack.add(_stack.last.nested());
         case RtfToken.groupEnd:
+          _flushBytes();
           _skip = 0;
           if (_stack.length <= 2) break loop;
           _endGroup();
         case RtfToken.word:
+          _flushBytes();
           _word(tokenizer.word, tokenizer.parameter);
         case RtfToken.symbol:
           _symbol(tokenizer.value);
@@ -104,9 +122,11 @@ class RtfReader {
         case RtfToken.text:
           _text(tokenizer.start, tokenizer.end);
         case RtfToken.binary:
+          _flushBytes();
           _binary(tokenizer.start, tokenizer.end);
       }
     }
+    _flushBytes();
     while (_stack.length > 2) {
       _endGroup();
     }
@@ -196,6 +216,13 @@ class RtfReader {
       _skip--;
       return;
     }
+    // An escaped \, { or } can be the second byte of a double-byte character.
+    if (_leadByte >= 0 &&
+        (symbol == 0x5C || symbol == 0x7B || symbol == 0x7D)) {
+      _doubleByteText(Uint8List.fromList([symbol]), _leadCodePage);
+      return;
+    }
+    _flushBytes();
     final group = _group;
     if (symbol == 0x2A) {
       group.ignorable = true;
@@ -227,11 +254,16 @@ class RtfReader {
     final group = _group..ignorable = false;
     final destination = group.destination;
     if (destination.skips || destination is _Picture) return;
+    final codePage = _textCodePage(group);
+    if (_isDoubleByte(codePage)) {
+      _doubleByteText(Uint8List.fromList([byte]), codePage);
+      return;
+    }
     destination.text(
       this,
       byte < 0x80
           ? String.fromCharCode(byte)
-          : decodeCodePage([byte], _codePageOf(group.run)),
+          : decodeCodePage([byte], codePage),
     );
   }
 
@@ -249,6 +281,11 @@ class RtfReader {
       destination.hex(_bytes, start, end);
       return;
     }
+    final codePage = _textCodePage(group);
+    if (_isDoubleByte(codePage)) {
+      _doubleByteText(Uint8List.sublistView(_bytes, start, end), codePage);
+      return;
+    }
     var ascii = true;
     for (var index = start; index < end; index++) {
       if (_bytes[index] >= 0x80) {
@@ -260,12 +297,112 @@ class RtfReader {
       this,
       ascii
           ? String.fromCharCodes(_bytes, start, end)
-          : decodeCodePage(
-              Uint8List.sublistView(_bytes, start, end),
-              _codePageOf(group.run),
-            ),
+          : decodeCodePage(Uint8List.sublistView(_bytes, start, end), codePage),
     );
   }
+
+  /// Text in a double-byte code page, whose characters can be split between
+  /// tokens: Word writes `\'83A` for one character. A lead byte at the end
+  /// waits for the next token.
+  void _doubleByteText(Uint8List bytes, int codePage) {
+    var start = 0;
+    final lead = _leadByte;
+    if (lead >= 0 && codePage == _leadCodePage && bytes.isNotEmpty) {
+      _leadByte = -1;
+      final paired = _isTrailByte(bytes[0], codePage);
+      _emitDoubleByte(
+        Uint8List.fromList([lead, if (paired) bytes[0]]),
+        codePage,
+      );
+      if (paired) start = 1;
+    }
+    _flushBytes();
+    var end = bytes.length;
+    for (var index = start; index < end; index++) {
+      if (!_isLeadByte(bytes[index], codePage)) continue;
+      if (index + 1 == end) {
+        _leadByte = bytes[index];
+        _leadCodePage = codePage;
+        end = index;
+      } else if (_isTrailByte(bytes[index + 1], codePage)) {
+        index++;
+      }
+    }
+    if (end > start) {
+      _emitDoubleByte(Uint8List.sublistView(bytes, start, end), codePage);
+    }
+  }
+
+  /// Every token but text flushes a waiting lead byte, so its destination is
+  /// still the current one.
+  void _flushBytes() {
+    final lead = _leadByte;
+    if (lead < 0) return;
+    _leadByte = -1;
+    _emitDoubleByte(Uint8List.fromList([lead]), _leadCodePage);
+  }
+
+  void _emitDoubleByte(Uint8List bytes, int codePage) {
+    final destination = _group.destination;
+    final text = _decodeDoubleByte(bytes, codePage);
+    if (destination.showsText && text.contains(_replacement)) {
+      _notice(DocumentNotice.contentNotImported);
+    }
+    destination.text(this, text);
+  }
+
+  static const _replacement = '\u{FFFD}';
+
+  /// Without the code page's table each character is replaced, never misread
+  /// as Western text.
+  static String _decodeDoubleByte(Uint8List bytes, int codePage) {
+    if (isKnownCodePage(codePage)) return decodeCodePage(bytes, codePage);
+    final out = StringBuffer();
+    for (var index = 0; index < bytes.length; index++) {
+      final byte = bytes[index];
+      if (byte < 0x80) {
+        out.writeCharCode(byte);
+      } else if (codePage == 932 && byte >= 0xA1 && byte <= 0xDF) {
+        out.writeCharCode(0xFF61 + byte - 0xA1);
+      } else {
+        if (_isLeadByte(byte, codePage) &&
+            index + 1 < bytes.length &&
+            _isTrailByte(bytes[index + 1], codePage)) {
+          index++;
+        }
+        out.write(_replacement);
+      }
+    }
+    return out.toString();
+  }
+
+  static bool _isDoubleByte(int codePage) =>
+      const {932, 936, 949, 950, 1361}.contains(codePage);
+
+  static bool _isLeadByte(int byte, int codePage) => switch (codePage) {
+    932 => (byte >= 0x81 && byte <= 0x9F) || (byte >= 0xE0 && byte <= 0xFC),
+    1361 =>
+      (byte >= 0x84 && byte <= 0xD3) ||
+          (byte >= 0xD8 && byte <= 0xDE) ||
+          (byte >= 0xE0 && byte <= 0xF9),
+    _ => byte >= 0x81 && byte <= 0xFE,
+  };
+
+  static bool _isTrailByte(int byte, int codePage) =>
+      byte >= (codePage == 1361 ? 0x31 : 0x40) && byte <= 0xFE && byte != 0x7F;
+
+  static bool _isReadableCodePage(int codePage) =>
+      isKnownCodePage(codePage) || _isDoubleByte(codePage);
+
+  /// The code page of a Windows font character set, double-byte ones too.
+  static int? _codePageOfCharset(int charset) => switch (charset) {
+    128 => 932,
+    129 => 949,
+    130 => 1361,
+    134 => 936,
+    136 => 950,
+    _ => codePageOfCharset(charset),
+  };
 
   void _binary(int start, int end) {
     if (_skip > 0) {
@@ -281,6 +418,9 @@ class RtfReader {
 
   int _codePageOf(_RunState run) =>
       _fonts[run.font ?? _defaultFont]?.codePage ?? _codePage;
+
+  int _textCodePage(_Group group) =>
+      group.destination.codePage(this) ?? _codePageOf(group.run);
 
   // Destinations
 
@@ -360,7 +500,13 @@ class RtfReader {
         final story = destination.story;
         _begin(story == null ? const _Skip() : _Bookmark(story));
       case 'shp' || 'shpgrp':
-        final shape = _Shape(destination.story, isGroup: word == 'shpgrp');
+        final shape = _Shape(
+          // The shapes of a group are where the group is.
+          destination is _ShapeGroup
+              ? destination.shape.anchor
+              : destination.story,
+          isGroup: word == 'shpgrp',
+        );
         group.shape = shape;
         _begin(_ShapeGroup(shape));
       case 'sp':
@@ -624,6 +770,8 @@ class RtfReader {
         para.listLevel = (parameter ?? 0).clamp(0, 8);
       case 'outlinelevel':
         para.outlineLevel = parameter;
+      case 'dropcapli':
+        para.dropCap = (parameter ?? 0) > 0;
       case 'uc':
         group.uc = (parameter ?? 1).clamp(0, 255);
       default:
@@ -694,7 +842,7 @@ class RtfReader {
       case 'deflang':
         _defaultLanguage = parameter;
       case 'ansicpg':
-        if (parameter != null && isKnownCodePage(parameter)) {
+        if (parameter != null && _isReadableCodePage(parameter)) {
           _codePage = parameter;
         }
       case 'ansi':
@@ -917,8 +1065,9 @@ class RtfReader {
   void _paragraphMark(_Group group) {
     final story = group.destination.story;
     if (story == null) return;
-    // A deleted paragraph mark joins the paragraph with the next one.
-    if (group.run.deleted) return;
+    // A deleted paragraph mark joins the paragraph with the next one, and
+    // Word writes a drop cap as a paragraph of its own before the rest.
+    if (group.run.deleted || group.para.dropCap) return;
     story.endParagraph(
       (inlines) => _paragraphSpec(inlines, group, story),
       _tableLevel(group.para),
@@ -935,6 +1084,7 @@ class RtfReader {
       );
     }
     _body.add(SectionBreakSpec(_page(_section), kind: _section.kind));
+    _endedTitlePage = _section.titlePage;
   }
 
   void _storyText(RtfStory story, String text) {
@@ -1046,12 +1196,17 @@ class RtfReader {
     final outline = para.outlineLevel;
     final styled = _paragraphStyles[para.style]?.headingLevel != null;
     final run = _textFormat(group);
+    final format = _unlikeParagraph(
+      _paragraphFormat(para, list: _listRef(para, story)),
+      _inheritedParagraph(para.style),
+    );
+    _budget.spend(
+      elements: format.tabs.length,
+      text: RtfBudget.fontCost(run.font),
+    );
     return ParagraphSpec(
       inlines,
-      format: _unlikeParagraph(
-        _paragraphFormat(para, list: _listRef(para, story)),
-        _inheritedParagraph(para.style),
-      ),
+      format: format,
       heading: !styled && outline != null && outline >= 0 && outline < 6
           ? outline + 1
           : null,
@@ -1215,13 +1370,18 @@ class RtfReader {
 
   ListRef? _listRef(_ParaState para, RtfStory? story) {
     final override = para.listOverride;
-    if (override != null && override > 0) {
+    final pn = para.pn;
+    // Some writers put \ls next to \pn without a list table: \pn says more.
+    if (override != null &&
+        override > 0 &&
+        (pn == null || _hasList(override))) {
       story?.numbering = null;
       final id = _listIds[override] ??= _addList(() => _listSpec(override));
       return ListRef(id, para.listLevel);
     }
-    final pn = para.pn;
-    if (pn == null || pn.kind == _PnKind.none || story == null) {
+    // \pnlvlcont shows no number but keeps the list going.
+    if (pn?.kind == _PnKind.none) return null;
+    if (pn == null || story == null) {
       story?.numbering = null;
       return null;
     }
@@ -1250,8 +1410,19 @@ class RtfReader {
 
   int _addList(ListSpec Function() build) {
     if (_spec.lists.length >= _maxEntries) return _spec.lists.length;
-    return _spec.addList(build());
+    final list = build();
+    _budget.spend(
+      elements: list.levels.length,
+      text: list.levels.fold(
+        0,
+        (cost, level) => cost + RtfBudget.fontCost(level.font),
+      ),
+    );
+    return _spec.addList(list);
   }
+
+  bool _hasList(int override) =>
+      _lists[_overrides[override]?.listId]?.levels.isNotEmpty ?? false;
 
   ListSpec _listSpec(int number) {
     final override = _overrides[number];
@@ -1286,23 +1457,71 @@ class RtfReader {
 
   void _finishPicture(_Picture picture, _Group group) {
     final story = picture.story;
-    if (story == null || group.run.deleted) return;
+    if (group.run.deleted) return;
+    if (story == null) {
+      if (picture.lost) _notice(DocumentNotice.contentNotImported);
+      return;
+    }
     final data = picture.bytes;
     if (data.isEmpty && !picture.oversize) return;
-    final file = picture.oversize ? null : _pictureFile(picture, data);
+    var file = picture.oversize ? null : _pictureFile(picture, data);
     if (file == null || _pictureBytes + file.bytes.length > _maxPicturesBytes) {
       _notice(DocumentNotice.contentNotImported);
       return;
     }
+    var size = _pictureTwips(picture);
+    if (size != null) {
+      final cropped = _cropped(picture, file, size);
+      if (cropped != null) {
+        file = cropped;
+        size = (
+          width: size.width - picture.cropLeft - picture.cropRight,
+          height: size.height - picture.cropTop - picture.cropBottom,
+        );
+      }
+    }
     _pictureBytes += file.bytes.length;
-    final size = _pictureSize(picture);
     story.paragraph.add(
       ImageSpec(
         file.bytes,
         file.mime,
-        width: size?.width,
-        height: size?.height,
+        width: size == null ? null : size.width * picture.scaleX / 2000,
+        height: size == null ? null : size.height * picture.scaleY / 2000,
       ),
+    );
+  }
+
+  /// What shows of a cropped picture; null shows it whole, at the size it
+  /// has uncropped, when it can't be cut (metafiles) or the time set aside
+  /// for cutting pictures is spent.
+  ({Uint8List bytes, String mime})? _cropped(
+    _Picture picture,
+    ({Uint8List bytes, String mime}) file,
+    ({double width, double height}) size,
+  ) {
+    final (left, top, right, bottom) = (
+      picture.cropLeft,
+      picture.cropTop,
+      picture.cropRight,
+      picture.cropBottom,
+    );
+    if (left + top + right + bottom == 0) return null;
+    final pixels = imagePixelSize(file.bytes);
+    if (pixels == null ||
+        pixels.width > _maxCroppedPixels ||
+        pixels.height > _maxCroppedPixels) {
+      return null;
+    }
+    final count = pixels.width * pixels.height;
+    if (_croppedPixels + count > _maxCroppedPixels) return null;
+    _croppedPixels += count;
+    return cropPicture(
+      file.bytes,
+      file.mime,
+      left: left / size.width,
+      top: top / size.height,
+      right: right / size.width,
+      bottom: bottom / size.height,
     );
   }
 
@@ -1312,6 +1531,7 @@ class RtfReader {
   ) {
     if (isPng(data)) return (bytes: data, mime: 'image/png');
     if (isJpeg(data)) return (bytes: data, mime: 'image/jpeg');
+    if (isGif(data)) return (bytes: data, mime: 'image/gif');
     if (isEmf(data)) return (bytes: data, mime: 'image/x-emf');
     final file = switch (picture.type) {
       _PictureType.wmf => placeableWmf(
@@ -1336,9 +1556,10 @@ class RtfReader {
     );
   }
 
-  /// Points, from the goal size in twips or the picture's own size: pixels
-  /// at 96 dpi, or hundredths of a millimeter for metafiles.
-  ({double width, double height})? _pictureSize(_Picture picture) {
+  /// Twips of the whole picture before scaling, from the goal size or the
+  /// picture's own size: pixels at 96 dpi, or hundredths of a millimeter for
+  /// metafiles.
+  ({double width, double height})? _pictureTwips(_Picture picture) {
     final metafile =
         picture.type == _PictureType.wmf || picture.type == _PictureType.emf;
     double? twips(int? goal, int? own) {
@@ -1350,11 +1571,7 @@ class RtfReader {
     final width = twips(picture.goalWidth, picture.width);
     final height = twips(picture.goalHeight, picture.height);
     if (width == null || height == null) return null;
-    double scale(int value) => value > 0 ? value / 100 : 1;
-    return (
-      width: width * scale(picture.scaleX) / 20,
-      height: height * scale(picture.scaleY) / 20,
-    );
+    return (width: width, height: height);
   }
 
   void _finishField(_Field field, _Group group) {
@@ -1499,6 +1716,10 @@ class RtfReader {
     final character = entry.kind == _StyleKind.character;
     final styles = character ? _characterStyles : _paragraphStyles;
     if (styles.length >= _maxEntries) return;
+    _budget.spend(
+      elements: 1 + group.para.tabs.length,
+      text: RtfBudget.fontCost(_fontName(group.run.font)),
+    );
     final name = entry.name.toString().replaceAll(';', '').trim();
     final lower = name.toLowerCase();
     if (character && lower == 'default paragraph font') return;
@@ -1630,13 +1851,21 @@ class RtfReader {
 
   RtfDocument _finish(_Group group) {
     final blocks = _finishStory(_body, group);
+    var page = _page(_section);
+    var kind = _section.kind;
+    var titlePage = _section.titlePage;
+    // Word ignores a \sect that nothing follows, as some writers end with.
+    if (blocks.lastOrNull case final SectionBreakSpec last) {
+      blocks.removeLast();
+      (page, kind, titlePage) = (last.page, last.kind, _endedTitlePage);
+    }
     final defaults = _defaultCharacter;
     final paragraph = _defaultParagraph;
     final size = defaults?.halfPoints;
     _spec
-      ..page = _page(_section)
-      ..lastSectionKind = _section.kind
-      ..differentFirstPage = _section.titlePage
+      ..page = page
+      ..lastSectionKind = kind
+      ..differentFirstPage = titlePage
       ..defaultRun = RunFormat(
         font: _documentFont,
         size: size == null ? 12 : size / 2,
@@ -1739,6 +1968,7 @@ class _ParaState {
   var listLevel = 0;
   _PnDef? pn;
   int? outlineLevel;
+  var dropCap = false;
 
   void addTab(int position) {
     if (tabs.length < 64) {
@@ -1778,7 +2008,8 @@ class _ParaState {
     ..listOverride = listOverride
     ..listLevel = listLevel
     ..pn = pn
-    ..outlineLevel = outlineLevel;
+    ..outlineLevel = outlineLevel
+    ..dropCap = dropCap;
 }
 
 class _Section {
@@ -1856,6 +2087,14 @@ class _Group {
   }
 }
 
+/// Adds what fits of [text] to [buffer], which never grows past [max]: one
+/// token can be as long as the file.
+void _appendUpTo(StringBuffer buffer, String text, int max) {
+  final room = max - buffer.length;
+  if (room <= 0) return;
+  buffer.write(text.length <= room ? text : text.substring(0, room));
+}
+
 /// Where the text and control words of a group go.
 abstract class _Destination {
   const _Destination();
@@ -1868,6 +2107,12 @@ abstract class _Destination {
 
   /// The story that receives its pictures.
   RtfStory? get pictureStory => story;
+
+  /// The code page of its text, when the current font's isn't it.
+  int? codePage(RtfReader reader) => null;
+
+  /// Its text shows in the document, unlike names of fonts or styles.
+  bool get showsText => false;
 
   void text(RtfReader reader, String text) {}
 
@@ -1913,6 +2158,9 @@ class _Text extends _Destination {
   final RtfStory story;
 
   @override
+  bool get showsText => true;
+
+  @override
   void text(RtfReader reader, String text) => reader._storyText(story, text);
 }
 
@@ -1922,10 +2170,17 @@ class _HeaderFooter extends _Text {
   final PageVariant variant;
   final bool footer;
 
+  /// The editor has one set of headers and footers: each section's replaces
+  /// the one before, and a later section without one keeps it.
   @override
   void close(RtfReader reader, _Group group) {
     final blocks = reader._finishStory(story, group);
-    (footer ? reader._spec.footers : reader._spec.headers)[variant] = blocks;
+    final stories = footer ? reader._spec.footers : reader._spec.headers;
+    final earlier = stories[variant];
+    if (earlier != null && !sameBlocks(earlier, blocks)) {
+      reader._notice(DocumentNotice.contentNotImported);
+    }
+    stories[variant] = blocks;
   }
 }
 
@@ -1946,7 +2201,8 @@ class _Note extends _Text {
   @override
   void close(RtfReader reader, _Group group) {
     final blocks = reader._finishStory(story, group);
-    final endnote = alternate != reader._endnotesByDefault;
+    // \fet1 means every note is an endnote; \ftnalt marks one in any case.
+    final endnote = alternate || reader._endnotesByDefault;
     anchor.paragraph.add(
       NoteSpec(
         endnote ? NoteKind.endnote : NoteKind.footnote,
@@ -1975,9 +2231,8 @@ class _Bookmark extends _Destination {
   final _name = StringBuffer();
 
   @override
-  void text(RtfReader reader, String text) {
-    if (_name.length < RtfReader._maxNameLength) _name.write(text);
-  }
+  void text(RtfReader reader, String text) =>
+      _appendUpTo(_name, text, RtfReader._maxNameLength);
 
   @override
   void close(RtfReader reader, _Group group) {
@@ -1994,6 +2249,9 @@ class _FontTable extends _Destination {
   int? _codePage;
   final _name = StringBuffer();
 
+  /// `\falt`: another name of the font, often in English.
+  final _alternate = StringBuffer();
+
   @override
   bool word(RtfReader reader, String word, int? parameter) {
     switch (word) {
@@ -2004,41 +2262,69 @@ class _FontTable extends _Destination {
         _charset = parameter;
       case 'cpg':
         _codePage = parameter;
+      case 'falt':
+        reader._begin(_FontAlternate(this));
       default:
         return false;
     }
     return true;
   }
 
+  /// The code page of the font being defined, which its name is written in.
+  int? get _entryCodePage {
+    final codePage = _codePage;
+    if (codePage != null && RtfReader._isReadableCodePage(codePage)) {
+      return codePage;
+    }
+    final charset = _charset;
+    return charset == null ? null : RtfReader._codePageOfCharset(charset);
+  }
+
+  @override
+  int? codePage(RtfReader reader) => _entryCodePage ?? reader._codePage;
+
   @override
   void text(RtfReader reader, String text) {
     for (final part in text.split(';').indexed) {
       if (part.$1 > 0) _commit(reader);
-      if (_name.length < RtfReader._maxNameLength) _name.write(part.$2);
+      _appendUpTo(_name, part.$2, RtfReader._maxNameLength);
     }
   }
 
   void _commit(RtfReader reader) {
     final number = _number;
-    final codePage = _codePage;
-    final charset = _charset;
     if (number != null) {
-      reader._addFont(
-        number,
-        _name.toString().trim(),
-        codePage != null && isKnownCodePage(codePage)
-            ? codePage
-            : (charset == null ? null : codePageOfCharset(charset)),
-      );
+      var name = _name.toString().trim();
+      final alternate = _alternate.toString().trim();
+      if (name.contains(RtfReader._replacement) &&
+          alternate.isNotEmpty &&
+          !alternate.contains(RtfReader._replacement)) {
+        name = alternate;
+      }
+      reader._addFont(number, name, _entryCodePage);
     }
     _number = null;
     _charset = null;
     _codePage = null;
     _name.clear();
+    _alternate.clear();
   }
 
   @override
   void close(RtfReader reader, _Group group) => _commit(reader);
+}
+
+class _FontAlternate extends _Destination {
+  _FontAlternate(this._table);
+
+  final _FontTable _table;
+
+  @override
+  int? codePage(RtfReader reader) => _table.codePage(reader);
+
+  @override
+  void text(RtfReader reader, String text) =>
+      _appendUpTo(_table._alternate, text, RtfReader._maxNameLength);
 }
 
 class _ColorTable extends _Destination {
@@ -2124,9 +2410,8 @@ class _StyleEntry extends _Destination {
   }
 
   @override
-  void text(RtfReader reader, String text) {
-    if (name.length < RtfReader._maxNameLength) name.write(text);
-  }
+  void text(RtfReader reader, String text) =>
+      _appendUpTo(name, text, RtfReader._maxNameLength);
 
   @override
   void close(RtfReader reader, _Group group) =>
@@ -2230,9 +2515,11 @@ class _LevelText extends _Destination {
   final _text = StringBuffer();
 
   @override
-  void text(RtfReader reader, String text) {
-    if (_text.length < RtfReader._maxNameLength) _text.write(text);
-  }
+  bool get showsText => true;
+
+  @override
+  void text(RtfReader reader, String text) =>
+      _appendUpTo(_text, text, RtfReader._maxNameLength);
 
   @override
   void close(RtfReader reader, _Group group) {
@@ -2385,14 +2672,17 @@ class _PnText extends _Destination {
   final bool after;
 
   @override
+  bool get showsText => true;
+
+  @override
   void text(RtfReader reader, String text) {
     final def = _pn.def;
-    final current = after ? def.after : def.before;
-    if (current.length >= 16) return;
+    final kept = StringBuffer(after ? def.after : def.before);
+    _appendUpTo(kept, text, 16);
     if (after) {
-      def.after += text;
+      def.after = kept.toString();
     } else {
-      def.before += text;
+      def.before = kept.toString();
     }
   }
 }
@@ -2412,9 +2702,18 @@ class _Picture extends _Destination {
   int? goalHeight;
   var scaleX = 100;
   var scaleY = 100;
+
+  /// Twips cut off each side; negative ones (a margin) are ignored.
+  var cropLeft = 0;
+  var cropTop = 0;
+  var cropRight = 0;
+  var cropBottom = 0;
   var bitsPerPixel = 1;
   int? widthBytes;
   var oversize = false;
+
+  /// Data came for a picture that has nowhere to go.
+  var lost = false;
 
   var _data = Uint8List(0);
   var _length = 0;
@@ -2454,6 +2753,14 @@ class _Picture extends _Destination {
         scaleX = (parameter ?? 100).clamp(1, 10000);
       case 'picscaley':
         scaleY = (parameter ?? 100).clamp(1, 10000);
+      case 'piccropl':
+        cropLeft = math.max(parameter ?? 0, 0);
+      case 'piccropt':
+        cropTop = math.max(parameter ?? 0, 0);
+      case 'piccropr':
+        cropRight = math.max(parameter ?? 0, 0);
+      case 'piccropb':
+        cropBottom = math.max(parameter ?? 0, 0);
       case 'wbmbitspixel':
         bitsPerPixel = parameter ?? 1;
       case 'wbmwidthbytes':
@@ -2465,7 +2772,7 @@ class _Picture extends _Destination {
   }
 
   void hex(Uint8List source, int start, int end) {
-    if (story == null || oversize) return;
+    if (oversize || (story == null && lost)) return;
     for (var index = start; index < end; index++) {
       final byte = source[index];
       final int digit;
@@ -2478,6 +2785,10 @@ class _Picture extends _Destination {
       } else {
         continue;
       }
+      if (story == null) {
+        lost = true;
+        return;
+      }
       if (_nibble < 0) {
         _nibble = digit;
       } else {
@@ -2489,6 +2800,7 @@ class _Picture extends _Destination {
   }
 
   void binary(Uint8List source, int start, int end) {
+    if (story == null) lost = lost || end > start;
     if (story == null || oversize) return;
     for (var index = start; index < end && !oversize; index++) {
       _append(source[index]);
@@ -2551,10 +2863,11 @@ class _FieldInstruction extends _Destination {
   final _Field _field;
 
   @override
-  void text(RtfReader reader, String text) {
-    final instruction = _field.instruction;
-    if (instruction.length < RtfReader._maxInstruction) instruction.write(text);
-  }
+  bool get showsText => true;
+
+  @override
+  void text(RtfReader reader, String text) =>
+      _appendUpTo(_field.instruction, text, RtfReader._maxInstruction);
 }
 
 class _Shape {
@@ -2568,12 +2881,12 @@ class _Shape {
 }
 
 class _ShapeGroup extends _Destination {
-  _ShapeGroup(this._shape);
+  _ShapeGroup(this.shape);
 
-  final _Shape _shape;
+  final _Shape shape;
 
   @override
-  void close(RtfReader reader, _Group group) => reader._finishShape(_shape);
+  void close(RtfReader reader, _Group group) => reader._finishShape(shape);
 }
 
 class _ShapeProperty extends _Destination {
@@ -2589,9 +2902,8 @@ class _ShapeName extends _Destination {
   final _ShapeProperty _property;
 
   @override
-  void text(RtfReader reader, String text) {
-    if (_property.name.length < 64) _property.name.write(text.trim());
-  }
+  void text(RtfReader reader, String text) =>
+      _appendUpTo(_property.name, text.trim(), 64);
 }
 
 /// A shape property's value; the picture of a picture shape (`pib`) goes
