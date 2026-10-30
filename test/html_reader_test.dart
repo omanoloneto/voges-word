@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_quill/quill_delta.dart';
@@ -9,10 +10,14 @@ import 'package:voges_word/document/embeds.dart';
 import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/docx/docx_builder.dart';
 import 'package:voges_word/docx/docx_codec.dart';
+import 'package:voges_word/docx/docx_numbering.dart';
 import 'package:voges_word/docx/docx_package.dart';
+import 'package:voges_word/docx/word_list_counter.dart';
 import 'package:voges_word/html/css.dart';
 import 'package:voges_word/html/html_codec.dart';
 import 'package:voges_word/html/html_reader.dart';
+import 'package:voges_word/html/markdown_codec.dart';
+import 'package:voges_word/rtf/rtf_codec.dart';
 
 LoadedDocument _decode(Uint8List bytes, [TableStore? tables]) =>
     HtmlCodec(DocxCodec(tables ?? TableStore())).decode(bytes);
@@ -282,6 +287,65 @@ void main() {
     expect('<ol type="a">'.allMatches(html), hasLength(2));
     expect(html, isNot(contains('start=')));
     expect(html, contains('</li>\n<li>Fees'));
+  });
+
+  test('Google Docs lists keep the numbers browsers show in every format, '
+      'though Word counts the levels above a list\'s first item', () {
+    final tables = TableStore();
+    final loaded = _decode(
+      File('test/fixtures/html/google-docs-lists.html').readAsBytesSync(),
+      tables,
+    );
+    final counter = WordListCounter(DocxNumbering.of(loaded.source));
+    String? label(LineBlock line) {
+      counter.count(line);
+      return counter.textOf(line);
+    }
+
+    expect(
+      [
+        for (final line in documentBlocks(loaded.delta).whereType<LineBlock>())
+          if (counter.wordList(line) != null) label(line),
+      ],
+      [
+        // Sub-items go on after an item above them, then the items above
+        // go on.
+        '1.', '(a)', '(b)', '2.', '(c)', '(d)', '3.', '4.', '(a)',
+        // An item before any of the level above, and one that skips a
+        // level, show what browsers show for the levels above.
+        '0.1.', '1.', '1.1.', '1.2.', '1.3.', '2.', '2.3.1.', '2.4.', '3.',
+      ],
+    );
+
+    final html = _write(loaded, tables);
+    expect(html, contains('<ol start="3"><li><b>Disclaimer of warranties'));
+    expect(html, contains('data-marker="0.1.">Before any chapter'));
+    expect(html, contains('data-marker="2.3.1.">Subsection under a skipped'));
+    expect(html, contains('<ol start="3"><li>Third chapter'));
+    final markdown = utf8.decode(
+      MarkdownCodec(
+        DocxCodec(tables),
+      ).encode(loaded.delta, source: loaded.source, look: loaded.look),
+    );
+    expect(
+      markdown,
+      contains(
+        '3) **Disclaimer of warranties**\n4) **Limitation of liability**',
+      ),
+    );
+    expect(markdown, contains('\n3. Third chapter\n'));
+    final rtf = latin1.decode(
+      RtfCodec(
+        DocxCodec(tables),
+      ).encode(loaded.delta, source: loaded.source, look: loaded.look),
+    );
+    expect(
+      rtf,
+      contains(r'{\listtext\f0 3.\tab}{\b Disclaimer of warranties}'),
+    );
+    expect(rtf, contains(r'{\listtext\f0 0.1.\tab}Before any chapter'));
+    expect(rtf, contains(r'{\listtext\f0 2.3.1.\tab}Subsection under'));
+    expect(rtf, contains(r'{\listtext\f0 3.\tab}Third chapter'));
   });
 
   test('a page that declares UTF-8 keeps it despite a stray byte', () {

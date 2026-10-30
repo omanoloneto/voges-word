@@ -350,28 +350,62 @@ class _SharedList {
   /// Number of the last item of each level, as Word counts them.
   final counts = List<int?>.filled(9, null);
 
+  /// Number of the last item of each level, as browsers show it: they don't
+  /// start a level over after an item above it, and show 0 for a level
+  /// before its first item.
+  final shown = List<int?>.filled(9, null);
+
   /// An `<ol>` that starts [level] at [start]: when Word's numbering would
   /// give another number, the items go on in a new Word list.
   void startAt(int level, int start) {
-    final next = counts[level] == null ? starts[level] : counts[level]! + 1;
-    if (start == next) return;
-    if (numId != null) {
-      for (var upper = 0; upper < level; upper++) {
-        if (counts[upper] case final count?) starts[upper] = count + 1;
-      }
-      for (var deeper = level + 1; deeper < 9; deeper++) {
-        starts[deeper] = levels[deeper].start;
-      }
-      counts.fillRange(0, 9, null);
-      numId = null;
-    }
+    if (start == _next(level)) return;
+    if (numId != null) _end(level);
     starts[level] = start;
   }
 
-  /// Counts an item of [level] as Word does: deeper levels start over.
+  /// Readies the Word list for an item of [level]. Word shows the levels
+  /// above a list's first item at their start and counts them there, so a
+  /// new list starts them at the numbers the page shows for them; an item
+  /// whose number would show them otherwise goes on in a new list.
+  void prepare(int level) {
+    if (numId != null) {
+      final text = levels[level].text;
+      final differs = Iterable.generate(level).any(
+        (upper) =>
+            text.contains('%${upper + 1}') &&
+            (counts[upper] ?? starts[upper]) != (shown[upper] ?? 0),
+      );
+      if (!differs) return;
+      final next = _next(level);
+      _end(level);
+      starts[level] = next;
+    }
+    for (var upper = 0; upper < level; upper++) {
+      starts[upper] = shown[upper] ?? 0;
+    }
+  }
+
+  /// Counts an item of [level] as Word does: the levels above that haven't
+  /// counted count at their start, and deeper levels start over.
   void count(int level) {
-    counts[level] = counts[level] == null ? starts[level] : counts[level]! + 1;
+    for (var upper = 0; upper < level; upper++) {
+      counts[upper] ??= starts[upper];
+    }
+    counts[level] = shown[level] = _next(level);
     counts.fillRange(level + 1, 9, null);
+  }
+
+  int _next(int level) =>
+      counts[level] == null ? starts[level] : counts[level]! + 1;
+
+  /// Ends the Word list: the next one starts the levels below [level] at
+  /// their own start.
+  void _end(int level) {
+    for (var deeper = level + 1; deeper < 9; deeper++) {
+      starts[deeper] = levels[deeper].start;
+    }
+    counts.fillRange(0, 9, null);
+    numId = null;
   }
 }
 
@@ -1547,6 +1581,7 @@ class _Reader {
     }
     if (list.format == NumberFormat.none) return null;
     if (list.shared case final shared?) {
+      shared.prepare(list.level);
       shared.numId ??= _addList(
         ListSpec([
           for (final (level, definition) in shared.levels.indexed)
