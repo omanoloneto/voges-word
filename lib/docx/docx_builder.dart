@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -540,7 +541,8 @@ class DocumentSpec {
 
   final _lists = <ListSpec>[];
 
-  List<ListSpec> get lists => List.unmodifiable(_lists);
+  /// A view, not a copy: the builder reads it for every list paragraph.
+  List<ListSpec> get lists => UnmodifiableListView(_lists);
 
   /// Returns the id for [ListRef].
   int addList(ListSpec list) {

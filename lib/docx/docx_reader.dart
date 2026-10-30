@@ -22,6 +22,9 @@ class DocxReader {
   final DocxPackage package;
   final TableStore tables;
 
+  /// Each picture's data URI, made once however often the picture appears.
+  final _pictures = <String, String>{};
+
   LoadedDocument read() {
     final path = package.mainDocumentPath;
     final document = package.xml(path)!;
@@ -54,11 +57,12 @@ class DocxReader {
       numbering: DocxNumbering.parse(_xmlOf(partOf('numbering'))),
       relationships: {for (final r in relationships) r.id: r},
       tables: tables,
+      pictures: _pictures,
     );
 
-    final delta = Delta();
+    final delta = _DeltaBuilder();
     _BlockReader(context, delta).read(body.childElements);
-    if (delta.isEmpty || !_endsWithNewline(delta)) delta.insert('\n');
+    delta.endWithNewline();
 
     final section = x.child(body, 'sectPr');
     final firstSection = x
@@ -67,7 +71,7 @@ class DocxReader {
         .nonNulls
         .firstOrNull;
     return LoadedDocument(
-      delta: delta,
+      delta: delta.build(),
       look: _look(styles, x, section),
       source: package,
       notices: context.notices.toList(),
@@ -148,12 +152,13 @@ class DocxReader {
       numbering: main.numbering,
       relationships: {for (final r in package.relationships(path)) r.id: r},
       tables: tables,
+      pictures: _pictures,
     );
-    final delta = Delta();
+    final delta = _DeltaBuilder();
     _BlockReader(context, delta).read(root.childElements);
-    if (delta.isEmpty || !_endsWithNewline(delta)) delta.insert('\n');
+    delta.endWithNewline();
     main.notices.addAll(context.notices);
-    return HeaderFooterStory(delta: delta, partPath: path);
+    return HeaderFooterStory(delta: delta.build(), partPath: path);
   }
 
   /// The footnotes or endnotes ([kind] is `footnote` or `endnote`) by id,
@@ -185,23 +190,24 @@ class DocxReader {
       numbering: DocxNumbering.parse(_xmlOf(partOf('numbering'))),
       relationships: {for (final r in package.relationships(path)) r.id: r},
       tables: tables,
+      pictures: _pictures,
     );
     final notes = <String, Delta>{};
     for (final note in root.childElements) {
       final id = x.attr(note, 'id');
       if (!x.isW(note, kind) || id == null) continue;
-      final delta = Delta();
+      final delta = _DeltaBuilder();
       _BlockReader(context, delta).read(note.childElements);
-      notes[id] = _withoutNoteMark(delta);
+      notes[id] = _withoutNoteMark(delta.build());
     }
     return notes;
   }
 
   static Delta _withoutNoteMark(Delta delta) {
-    final out = Delta();
+    final out = _DeltaBuilder();
     var leading = true;
     var marked = false;
-    for (final op in delta.toList()) {
+    for (final op in delta.operations) {
       final data = op.data;
       if (leading && data is Map) {
         final value = data[EmbedTypes.opaqueInline];
@@ -224,16 +230,11 @@ class DocxReader {
       leading = false;
       out.push(op);
     }
-    if (out.isEmpty || !_endsWithNewline(out)) out.insert('\n');
-    return out;
+    out.endWithNewline();
+    return out.build();
   }
 
   XmlDocument? _xmlOf(String? path) => path == null ? null : package.xml(path);
-
-  static bool _endsWithNewline(Delta delta) {
-    final last = delta.last.data;
-    return last is String && last.endsWith('\n');
-  }
 
   static DocumentLook _look(DocxStyles styles, WordXml x, XmlElement? section) {
     TextLook lookOf(RunProps run, ParagraphProps paragraph) => TextLook(
@@ -300,6 +301,7 @@ class _ReadContext {
     required this.numbering,
     required this.relationships,
     required this.tables,
+    required this.pictures,
   }) : normalRun = styles.runProps(null),
        normalParagraph = styles.paragraphProps(null),
        listParagraphStyleId = styles.idByName('List Paragraph');
@@ -311,6 +313,7 @@ class _ReadContext {
   final DocxNumbering numbering;
   final Map<String, Relationship> relationships;
   final TableStore tables;
+  final Map<String, String> pictures;
   final RunProps normalRun;
   final ParagraphProps normalParagraph;
   final String? listParagraphStyleId;
@@ -371,7 +374,7 @@ class _BlockReader {
   _BlockReader(this.c, this.delta);
 
   final _ReadContext c;
-  final Delta delta;
+  final _DeltaBuilder delta;
   final _pendingBookmarks = <String>[];
 
   WordXml get x => c.x;
@@ -421,12 +424,10 @@ class _BlockReader {
 
     final inline = _InlineReader(
       c,
+      delta,
       paragraphStyleId: styleId,
       baseline: header != null ? c.styles.runProps(styleId) : c.normalRun,
     )..readParagraph(paragraph);
-    for (final operation in inline.ops.toList()) {
-      delta.push(operation);
-    }
 
     final bookmarks = [..._pendingBookmarks, ...inline.bookmarks];
     _pendingBookmarks.clear();
@@ -439,7 +440,7 @@ class _BlockReader {
     bool differs(double a, double b) => (a - b).abs() > 0.05;
     final attributes = <String, dynamic>{
       'header': ?header,
-      if (list != null) 'list': list == ListKind.bullet ? 'bullet' : 'ordered',
+      if (list != null) 'list': list.name,
       if (indentLevel > 0) 'indent': math.min(indentLevel, 8),
       if (props.align != 'left') 'align': props.align,
       if (!props.exactLineSpacing &&
@@ -574,14 +575,12 @@ class _BlockReader {
       for (final cell in _unwrap(row, 'tc')) {
         final cellProperties = x.child(cell, 'tcPr');
         final merge = x.child(cellProperties, 'vMerge');
-        final content = Delta();
+        final content = _DeltaBuilder();
         _BlockReader(c, content).read(cell.childElements);
-        if (content.isEmpty || !DocxReader._endsWithNewline(content)) {
-          content.insert('\n');
-        }
+        content.endWithNewline();
         cells.add(
           TableCellModel(
-            controller: c.tables.newCellController(content),
+            controller: c.tables.newCellController(content.build()),
             propertiesXml: cellProperties?.toXmlString(),
             gridSpan:
                 int.tryParse(x.childVal(cellProperties, 'gridSpan') ?? '') ?? 1,
@@ -655,15 +654,18 @@ String? _hexOrNull(String? value) {
 
 class _InlineReader {
   _InlineReader(
-    this.c, {
+    this.c,
+    this.ops, {
     required this.paragraphStyleId,
     required this.baseline,
   });
 
   final _ReadContext c;
+
+  /// The content of the story being read, which the runs are added to.
+  final _DeltaBuilder ops;
   final String? paragraphStyleId;
   final RunProps baseline;
-  final ops = Delta();
   final bookmarks = <String>[];
 
   List<XmlElement>? _field;
@@ -897,7 +899,12 @@ class _InlineReader {
       final bytes = c.package.parts[path];
       if (bytes != null) {
         ops.insert(
-          {EmbedTypes.image: dataUri(bytes, path)},
+          {
+            EmbedTypes.image: c.pictures.putIfAbsent(
+              path,
+              () => dataUri(bytes, path),
+            ),
+          },
           {
             'width': formatPoints((width * 100).round() / 100),
             'height': formatPoints((height * 100).round() / 100),
@@ -984,3 +991,58 @@ const _modeledRunProperties = {
   'shd',
   'vertAlign',
 };
+
+/// Makes the same Delta as [Delta.insert] and [Delta.push], which join
+/// neighboring text with the same attributes, in linear time: [Delta.push]
+/// copies all the text joined so far on each join.
+class _DeltaBuilder {
+  final _operations = <Operation>[];
+  final _text = StringBuffer();
+
+  /// The last text operation, whose text ends [_text].
+  Operation? _tail;
+
+  void insert(Object data, [Map<String, dynamic>? attributes]) {
+    if (data is String && data.isEmpty) return;
+    push(Operation.insert(data, attributes));
+  }
+
+  void push(Operation operation) {
+    if (operation.isEmpty) return;
+    final data = operation.data;
+    final tail = _tail;
+    if (data is String) {
+      if (tail == null || !tail.hasSameAttributes(operation)) _flush();
+      _text.write(data);
+      _tail = operation;
+    } else {
+      _flush();
+      _operations.add(operation);
+    }
+  }
+
+  /// Ends the content with a line, as documents and cells must.
+  void endWithNewline() {
+    final tail = _tail;
+    final last = tail?.data ?? _operations.lastOrNull?.data;
+    if (last is! String || !last.endsWith('\n')) insert('\n');
+  }
+
+  Delta build() {
+    _flush();
+    return Delta.fromOperations(_operations);
+  }
+
+  void _flush() {
+    final tail = _tail;
+    if (tail == null) return;
+    final text = _text.toString();
+    _operations.add(
+      text.length == tail.length
+          ? tail
+          : Operation.insert(text, tail.attributes),
+    );
+    _text.clear();
+    _tail = null;
+  }
+}

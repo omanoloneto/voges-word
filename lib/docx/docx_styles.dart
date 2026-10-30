@@ -80,56 +80,108 @@ class RunProps {
     );
   }
 
-  RunProps merge(XmlElement? rPr, WordXml x, ThemeFonts theme) {
-    if (rPr == null) return this;
-    var result = this;
+  RunProps merge(XmlElement? rPr, WordXml x, ThemeFonts theme) =>
+      rPr == null ? this : _RunLayer.of(rPr, x, theme).applyTo(this);
+}
+
+/// What one w:rPr sets; null fields keep the value below.
+class _RunLayer {
+  const _RunLayer({
+    this.font,
+    this.bold,
+    this.italic,
+    this.underline,
+    this.strike,
+    this.size,
+    this.color,
+    this.background,
+    this.script,
+  });
+
+  factory _RunLayer.of(XmlElement? rPr, WordXml x, ThemeFonts theme) {
+    if (rPr == null) return empty;
     final fonts = x.child(rPr, 'rFonts');
-    if (fonts != null) {
-      final themed = x.attr(fonts, 'asciiTheme') ?? x.attr(fonts, 'hAnsiTheme');
-      final font = themed != null
-          ? theme.resolve(themed)
-          : x.attr(fonts, 'ascii') ?? x.attr(fonts, 'hAnsi');
-      if (font != null) result = result.copyWith(font: font);
-    }
-    final bold = x.onOff(x.child(rPr, 'b'));
-    final italic = x.onOff(x.child(rPr, 'i'));
-    final strike =
-        x.onOff(x.child(rPr, 'strike')) ?? x.onOff(x.child(rPr, 'dstrike'));
+    final themed = x.attr(fonts, 'asciiTheme') ?? x.attr(fonts, 'hAnsiTheme');
     final underline = x.child(rPr, 'u');
     final size = double.tryParse(x.childVal(rPr, 'sz') ?? '');
-    result = result.copyWith(
-      bold: bold,
-      italic: italic,
-      strike: strike,
+    final color = x.child(rPr, 'color');
+    final highlight = x.childVal(rPr, 'highlight');
+    final shading = x.child(rPr, 'shd');
+    final vertical = x.childVal(rPr, 'vertAlign');
+    return _RunLayer(
+      font: themed != null
+          ? theme.resolve(themed)
+          : x.attr(fonts, 'ascii') ?? x.attr(fonts, 'hAnsi'),
+      bold: x.onOff(x.child(rPr, 'b')),
+      italic: x.onOff(x.child(rPr, 'i')),
+      strike:
+          x.onOff(x.child(rPr, 'strike')) ?? x.onOff(x.child(rPr, 'dstrike')),
       underline: underline == null
           ? null
           : (x.val(underline) ?? 'single') != 'none',
       size: size == null ? null : size / 2,
+      color: color == null ? null : (_hexColor(x.val(color)),),
+      background: highlight != null
+          ? (highlightColors[highlight],)
+          : shading != null
+          ? (_hexColor(x.attr(shading, 'fill')),)
+          : null,
+      script: vertical == null
+          ? null
+          : (
+              switch (vertical) {
+                'superscript' => 'super',
+                'subscript' => 'sub',
+                _ => null,
+              },
+            ),
     );
-    final color = x.child(rPr, 'color');
-    if (color != null) {
-      result = result.copyWith(color: () => _hexColor(x.val(color)));
-    }
-    final highlight = x.childVal(rPr, 'highlight');
-    final shading = x.child(rPr, 'shd');
-    if (highlight != null) {
-      result = result.copyWith(background: () => highlightColors[highlight]);
-    } else if (shading != null) {
-      result = result.copyWith(
-        background: () => _hexColor(x.attr(shading, 'fill')),
-      );
-    }
-    final vertical = x.childVal(rPr, 'vertAlign');
-    if (vertical != null) {
-      result = result.copyWith(
-        script: () => switch (vertical) {
-          'superscript' => 'super',
-          'subscript' => 'sub',
-          _ => null,
-        },
-      );
-    }
-    return result;
+  }
+
+  static const empty = _RunLayer();
+
+  final String? font;
+  final bool? bold;
+  final bool? italic;
+  final bool? underline;
+  final bool? strike;
+  final double? size;
+
+  /// Set values that may be automatic (null).
+  final (String?,)? color;
+  final (String?,)? background;
+  final (String?,)? script;
+
+  /// This layer's values where it sets them, [below]'s elsewhere.
+  _RunLayer over(_RunLayer below) => _RunLayer(
+    font: font ?? below.font,
+    bold: bold ?? below.bold,
+    italic: italic ?? below.italic,
+    underline: underline ?? below.underline,
+    strike: strike ?? below.strike,
+    size: size ?? below.size,
+    color: color ?? below.color,
+    background: background ?? below.background,
+    script: script ?? below.script,
+  );
+
+  RunProps applyTo(RunProps props) {
+    final (color, background, script) = (
+      this.color,
+      this.background,
+      this.script,
+    );
+    return props.copyWith(
+      font: font,
+      bold: bold,
+      italic: italic,
+      underline: underline,
+      strike: strike,
+      size: size,
+      color: color == null ? null : () => color.$1,
+      background: background == null ? null : () => background.$1,
+      script: script == null ? null : () => script.$1,
+    );
   }
 }
 
@@ -361,11 +413,22 @@ class DocxStyles {
   final XmlElement? _runDefaults;
   final XmlElement? _paragraphDefaults;
 
+  // Each style is resolved once: documents ask for the same ones on every
+  // paragraph and run.
+  late final String? defaultParagraphStyleId = _defaultOf('paragraph');
+  late final String? defaultCharacterStyleId = _defaultOf('character');
+  late final _ids = _idsByName();
+  late final _baseRun = const RunProps().merge(_runDefaults, _x, _theme);
+  late final _baseParagraph = const ParagraphProps().merge(
+    _paragraphDefaults,
+    _x,
+  );
+  final _runLayers = <String, _RunLayer>{};
+  final _runs = <(String?, String?), RunProps>{};
+  final _paragraphs = <String, ParagraphProps>{};
+  final _bordered = <String, bool>{};
+
   ThemeFonts get theme => _theme;
-
-  String? get defaultParagraphStyleId => _defaultOf('paragraph');
-
-  String? get defaultCharacterStyleId => _defaultOf('character');
 
   String? _defaultOf(String type) {
     for (final style in _styles.values) {
@@ -374,48 +437,68 @@ class DocxStyles {
     return null;
   }
 
+  /// The first style of each type and name, as Word finds them.
+  Map<(String, String), String> _idsByName() {
+    final ids = <(String, String), String>{};
+    for (final style in _styles.values) {
+      ids.putIfAbsent((style.type, style.name), () => style.id);
+    }
+    return ids;
+  }
+
   bool contains(String id) => _styles.containsKey(id);
 
-  String? idByName(String name, {String type = 'paragraph'}) {
-    final lower = name.toLowerCase();
-    for (final style in _styles.values) {
-      if (style.type == type && style.name == lower) return style.id;
-    }
-    return null;
-  }
+  String? idByName(String name, {String type = 'paragraph'}) =>
+      _ids[(type, name.toLowerCase())];
 
   int? headingLevel(String? styleId) {
     final style = _styles[styleId];
     if (style == null || style.type != 'paragraph') return null;
-    final match = RegExp(r'^heading (\d)$').firstMatch(style.name);
+    final match = _headingName.firstMatch(style.name);
     return match == null ? null : int.parse(match.group(1)!);
   }
 
   String? headingStyleId(int level) => idByName('heading $level');
 
-  RunProps runProps(String? paragraphStyleId, [String? characterStyleId]) {
-    var props = const RunProps().merge(_runDefaults, _x, _theme);
-    for (final style in _chain(paragraphStyleId ?? defaultParagraphStyleId)) {
-      props = props.merge(_x.child(style.element, 'rPr'), _x, _theme);
-    }
-    for (final style in _chain(characterStyleId)) {
-      props = props.merge(_x.child(style.element, 'rPr'), _x, _theme);
-    }
-    return props;
-  }
+  RunProps runProps(String? paragraphStyleId, [String? characterStyleId]) =>
+      _runs[(
+        paragraphStyleId,
+        characterStyleId,
+      )] ??= _runLayer(characterStyleId)
+          .over(_runLayer(paragraphStyleId ?? defaultParagraphStyleId))
+          .applyTo(_baseRun);
 
-  ParagraphProps paragraphProps(String? paragraphStyleId) {
-    var props = const ParagraphProps().merge(_paragraphDefaults, _x);
-    for (final style in _chain(paragraphStyleId ?? defaultParagraphStyleId)) {
-      props = props.merge(_x.child(style.element, 'pPr'), _x);
-    }
-    return props;
-  }
+  _RunLayer _runLayer(String? styleId) =>
+      _resolve(
+        styleId,
+        _runLayers,
+        (style, below) => _RunLayer.of(
+          _x.child(style.element, 'rPr'),
+          _x,
+          _theme,
+        ).over(below ?? _RunLayer.empty),
+      ) ??
+      _RunLayer.empty;
+
+  ParagraphProps paragraphProps(String? paragraphStyleId) =>
+      _resolve(
+        paragraphStyleId ?? defaultParagraphStyleId,
+        _paragraphs,
+        (style, below) =>
+            (below ?? _baseParagraph).merge(_x.child(style.element, 'pPr'), _x),
+      ) ??
+      _baseParagraph;
 
   /// Tables with no borders of their own or from a style show only gridlines.
-  bool tableStyleHasBorders(String? styleId) => _chain(
-    styleId,
-  ).any((style) => hasVisibleBorders(_x.child(style.element, 'tblPr')));
+  bool tableStyleHasBorders(String? styleId) =>
+      _resolve(
+        styleId,
+        _bordered,
+        (style, below) =>
+            hasVisibleBorders(_x.child(style.element, 'tblPr')) ||
+            (below ?? false),
+      ) ??
+      false;
 
   bool hasVisibleBorders(XmlElement? tableProperties) {
     final borders = _x.child(tableProperties, 'tblBorders');
@@ -426,14 +509,58 @@ class DocxStyles {
     });
   }
 
-  Iterable<_Style> _chain(String? styleId) {
-    final chain = <_Style>[];
-    final seen = <String>{};
-    var current = styleId == null ? null : _styles[styleId];
-    while (current != null && seen.add(current.id)) {
-      chain.add(current);
-      current = current.basedOn == null ? null : _styles[current.basedOn];
+  /// The value of [styleId] that [combine] makes from a style and the value
+  /// of the style it's based on (null for none), worked out once per style
+  /// and kept in [cache]. A style the chain comes back to ends it: each style
+  /// of a loop takes the others' values only where it sets none.
+  T? _resolve<T extends Object>(
+    String? styleId,
+    Map<String, T> cache,
+    T Function(_Style style, T? below) combine,
+  ) {
+    final first = styleId == null ? null : _styles[styleId];
+    if (first == null) return null;
+    if (cache[first.id] case final known?) return known;
+
+    final path = <_Style>[];
+    final positions = <String, int>{};
+    T? below;
+    var style = first;
+    while (true) {
+      if (cache[style.id] case final known?) {
+        below = known;
+        break;
+      }
+      if (positions[style.id] case final loop?) {
+        // The loop's first style takes all the others; each of the others
+        // then is its own values over the next one's.
+        var value = combine(path.last, null);
+        for (var index = path.length - 2; index >= loop; index--) {
+          value = combine(path[index], value);
+        }
+        final start = value;
+        cache[path[loop].id] = start;
+        for (var index = path.length - 1; index > loop; index--) {
+          value = combine(path[index], value);
+          cache[path[index].id] = value;
+        }
+        below = start;
+        path.length = loop;
+        break;
+      }
+      positions[style.id] = path.length;
+      path.add(style);
+      final base = style.basedOn == null ? null : _styles[style.basedOn];
+      if (base == null) break;
+      style = base;
     }
-    return chain.reversed;
+    for (final based in path.reversed) {
+      final value = combine(based, below);
+      cache[based.id] = value;
+      below = value;
+    }
+    return cache[first.id];
   }
 }
+
+final _headingName = RegExp(r'^heading (\d)$');

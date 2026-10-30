@@ -64,6 +64,8 @@ class DocxWriter {
     final marginRight = double.tryParse(x.attr(margins, 'right') ?? '') ?? 1701;
 
     final takenMedia = {...package.parts.keys};
+    // Headers and footers add their lists to the body's numbering part.
+    final numberingPlan = NumberingPlan(numbering);
     _WriteContext contextFor(
       List<Relationship> relationships, {
       int bookmarkStart = 100000,
@@ -71,6 +73,7 @@ class DocxWriter {
       packageId: package.id,
       styles: styles,
       numbering: numbering,
+      numberingPlan: numberingPlan,
       usedRelationshipIds: {for (final r in relationships) r.id},
       existingHyperlinks: {
         for (final r in relationships)
@@ -108,12 +111,9 @@ class DocxWriter {
       document.toXmlString().replaceFirst('<!--vw-body-->', bodyXml),
     );
 
-    if (!context.numberingPlan.isEmpty) {
+    if (!numberingPlan.isEmpty) {
       final target = numberingPath ?? 'word/numbering.xml';
-      package.setText(
-        target,
-        context.numberingPlan.apply(package.text(target)),
-      );
+      package.setText(target, numberingPlan.apply(package.text(target)));
       if (numberingPath == null) {
         context.newRelationships.add(
           Relationship(
@@ -394,6 +394,7 @@ class _WriteContext {
     required this.packageId,
     required this.styles,
     required this.numbering,
+    required this.numberingPlan,
     required this.usedRelationshipIds,
     required this.existingHyperlinks,
     required this.tables,
@@ -401,7 +402,6 @@ class _WriteContext {
     required this.takenMedia,
     int bookmarkStart = 100000,
   }) : _bookmarkId = bookmarkStart,
-       numberingPlan = NumberingPlan(numbering),
        normalRun = styles.runProps(null),
        normalParagraph = styles.paragraphProps(null),
        listParagraphStyleId = styles.idByName('List Paragraph'),
@@ -641,10 +641,11 @@ class _BlockWriter {
 
   void _paragraph(List<_Segment> segments, Map<String, dynamic> attributes) {
     final header = attributes['header'] as int?;
-    final listValue = attributes['list'] as String?;
-    final list = switch (listValue) {
-      'ordered' => ListKind.ordered,
+    final list = switch (attributes['list']) {
       null => null,
+      'ordered' => ListKind.ordered,
+      'checked' => ListKind.checked,
+      'unchecked' => ListKind.unchecked,
       _ => ListKind.bullet,
     };
     final indent = math.min((attributes['indent'] as num?)?.toInt() ?? 0, 8);
@@ -761,7 +762,7 @@ class _BlockWriter {
       if (kind == ListKind.ordered) _orderedListNum = null;
       return originalId;
     }
-    if (kind == ListKind.bullet) return c.numberingPlan.bulletList();
+    if (kind != ListKind.ordered) return c.numberingPlan.sharedList(kind);
     return _orderedListNum ??= c.numberingPlan.newOrderedList();
   }
 
