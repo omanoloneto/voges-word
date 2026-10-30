@@ -1251,4 +1251,354 @@ void main() {
       }
     }
   });
+
+  test('numbered headings of an OpenDocument file keep the outline numbering '
+      'when saved again', () {
+    const heading1 = 'text:style-name="Heading_20_1" text:outline-level="1"';
+    const heading2 = 'text:style-name="Heading_20_2" text:outline-level="2"';
+    String alignment(String followedBy) =>
+        '<style:list-level-properties '
+        'text:list-level-position-and-space-mode="label-alignment">'
+        '<style:list-level-label-alignment text:label-followed-by="$followedBy"'
+        '${followedBy == 'listtab' ? ' text:list-tab-stop-position="0pt"' : ''}'
+        ' fo:text-indent="0pt" fo:margin-left="0pt"/>'
+        '</style:list-level-properties>';
+    final codec = OdtCodec(DocxCodec(TableStore()));
+    final opened = codec.decode(
+      odtFile(
+        styles:
+            '$libreOfficeStyles<text:outline-style style:name="Outline">'
+            '<text:outline-level-style text:level="1" style:num-prefix="Part " '
+            'style:num-suffix="." style:num-format="1">${alignment('space')}'
+            '</text:outline-level-style>'
+            '<text:outline-level-style text:level="2" style:num-format="1" '
+            'text:display-levels="2">${alignment('listtab')}'
+            '</text:outline-level-style>'
+            '<text:outline-level-style text:level="3" style:num-format=""/>'
+            '</text:outline-style>',
+        automatic:
+            '<style:style style:name="P1" style:family="paragraph" '
+            'style:parent-style-name="Heading_20_1" style:list-style-name=""/>',
+        body:
+            '<text:h $heading1>Introduction</text:h><text:p>para</text:p>'
+            '<text:h $heading2>Scope</text:h>'
+            '<text:h text:style-name="P1" text:outline-level="1">No list</text:h>'
+            '<text:h $heading1>Methods</text:h>'
+            '<text:h $heading2 text:restart-numbering="true" '
+            'text:start-value="5">Fifth</text:h>'
+            '<text:h $heading2>Sixth</text:h>'
+            '<text:h $heading1>Results</text:h>',
+      ),
+    );
+    final bytes = codec.encode(
+      opened.delta,
+      source: opened.source,
+      look: opened.look,
+    );
+    final content = _xml(bytes, 'content.xml');
+    final styles = _xml(bytes, 'styles.xml');
+
+    // LibreOffice numbers headings outside lists by the outline style.
+    expect(_elements(content, 'text:list'), isEmpty);
+    const numbered = [
+      'Introduction',
+      'Scope',
+      'Methods',
+      'Fifth',
+      'Sixth',
+      'Results',
+    ];
+    for (final text in numbered) {
+      final heading = _paragraphWith(content, text);
+      expect(heading.parentElement?.name.qualified, 'office:text');
+      expect(
+        heading.getAttribute('text:restart-numbering'),
+        text == 'Fifth' ? 'true' : isNull,
+        reason: text,
+      );
+      expect(
+        heading.getAttribute('text:start-value'),
+        text == 'Fifth' ? '5' : isNull,
+        reason: text,
+      );
+    }
+    String? listStyle(String text) {
+      final name = _paragraphWith(
+        content,
+        text,
+      ).getAttribute('text:style-name');
+      return _elements(content, 'style:style')
+          .where((style) => style.getAttribute('style:name') == name)
+          .firstOrNull
+          ?.getAttribute('style:list-style-name');
+    }
+
+    expect(listStyle('No list'), '');
+    expect(listStyle('Introduction'), isNull);
+
+    XmlElement level(int level) => _elements(
+      styles,
+      'text:outline-level-style',
+    ).firstWhere((style) => style.getAttribute('text:level') == '$level');
+    expect(level(1).getAttribute('style:num-format'), '1');
+    expect(level(1).getAttribute('style:num-prefix'), 'Part ');
+    expect(level(1).getAttribute('style:num-suffix'), '.');
+    expect(level(1).getAttribute('text:display-levels'), isNull);
+    expect(level(2).getAttribute('style:num-format'), '1');
+    expect(level(2).getAttribute('text:display-levels'), '2');
+    expect(level(3).getAttribute('style:num-format'), '');
+
+    final reopened = codec.decode(bytes);
+    for (final text in [...numbered, 'No list', 'para']) {
+      expect(
+        lineOf(reopened.delta, text),
+        lineOf(opened.delta, text),
+        reason: text,
+      );
+    }
+    expect(
+      (reopened.source! as DocxPackage).text('word/numbering.xml'),
+      (opened.source! as DocxPackage).text('word/numbering.xml'),
+    );
+  });
+
+  test('Word heading numbering is saved as the outline numbering', () {
+    const styles =
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:styles $_wordNamespaces>'
+        '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+        '<w:name w:val="Normal"/></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Heading1">'
+        '<w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr>'
+        '<w:numPr><w:numId w:val="1"/></w:numPr><w:outlineLvl w:val="0"/>'
+        '</w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Heading2">'
+        '<w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:pPr>'
+        '<w:numPr><w:ilvl w:val="1"/><w:numId w:val="1"/></w:numPr>'
+        '<w:outlineLvl w:val="1"/></w:pPr></w:style></w:styles>';
+    const numbering =
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:numbering $_wordNamespaces><w:abstractNum w:abstractNumId="10">'
+        '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>'
+        '<w:pStyle w:val="Heading1"/><w:suff w:val="space"/>'
+        '<w:lvlText w:val="%1."/><w:lvlJc w:val="left"/>'
+        '<w:pPr><w:ind w:left="432" w:hanging="432"/></w:pPr></w:lvl>'
+        '<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/>'
+        '<w:pStyle w:val="Heading2"/><w:lvlText w:val="%1.%2."/>'
+        '<w:lvlJc w:val="left"/>'
+        '<w:pPr><w:ind w:left="576" w:hanging="576"/></w:pPr></w:lvl>'
+        '<w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="upperLetter"/>'
+        '<w:lvlText w:val="Annex %3"/><w:lvlJc w:val="left"/></w:lvl>'
+        '</w:abstractNum>'
+        '<w:num w:numId="1"><w:abstractNumId w:val="10"/></w:num>'
+        '<w:num w:numId="2"><w:abstractNumId w:val="10"/>'
+        '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="7"/></w:lvlOverride>'
+        '</w:num></w:numbering>';
+    String heading(int level, String content, [String numbering = '']) =>
+        _wordParagraph(
+          '<w:pPr><w:pStyle w:val="Heading$level"/>$numbering</w:pPr>$content',
+        );
+
+    final bytes = _docxToOdt(
+      _docxFile(
+        '${heading(1, _wordRun('Scope'))}${heading(2, _wordRun('Terms'))}'
+        '${_wordParagraph(_wordRun('Body text'))}'
+        '${heading(1, '${_wordRun('Use')}<w:r><w:br w:type="page"/></w:r>${_wordRun('more of use')}')}'
+        '${heading(2, _wordRun('Limits'))}'
+        '${heading(1, _wordRun('Annex'), '<w:numPr><w:numId w:val="2"/></w:numPr>')}'
+        '${heading(1, _wordRun('Appendix'), '<w:numPr><w:numId w:val="0"/></w:numPr>')}',
+        relationships: [('rIdNumbering', 'numbering', 'numbering.xml')],
+        parts: {'word/styles.xml': styles, 'word/numbering.xml': numbering},
+      ),
+    );
+    final content = _xml(bytes, 'content.xml');
+    final outline = _xml(bytes, 'styles.xml');
+
+    expect(_elements(content, 'text:list'), isEmpty);
+    String? attribute(String text, String name) =>
+        _paragraphWith(content, text).getAttribute(name);
+    for (final text in ['Scope', 'Terms', 'Use', 'Limits']) {
+      expect(attribute(text, 'text:restart-numbering'), isNull, reason: text);
+    }
+    // Word starts its second list at 7, where the outline would show 3.
+    expect(attribute('Annex', 'text:restart-numbering'), 'true');
+    expect(attribute('Annex', 'text:start-value'), '7');
+    String? listStyle(String text) => _elements(content, 'style:style')
+        .where(
+          (style) =>
+              style.getAttribute('style:name') ==
+              attribute(text, 'text:style-name'),
+        )
+        .firstOrNull
+        ?.getAttribute('style:list-style-name');
+    expect(listStyle('Appendix'), '');
+    expect(listStyle('more of use'), '', reason: 'numbered once');
+    expect(listStyle('Use'), isNull);
+
+    XmlElement level(int level) => _elements(
+      outline,
+      'text:outline-level-style',
+    ).firstWhere((style) => style.getAttribute('text:level') == '$level');
+    Map<String, String> attributes(XmlElement element) => {
+      for (final attribute in element.attributes)
+        attribute.name.qualified: attribute.value,
+    };
+    Map<String, String> alignment(int number) => attributes(
+      _elements(level(number), 'style:list-level-label-alignment').single,
+    );
+
+    expect(attributes(level(1)), {
+      'text:level': '1',
+      'style:num-suffix': '.',
+      'style:num-format': '1',
+    });
+    expect(alignment(1), {
+      'text:label-followed-by': 'space',
+      'fo:text-indent': '-21.6pt',
+      'fo:margin-left': '21.6pt',
+    });
+    expect(attributes(level(2)), {
+      'text:level': '2',
+      'style:num-suffix': '.',
+      'style:num-format': '1',
+      'text:display-levels': '2',
+    });
+    expect(alignment(2), {
+      'text:label-followed-by': 'listtab',
+      'text:list-tab-stop-position': '28.8pt',
+      'fo:text-indent': '-28.8pt',
+      'fo:margin-left': '28.8pt',
+    });
+    expect(attributes(level(3)), {
+      'text:level': '3',
+      'style:num-prefix': 'Annex ',
+      'style:num-format': 'A',
+    });
+    expect(level(4).getAttribute('style:num-format'), '');
+  });
+
+  test('list numbers and bullets keep what follows them: a tab, a space or '
+      'nothing', () {
+    String level(int level, String format, String text, [String suffix = '']) =>
+        '<w:lvl w:ilvl="$level"><w:start w:val="1"/>'
+        '<w:numFmt w:val="$format"/>$suffix<w:lvlText w:val="$text"/>'
+        '<w:lvlJc w:val="left"/></w:lvl>';
+    final numbering =
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:numbering $_wordNamespaces>'
+        '<w:abstractNum w:abstractNumId="20">'
+        '${level(0, 'decimal', '%1)', '<w:suff w:val="nothing"/>')}'
+        '${level(1, 'lowerLetter', '%2.', '<w:suff w:val="space"/>')}'
+        '${level(2, 'lowerRoman', '%3.')}</w:abstractNum>'
+        '<w:abstractNum w:abstractNumId="21">'
+        '${level(0, 'bullet', '•', '<w:suff w:val="space"/>')}'
+        '</w:abstractNum>'
+        '<w:abstractNum w:abstractNumId="22">'
+        '${level(0, 'decimal', '%1.')}</w:abstractNum>'
+        '<w:num w:numId="3"><w:abstractNumId w:val="20"/></w:num>'
+        '<w:num w:numId="4"><w:abstractNumId w:val="21"/></w:num>'
+        '<w:num w:numId="5"><w:abstractNumId w:val="22"/></w:num>'
+        '</w:numbering>';
+    String item(String text, int numId, [int level = 0]) => _wordParagraph(
+      '<w:pPr><w:numPr><w:ilvl w:val="$level"/><w:numId w:val="$numId"/>'
+      '</w:numPr></w:pPr>${_wordRun(text)}',
+    );
+
+    final content = _xml(
+      _docxToOdt(
+        _docxFile(
+          '${item('First', 3)}${item('Sub', 3, 1)}${item('Dot', 4)}'
+          '${item('Plain', 5)}',
+          relationships: [('rIdNumbering', 'numbering', 'numbering.xml')],
+          parts: {'word/numbering.xml': numbering},
+        ),
+      ),
+      'content.xml',
+    );
+    List<XmlElement> levels(String text) {
+      XmlElement? list = _paragraphWith(content, text);
+      while (list != null &&
+          (list.name.qualified != 'text:list' ||
+              list.getAttribute('text:style-name') == null)) {
+        list = list.parentElement;
+      }
+      final name = list!.getAttribute('text:style-name');
+      return [
+        for (final level
+            in _elements(content, 'text:list-style')
+                .firstWhere((style) => style.getAttribute('style:name') == name)
+                .childElements)
+          _elements(level, 'style:list-level-label-alignment').single,
+      ];
+    }
+
+    List<String?> followedBy(String text) => [
+      for (final level in levels(text))
+        level.getAttribute('text:label-followed-by'),
+    ];
+
+    expect(followedBy('First'), [
+      'nothing',
+      'space',
+      ...List.filled(8, 'listtab'),
+    ]);
+    expect(followedBy('Sub'), followedBy('First'));
+    expect(
+      levels('First').first.getAttribute('text:list-tab-stop-position'),
+      isNull,
+    );
+    expect(followedBy('Dot'), ['space', ...List.filled(9, 'listtab')]);
+    expect(followedBy('Plain'), List.filled(10, 'listtab'));
+  });
+
+  test('odd Word list definitions still save', () {
+    const numbering =
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:numbering $_wordNamespaces><w:abstractNum w:abstractNumId="30">'
+        '<w:lvl w:ilvl="0"><w:start w:val="-3"/><w:numFmt w:val="ordinal"/>'
+        '<w:suff w:val="bogus"/><w:lvlText w:val="%9 &amp; &lt;%1&gt;"/>'
+        '<w:pPr><w:ind w:left="abc" w:hanging="1e400"/></w:pPr></w:lvl>'
+        '<w:lvl w:ilvl="12"><w:numFmt w:val="decimal"/></w:lvl>'
+        '<w:lvl><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum>'
+        '<w:num w:numId="x"><w:abstractNumId w:val="30"/></w:num>'
+        '<w:num w:numId="6"><w:abstractNumId w:val="30"/>'
+        '<w:lvlOverride w:ilvl="-1"><w:startOverride w:val="9"/></w:lvlOverride>'
+        '</w:num></w:numbering>';
+    const styles =
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:styles $_wordNamespaces>'
+        '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+        '<w:name w:val="Normal"/></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Heading1">'
+        '<w:name w:val="heading 1"/></w:style></w:styles>';
+
+    final bytes = _docxToOdt(
+      _docxFile(
+        _wordParagraph(
+          '<w:pPr><w:pStyle w:val="Heading1"/><w:numPr><w:ilvl w:val="0"/>'
+          '<w:numId w:val="6"/></w:numPr></w:pPr>${_wordRun('Odd')}',
+        ),
+        relationships: [('rIdNumbering', 'numbering', 'numbering.xml')],
+        parts: {'word/styles.xml': styles, 'word/numbering.xml': numbering},
+      ),
+    );
+    final heading = _paragraphWith(_xml(bytes, 'content.xml'), 'Odd');
+    final level = _elements(
+      _xml(bytes, 'styles.xml'),
+      'text:outline-level-style',
+    ).first;
+
+    expect(heading.parentElement?.name.qualified, 'office:text');
+    expect(heading.getAttribute('text:start-value'), '0');
+    expect(level.getAttribute('style:num-format'), '1');
+    expect(level.getAttribute('style:num-suffix'), '>');
+    expect(level.getAttribute('text:start-value'), isNull);
+    expect(
+      _elements(
+        level,
+        'style:list-level-label-alignment',
+      ).single.attributes.map((attribute) => attribute.value),
+      ['listtab', '0pt', '0pt', '0pt'],
+    );
+  });
 }
