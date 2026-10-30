@@ -183,11 +183,14 @@ class QuillController extends ChangeNotifier {
     for (final style in styles) {
       final indent = style.value.attributes[Attribute.indent.key];
       final formatIndex = math.max(style.offset, selection.start);
+      // Voges Word: the part of the run inside the selection. Quill counted
+      // it from the run's start, so a run or block that began before the
+      // selection reached past its end and indented the next paragraph.
       final formatLength = math.min(
             style.offset + (style.length ?? 0),
             selection.end,
           ) -
-          style.offset;
+          formatIndex;
       Attribute? formatAttribute;
       if (indent == null) {
         if (isIncrease) {

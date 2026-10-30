@@ -66,24 +66,10 @@ abstract base class Node extends LinkedListEntry<Node> {
     if (list == null || isFirst) {
       return 0;
     }
-    // Voges Word: lines and blocks count from the nearest previous sibling
-    // whose offset is known, so reading every line's offset in order, as
-    // the editor does when it builds and paints, takes linear time. Leaves
-    // count from the start of their line: one moved to another line can keep
-    // the offset it had there.
-    if (parent is! Line) {
-      return _offset = _offsetFromKnownSibling();
-    }
-    var offset = 0;
-    for (final node in list!) {
-      if (node == this) {
-        break;
-      }
-      offset += node.length;
-    }
-
-    _offset = offset;
-    return _offset!;
+    // Voges Word: a node counts from the nearest previous sibling whose
+    // offset is known, so reading every line's or leaf's offset in order, as
+    // the editor does when it builds and paints, takes linear time.
+    return _offset = _offsetFromKnownSibling();
   }
 
   /// Also keeps the offsets of the siblings it passes.
@@ -102,12 +88,15 @@ abstract base class Node extends LinkedListEntry<Node> {
 
   void clearOffsetCache() {
     // Voges Word: a loop, since a long document has more lines than the
-    // stack has room for calls. Lines and blocks know their offsets from the
-    // first one on, so the first unknown one ends the walk; an edit of every
-    // line from the top no longer walks every line below each one.
-    final fromFirst = parent is! Line;
-    for (Node? node = this; node != null; node = node.next) {
-      if (fromFirst && node._offset == null) return;
+    // stack has room for calls. Siblings know their offsets from the first
+    // one on, so the first unknown one ends the walk; an edit of every line
+    // from the top no longer walks every line below each one. A node clears
+    // its own offset and the ones after it whenever it is unlinked or one is
+    // linked before it, and a linked node's offset is unknown, which keeps
+    // the known offsets first.
+    for (Node? node = this;
+        node != null && node._offset != null;
+        node = node.next) {
       node._offset = null;
     }
   }

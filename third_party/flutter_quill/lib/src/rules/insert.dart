@@ -93,7 +93,11 @@ class PreserveBlockStyleOnInsertRule extends InsertRule {
       // Only interested in text containing at least one newline character.
       return null;
     }
-    final itr = DeltaIterator(document.toDelta())..skip(index);
+    // Voges Word: the text goes in after the replaced selection, so the
+    // line break whose style it takes and resets is the next one from
+    // there. Quill counted from index, so the reset landed len characters
+    // further on: another paragraph's line break, or past the end.
+    final itr = DeltaIterator(document.toDelta())..skip(index + (len ?? 0));
 
     // Look for the next newline.
     final nextNewLine = _getNextNewLine(itr);
@@ -175,7 +179,10 @@ class AutoExitBlockRule extends InsertRule {
     Object? data,
     Attribute? attribute,
   }) {
-    if (data is! String || data != '\n') {
+    // Voges Word: Enter over a selection replaces it, which is not Enter on
+    // an empty last line. Quill exited the block at index + len, a character
+    // of the next paragraph.
+    if (data is! String || data != '\n' || (len ?? 0) > 0) {
       return null;
     }
 

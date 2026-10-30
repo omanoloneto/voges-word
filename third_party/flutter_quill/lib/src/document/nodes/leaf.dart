@@ -54,6 +54,9 @@ abstract base class Leaf extends Node {
 
   @override
   void clearLengthCache() {
+    // Voges Word: as a line does, a leaf that is unlinked or has one linked
+    // before it clears its offset and the ones after it, which Quill kept.
+    clearOffsetCache();
     if (parent != null) {
       parent!.clearLengthCache();
     }

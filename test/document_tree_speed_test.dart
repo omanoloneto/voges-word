@@ -213,15 +213,84 @@ void main() {
   });
 
   test('a paragraph of 100k runs gives its delta quickly', () {
-    final delta = Delta();
-    for (var index = 0; index < 100000; index++) {
-      delta.insert('word $index ', index.isEven ? {'bold': true} : null);
-    }
-    delta.insert('\n');
+    final delta = _runs(100000);
     final document = Document.fromDelta(delta);
     final line = document.root.children.single as Line;
     expect(line.childCount, 100000);
     expect(_timed('line', line.toDelta), delta);
     expect(_timed('document', document.root.toDelta), delta);
   }, timeout: _timeout);
+
+  // Each run counted its offset from the start of its line, so reading them
+  // all, as the editor does while the keyboard composes and as Indent did,
+  // took minutes.
+  test(
+    'a paragraph of 100k runs is split, joined and read quickly',
+    () {
+      final delta = _runs(100000);
+      final controller = QuillController(
+        document: Document.fromDelta(delta),
+        selection: const TextSelection.collapsed(offset: 0),
+      );
+      final document = controller.document;
+      List<int> offsets() => [
+        for (final line in document.root.children)
+          for (final run in (line as Line).children) run.documentOffset,
+      ];
+
+      // As the editor reads them while the keyboard composes text.
+      final before = _timed('offsets', offsets);
+      expect(before[1], 'word 0 '.length);
+      final middle = before[50000];
+      _command(
+        'enter',
+        () => controller.replaceText(
+          middle,
+          0,
+          '\n',
+          TextSelection.collapsed(offset: middle + 1),
+        ),
+      );
+      expect(_timed('offsets after enter', offsets), [
+        ...before.take(50000),
+        for (final offset in before.skip(50000)) offset + 1,
+      ]);
+      _command(
+        'backspace',
+        () => controller.replaceText(
+          middle,
+          1,
+          '',
+          TextSelection.collapsed(offset: middle),
+        ),
+      );
+      expect(document.toDelta(), delta);
+      expect(_timed('offsets after backspace', offsets), before);
+
+      controller.updateSelection(
+        TextSelection(baseOffset: 0, extentOffset: document.length - 1),
+        ChangeSource.local,
+      );
+      _command('copy', () => controller.clipboardSelection(true));
+      expect(
+        controller.pastePlainText,
+        document.toPlainText().substring(0, document.length - 1),
+      );
+      final styles = _command(
+        'styles with offsets',
+        () => document.collectAllStylesWithOffset(0, document.length - 1),
+      );
+      expect([for (final style in styles.take(100000)) style.offset], before);
+    },
+    timeout: _timeout,
+  );
+}
+
+/// One paragraph of [count] runs, bold and plain in turn.
+Delta _runs(int count) {
+  final delta = Delta();
+  for (var index = 0; index < count; index++) {
+    delta.insert('word $index ', index.isEven ? {'bold': true} : null);
+  }
+  return delta..insert('\n');
 }

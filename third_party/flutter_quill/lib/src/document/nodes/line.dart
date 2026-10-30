@@ -855,23 +855,28 @@ base class Line extends QuillContainer<Leaf?> {
       return _collectAllStylesWithOffsetsByRecursion(offset, len, beg: beg);
     }
     final result = <OffsetValue<Style>>[];
-    // Voges Word: a loop over the lines, adding to one list.
+    // Voges Word: a loop over the lines, adding to one list. Each leaf's
+    // offset is its line's plus the leaves before it, as counted here;
+    // Quill's twin reads it from the leaf.
     Line? line = this;
     while (line != null) {
       final local = math.min(line.length - offset, len);
+      final lineOffset = line.documentOffset;
       final data = line.queryChild(offset, true);
       var node = data.node as Leaf?;
       if (node != null) {
+        var start = lineOffset + offset - data.offset;
         var pos = node.length - data.offset;
-        result.add(OffsetValue(node.documentOffset, node.style, node.length));
+        result.add(OffsetValue(start, node.style, node.length));
         while (!node!.isLast && pos < local) {
+          start += node.length;
           node = node.next as Leaf;
-          result.add(OffsetValue(node.documentOffset, node.style, node.length));
+          result.add(OffsetValue(start, node.style, node.length));
           pos += node.length;
         }
       }
 
-      result.add(OffsetValue(line.documentOffset, line.style, line.length));
+      result.add(OffsetValue(lineOffset, line.style, line.length));
       if (line.parent is Block) {
         final block = line.parent as Block;
         result
@@ -985,7 +990,9 @@ base class Line extends QuillContainer<Leaf?> {
   }
 
   /// Voges Word: where Quill went on with the next line's call and returned
-  /// what it returned, this goes on with the next line in a loop.
+  /// what it returned, this goes on with the next line in a loop. It starts
+  /// in the first leaf where queryChild found the offset; Quill's twin
+  /// subtracts the leaf's offset.
   int _getPlainText(
     int offset,
     int len,
@@ -1009,7 +1016,7 @@ base class Line extends QuillContainer<Leaf?> {
           len0 = _getNodeText(
             node,
             plainText,
-            offset - node.offset,
+            data.offset,
             len0,
             embedBuilders: embedBuilders,
             unknownEmbedBuilder: unknownEmbedBuilder,

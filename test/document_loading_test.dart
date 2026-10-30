@@ -66,14 +66,9 @@ int _countedLength(Node node) => switch (node) {
 };
 
 /// The first node whose cached length or offset is not what counting from
-/// the leaves gives, or null. Quill can leave a leaf's offset stale after
-/// some edits, so [leaves] is false after editing.
-String? _staleCache(
-  Node node, {
-  bool leaves = true,
-  int start = 0,
-  String path = 'root',
-}) {
+/// the leaves gives, or null. Leaves are checked too: Quill kept a leaf's
+/// offset when it moved or one went before it.
+String? _staleCache(Node node, {int start = 0, String path = 'root'}) {
   if (node.length != _countedLength(node)) return '$path: length';
   var offset = 0;
   final children = _children(node);
@@ -81,21 +76,14 @@ String? _staleCache(
     final child = children[index];
     final childPath = '$path/$index';
     final documentOffset = node is Root ? offset : start + offset;
-    if (leaves || node is! Line) {
-      if (child.offset != offset) {
-        return '$childPath: offset ${child.offset} instead of $offset';
-      }
-      if (child.documentOffset != documentOffset) {
-        return '$childPath: document offset ${child.documentOffset} '
-            'instead of $documentOffset';
-      }
+    if (child.offset != offset) {
+      return '$childPath: offset ${child.offset} instead of $offset';
     }
-    final found = _staleCache(
-      child,
-      leaves: leaves,
-      start: documentOffset,
-      path: childPath,
-    );
+    if (child.documentOffset != documentOffset) {
+      return '$childPath: document offset ${child.documentOffset} '
+          'instead of $documentOffset';
+    }
+    final found = _staleCache(child, start: documentOffset, path: childPath);
     if (found != null) return found;
     offset += _countedLength(child);
   }
@@ -565,6 +553,11 @@ Future<void> _expectSameEditing(
       quill.updateSelection(selection, ChangeSource.local);
       ours.updateSelection(selection, ChangeSource.local);
       expect(_readings(ours), _readings(quill), reason: '$reason $selection');
+      expect(
+        ours.getPlainText(),
+        ours.document.toPlainText().substring(selection.start, selection.end),
+        reason: '$reason: Copy takes the selected text',
+      );
 
       final command = _command(random, selection);
       Object? expectedError;
@@ -589,16 +582,8 @@ Future<void> _expectSameEditing(
       );
       // A failed command can leave a half-made tree; stop there.
       if (expectedError != null) break;
-      expect(
-        _staleCache(ours.document.root, leaves: false),
-        isNull,
-        reason: reason,
-      );
-      expect(
-        _staleCache(quill.document.root, leaves: false),
-        isNull,
-        reason: reason,
-      );
+      expect(_staleCache(ours.document.root), isNull, reason: reason);
+      expect(_staleCache(quill.document.root), isNull, reason: reason);
       expect(
         _deltaJson(ours.document.toDelta()),
         _deltaJson(quill.document.toDelta()),
@@ -883,16 +868,8 @@ void main() {
           );
           // A failed edit can leave a half-made tree; stop there.
           if (expectedError != null) break;
-          expect(
-            _staleCache(actual.root, leaves: false),
-            isNull,
-            reason: reason,
-          );
-          expect(
-            _staleCache(expected.root, leaves: false),
-            isNull,
-            reason: reason,
-          );
+          expect(_staleCache(actual.root), isNull, reason: reason);
+          expect(_staleCache(expected.root), isNull, reason: reason);
           expect(
             _deltaJson(actual.root.toDelta()),
             _deltaJson(_concatenated(actual.root)),
@@ -948,7 +925,7 @@ void main() {
     });
   });
 
-  test('a leaf counts its offset from the start of its line', () {
+  test('a leaf counts its offset again when one goes before it', () {
     final document = Document.fromDelta(
       Delta()
         ..insert('aaa', {'bold': true})
@@ -957,16 +934,16 @@ void main() {
         ..insert('\n'),
     );
     final leaves = (document.root.children.first as Line).children.toList();
-    expect(leaves[1].offset, 3);
+    expect([for (final leaf in leaves) leaf.offset], [0, 3, 6]);
 
-    // Quill keeps the old offset of the leaf it inserts before.
+    // Quill kept the offsets of the leaf it inserted before and the next.
     document.root.insert(
       3,
       'x',
       Style.attr({Attribute.underline.key: Attribute.underline}),
     );
 
-    expect(leaves[2].offset, 7);
+    expect([for (final leaf in leaves) leaf.offset], [0, 4, 7]);
     expect(document.getPlainText(7, 3), 'ccc');
   });
 }

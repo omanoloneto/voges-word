@@ -59,6 +59,9 @@ abstract base class QuillContainer<T extends Node?> extends Node {
   /// Adds [node] to the beginning of this container children list.
   void addFirst(T node) {
     assert(node?.parent == null);
+    // Voges Word: the children move after [node]; see
+    // [Node.clearOffsetCache].
+    first?.clearOffsetCache();
     node?.parent = this;
     _children.addFirst(node as Node);
     clearLengthCache();
@@ -67,6 +70,8 @@ abstract base class QuillContainer<T extends Node?> extends Node {
   /// Removes [node] from this container.
   void remove(T node) {
     assert(node?.parent == this);
+    // Voges Word: as [Node.unlink] does.
+    node?.clearOffsetCache();
     node?.parent = null;
     _children.remove(node as Node);
     clearLengthCache();
