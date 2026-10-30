@@ -10,6 +10,7 @@ import '../document/headers_footers.dart';
 import '../document/text_encodings.dart';
 import '../docx/docx_builder.dart';
 import '../docx/docx_codec.dart';
+import '../docx/docx_package.dart';
 import 'html_reader.dart';
 import 'html_writer.dart';
 import 'writing.dart';
@@ -51,6 +52,7 @@ class HtmlCodec implements DocumentCodec {
         docx.tables,
         look: look,
         numbering: ListNumbering.of(source),
+        package: source is DocxPackage ? source : null,
       ).write(delta),
     ),
   );

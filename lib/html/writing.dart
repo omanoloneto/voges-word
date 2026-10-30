@@ -115,6 +115,12 @@ class ListCounter {
     return counts[level]!;
   }
 
+  /// A bullet item: in a Word list it restarts the deeper levels, as a
+  /// number does.
+  void countBullet(LineBlock line) {
+    if (_numIdOf(line) != null) next(line);
+  }
+
   /// Word's number format of the item's level, like `lowerLetter`.
   String? formatOf(LineBlock line) {
     final numId = _numIdOf(line);

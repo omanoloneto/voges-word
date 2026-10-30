@@ -2,44 +2,79 @@ import 'dart:math' as math;
 import 'dart:ui' show Color;
 
 import 'package:flutter_quill/quill_delta.dart';
+import 'package:xml/xml.dart';
 
 import '../document/delta_blocks.dart';
 import '../document/document_look.dart';
 import '../document/embeds.dart';
 import '../document/tables.dart';
+import '../docx/docx_codec.dart';
+import '../docx/docx_package.dart';
+import '../docx/word_xml.dart';
 import 'css.dart';
 import 'writing.dart';
 
-/// Writes the editor's content as a standalone HTML5 page. Headers and
-/// footers have no place in a web page and are left out.
+/// Writes the editor's content as a standalone page that reads the same as
+/// HTML5 and as XHTML, so .xhtml files stay valid. Headers and footers have
+/// no place in a web page and are left out; footnotes and endnotes follow the
+/// text.
 class HtmlWriter {
-  HtmlWriter(this.tables, {required this.look, required this.numbering})
-    : _counter = ListCounter(numbering);
+  HtmlWriter(
+    this.tables, {
+    required this.look,
+    required this.numbering,
+    this.package,
+  }) : _counter = ListCounter(numbering);
 
   final TableStore tables;
   final DocumentLook look;
   final ListNumbering numbering;
+
+  /// The opened document: its notes, language and title.
+  final DocxPackage? package;
   final ListCounter _counter;
   final _ids = <String>{};
   String? _title;
 
+  /// Tables of the notes, apart from the document's.
+  final _noteTables = TableStore();
+  final _noteBodies = <String, Map<String, Delta>>{};
+  final _noteByReference = <String, _Note>{};
+  final _footnotes = <_Note>[];
+  final _endnotes = <_Note>[];
+  var _inNotes = false;
+
   /// Tables nested deeper are written as their paragraphs.
   static const _maxTableDepth = 16;
+  static const _noBookmarks = (id: '', anchors: '');
+  static const _breakBefore = 'break-before:page;page-break-before:always';
+  static const _breakAfter = 'break-after:page;page-break-after:always';
+  static final _lineBreaks = RegExp(r'[\n\r\u000B\u2028\u2029]');
+  static final _languageTag = RegExp(r'^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$');
+  static final _noteReference = RegExp(
+    r'<w:(footnote|endnote)Reference\b[^>]*?\bw:id="(-?\d+)"',
+  );
 
   String write(Delta delta) {
     final body = StringBuffer();
-    _blocks(documentBlocks(delta), body, 0);
-    return '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        '<title>${escapeHtmlText(_title ?? 'Document')}</title>\n'
-        '<style>\n${_styleSheet()}</style>\n</head>\n<body>\n$body</body>\n'
-        '</html>\n';
+    _blocks(documentBlocks(delta), body, 0, tables);
+    _notes(body);
+    final language = _language();
+    final title = _propertiesTitle() ?? _title ?? 'Document';
+    return '<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml"'
+        '${language == null ? '' : ' lang="$language" xml:lang="$language"'}>\n'
+        '<head>\n<meta charset="utf-8"/>\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1"/>\n'
+        '<title>${_text(title)}</title>\n'
+        // XHTML would read an `&` of a font name as markup.
+        '<style>/*<![CDATA[*/\n${_styleSheet()}/*]]>*/</style>\n'
+        '</head>\n<body>\n$body</body>\n</html>\n';
   }
 
   /// A table as HTML on its own, with its borders inline, for Markdown.
   String table(TableModel table) {
     final out = StringBuffer();
-    _table(table, out, 0, inlineBorders: true);
+    _table(table, out, 0, tables, inlineBorders: true);
     return out.toString();
   }
 
@@ -90,9 +125,81 @@ class HtmlWriter {
     ].join(' ');
   }
 
+  /// The language of the document's text, like `pt-BR`, from its default
+  /// formatting.
+  String? _language() {
+    final package = this.package;
+    if (package == null) return null;
+    try {
+      final main = package.mainDocumentPath;
+      for (final relationship in package.relationships(main)) {
+        if (!relationship.hasType('styles') || relationship.external) continue;
+        final root = package
+            .xml(DocxPackage.resolve(main, relationship.target))
+            ?.rootElement;
+        if (root == null) return null;
+        final x = WordXml(root);
+        final language = x.attr(
+          x.child(
+            x.child(x.child(x.child(root, 'docDefaults'), 'rPrDefault'), 'rPr'),
+            'lang',
+          ),
+          'val',
+        );
+        return language != null && _languageTag.hasMatch(language)
+            ? language
+            : null;
+      }
+    } on Exception {
+      // A damaged styles part leaves the language out.
+    }
+    return null;
+  }
+
+  /// The title in the document's properties, which Word also gives its web
+  /// pages.
+  String? _propertiesTitle() {
+    final package = this.package;
+    if (package == null) return null;
+    try {
+      final path =
+          [
+            for (final relationship in package.relationships(''))
+              if (relationship.hasType('core-properties') &&
+                  !relationship.external)
+                DocxPackage.resolve('', relationship.target),
+          ].firstOrNull ??
+          'docProps/core.xml';
+      final title = package
+          .xml(path)
+          ?.rootElement
+          .childElements
+          .where((element) => element.name.local == 'title')
+          .firstOrNull;
+      return title == null ? null : _titleOf(title.innerText);
+    } on Exception {
+      return null;
+    }
+  }
+
+  void _headingTitle(LineBlock line) {
+    if (!_inNotes) _title ??= _titleOf(line.plainText);
+  }
+
+  static String? _titleOf(String text) {
+    final title = text.replaceAll(_lineBreaks, ' ').trim();
+    if (title.isEmpty) return null;
+    return title.length > 200 ? title.substring(0, 200) : title;
+  }
+
   // Blocks
 
-  void _blocks(List<DocumentBlock> blocks, StringBuffer out, int depth) {
+  void _blocks(
+    List<DocumentBlock> blocks,
+    StringBuffer out,
+    int depth,
+    TableStore store,
+  ) {
     final lists = <_OpenList>[];
     for (final block in blocks) {
       if (block is LineBlock && block.list != null) {
@@ -105,8 +212,8 @@ class HtmlWriter {
         case LineBlock():
           _paragraph(block, out);
         case EmbedBlock(type: EmbedTypes.table):
-          final table = tables[tableIdOf(block.value)];
-          if (table != null) _table(table, out, depth);
+          final table = store[tableIdOf(block.value)];
+          if (table != null) _table(table, out, depth, store);
         case EmbedBlock(type: EmbedTypes.opaqueBlock):
           final content = OpaqueContent.decode(block.value);
           if (content.hidden) break;
@@ -123,38 +230,59 @@ class HtmlWriter {
   void _paragraph(LineBlock line, StringBuffer out) {
     final level = line.heading?.clamp(1, 6);
     final tag = level == null ? 'p' : 'h$level';
-    if (level != null) {
-      final text = line.plainText.replaceAll('\u2028', ' ').trim();
-      if (text.isNotEmpty) {
-        _title ??= text.length > 200 ? text.substring(0, 200) : text;
-      }
-    }
+    if (level != null) _headingTitle(line);
+    final kept = _paragraphProperties(line);
     final parts = pageParts(line);
+    // Bookmarks go on the first part with text, or on the page break of a
+    // line that has nothing else.
+    final marked = math.max(parts.indexWhere((part) => part.isNotEmpty), 0);
+    final bookmarks = _bookmarks(line);
     for (var index = 0; index < parts.length; index++) {
       final pieces = parts[index];
       final breakAfter = index < parts.length - 1;
-      if (pieces.isEmpty && index > 0 && !breakAfter) continue;
-      if (pieces.isEmpty && breakAfter) {
-        out.writeln(
-          '<div style="break-after:page;page-break-after:always"></div>',
-        );
+      final (:id, :anchors) = index == marked ? bookmarks : _noBookmarks;
+      if (pieces.isEmpty && parts.length > 1) {
+        if (!breakAfter) continue;
+        final style = [
+          if (index == 0 && _isOn(kept['pageBreakBefore'])) _breakBefore,
+          _breakAfter,
+        ];
+        out.writeln('<div$id style="${style.join(';')}">$anchors</div>');
         continue;
       }
-      final (:id, :anchors) = index == 0
-          ? _bookmarks(line)
-          : (id: '', anchors: '');
+      final attributes = _paragraphAttributes(
+        line,
+        kept,
+        breakBefore: index == 0,
+        breakAfter: breakAfter,
+      );
       final content = _inlines(pieces);
       out.writeln(
-        '<$tag$id${_paragraphStyle(line, breakAfter: breakAfter)}>'
-        '$anchors${content.isEmpty ? '<br>' : content}</$tag>',
+        '<$tag$id$attributes>$anchors${content.isEmpty ? '<br/>' : content}'
+        '</$tag>',
       );
     }
   }
 
-  String _paragraphStyle(
-    LineBlock line, {
+  /// The properties of the line's .docx paragraph that pages show: its
+  /// direction and a page break before it.
+  static Map<String, XmlElement> _paragraphProperties(LineBlock line) {
+    final kept = line.attributes[HiddenAttributes.paragraphProperties];
+    return kept is String &&
+            (kept.contains('bidi') || kept.contains('pageBreakBefore'))
+        ? _properties(kept)
+        : const {};
+  }
+
+  /// The direction and style of a paragraph or list item; [kept] are the
+  /// properties of its .docx paragraph.
+  String _paragraphAttributes(
+    LineBlock line,
+    Map<String, XmlElement> kept, {
     bool inList = false,
+    bool breakBefore = false,
     bool breakAfter = false,
+    List<String> extra = const [],
   }) {
     final style = [
       if (const {'center', 'right', 'justify'}.contains(line.align))
@@ -167,9 +295,12 @@ class HtmlWriter {
       if (line.spaceAfter case final after?) 'margin-bottom:${_pt(after)}',
       if (line.lineHeight case final height? when height > 0)
         'line-height:${formatNumber(height)}',
-      if (breakAfter) 'break-after:page;page-break-after:always',
+      if (breakBefore && _isOn(kept['pageBreakBefore'])) _breakBefore,
+      if (breakAfter) _breakAfter,
+      ...extra,
     ];
-    return style.isEmpty ? '' : ' style="${style.join(';')}"';
+    return '${_isOn(kept['bidi']) ? ' dir="rtl"' : ''}'
+        '${style.isEmpty ? '' : ' style="${style.join(';')}"'}';
   }
 
   /// The `id` of the line's first bookmark and anchors for the others.
@@ -178,7 +309,7 @@ class HtmlWriter {
       for (final name in bookmarksOf(line))
         if (_ids.add(name)) name,
     ];
-    if (names.isEmpty) return (id: '', anchors: '');
+    if (names.isEmpty) return _noBookmarks;
     return (
       id: ' id="${escapeHtmlAttribute(names.first)}"',
       anchors: [
@@ -195,12 +326,14 @@ class HtmlWriter {
     final ordered = line.isOrdered;
     final key = ordered ? _counter.keyOf(line) : 'bullets';
     final number = ordered ? _counter.next(line) : 0;
+    if (!ordered) _counter.countBullet(line);
     while (open.isNotEmpty && open.last.level > level) {
       _closeList(open, out);
     }
     if (open.isNotEmpty && open.last.level == level) {
       if (open.last.ordered == ordered && open.last.key == key) {
-        out.write('</li>\n');
+        // Nested lists are inside an item, which keeps line breaks.
+        out.write(open.length == 1 ? '</li>\n' : '</li>');
       } else {
         _closeList(open, out);
       }
@@ -211,7 +344,11 @@ class HtmlWriter {
     }
     if (open.isEmpty || open.last.level < level) {
       if (ordered) {
-        final type = switch (_counter.formatOf(line)) {
+        // The editor numbers the levels of its own lists 1., a., i.
+        final format =
+            _counter.formatOf(line) ??
+            const ['decimal', 'lowerLetter', 'lowerRoman'][level % 3];
+        final type = switch (format) {
           'lowerLetter' => ' type="a"',
           'upperLetter' => ' type="A"',
           'lowerRoman' => ' type="i"',
@@ -225,18 +362,38 @@ class HtmlWriter {
       open.add(_OpenList(level, ordered, key));
     }
     final (:id, :anchors) = _bookmarks(line);
+    final checklist = line.list == 'checked' || line.list == 'unchecked';
     final checkbox = switch (line.list) {
-      'checked' => '<input type="checkbox" disabled checked> ',
-      'unchecked' => '<input type="checkbox" disabled> ',
+      'checked' =>
+        '<input type="checkbox" disabled="disabled" checked="checked" '
+            'style="margin-right:0.4em"/>',
+      'unchecked' =>
+        '<input type="checkbox" disabled="disabled" '
+            'style="margin-right:0.4em"/>',
       _ => '',
     };
     final pieces = [
       for (final piece in line.pieces)
         if (piece is! EmbedPiece || piece.type != EmbedTypes.pageBreak) piece,
     ];
+    final heading = line.heading?.clamp(1, 6);
+    final attributes = _paragraphAttributes(
+      line,
+      _paragraphProperties(line),
+      inList: true,
+      breakBefore: true,
+      extra: [if (checklist && heading == null) 'list-style-type:none'],
+    );
+    final content = '$anchors$checkbox${_inlines(pieces)}';
+    if (heading == null) {
+      out.write('<li$id$attributes>$content');
+      return;
+    }
+    // A numbered heading, like Word's chapters.
+    _headingTitle(line);
     out.write(
-      '<li$id${_paragraphStyle(line, inList: true)}>'
-      '$anchors$checkbox${_inlines(pieces)}',
+      '<li${checklist ? ' style="list-style-type:none"' : ''}>'
+      '<h$heading$id$attributes>$content</h$heading>',
     );
   }
 
@@ -258,7 +415,14 @@ class HtmlWriter {
     final out = StringBuffer();
     String? openLink;
     for (final piece in pieces) {
-      final link = exportLink(piece.link);
+      final opaque =
+          piece is EmbedPiece && piece.type == EmbedTypes.opaqueInline
+          ? OpaqueContent.decode(piece.value)
+          : null;
+      final note =
+          opaque != null && !opaque.hidden && opaque.label == OpaqueLabels.note;
+      // A note's mark links to the note, so it stays out of other links.
+      final link = note ? null : exportLink(piece.link);
       if (link != openLink) {
         if (openLink != null) out.write('</a>');
         if (link != null) out.write('<a href="${escapeHtmlAttribute(link)}">');
@@ -272,11 +436,12 @@ class HtmlWriter {
           out.write(_formatted(_text(text), attributes));
         case EmbedPiece(type: EmbedTypes.image):
           out.write(_image(piece));
-        case EmbedPiece(type: EmbedTypes.opaqueInline, :final value):
-          final content = OpaqueContent.decode(value);
-          if (!content.hidden) {
-            out.write(_formatted(_text(content.text), attributes));
-          }
+        case EmbedPiece() when opaque != null && !opaque.hidden:
+          out.write(
+            note
+                ? _noteMark(opaque, attributes)
+                : _formatted(_text(opaque.text), attributes),
+          );
         case EmbedPiece():
           break;
       }
@@ -295,14 +460,21 @@ class HtmlWriter {
 
   static String _formatted(String html, Map<String, dynamic> attributes) {
     if (html.isEmpty) return html;
+    final kept = attributes[HiddenAttributes.runProperties];
+    final run =
+        kept is String && (kept.contains('caps') || kept.contains('Caps'))
+        ? _properties(kept)
+        : const <String, XmlElement>{};
     final style = [
       if (attributes['font'] case final String font?)
         if (safeFontName(font) case final name?)
-          'font-family:&quot;$name&quot;',
+          'font-family:&quot;${escapeHtmlAttribute(name)}&quot;',
       if (_size(attributes['size']) case final size?) 'font-size:${_pt(size)}',
       if (hexColor(attributes['color']) case final color?) 'color:#$color',
       if (hexColor(attributes['background']) case final color?)
         'background-color:#$color',
+      if (_isOn(run['caps'])) 'text-transform:uppercase',
+      if (_isOn(run['smallCaps'])) 'font-variant:small-caps',
     ];
     var out = style.isEmpty
         ? html
@@ -343,11 +515,31 @@ class HtmlWriter {
       if (width != null && width > 0) 'width:${_pt(width)}',
       if (height != null && height > 0) 'height:${_pt(height)}',
     ];
-    return '<img src="$uri" alt=""'
-        '${style.isEmpty ? '' : ' style="${style.join(';')}"'}>';
+    return '<img src="$uri" alt="${escapeHtmlAttribute(_altText(piece))}"'
+        '${style.isEmpty ? '' : ' style="${style.join(';')}"'}/>';
   }
 
-  /// Escaped text; line breaks become `<br>` and the rest of what HTML can't
+  /// The description Word keeps for a picture, which screen readers read.
+  static String _altText(EmbedPiece piece) {
+    final drawing = piece.attributes[HiddenAttributes.drawing];
+    if (drawing is! String || !drawing.contains('docPr')) return '';
+    try {
+      for (final element in XmlDocument.parse(drawing).descendantElements) {
+        if (element.name.local != 'docPr') continue;
+        final description = element.getAttribute('descr')?.trim() ?? '';
+        return (description.isEmpty
+                ? element.getAttribute('title') ?? ''
+                : description)
+            .replaceAll(_lineBreaks, ' ')
+            .trim();
+      }
+    } on XmlException {
+      // A damaged drawing has no description.
+    }
+    return '';
+  }
+
+  /// Escaped text; line breaks become `<br/>` and the rest of what HTML can't
   /// hold is left out.
   static String _text(String text) {
     final out = StringBuffer();
@@ -360,9 +552,9 @@ class HtmlWriter {
         case 0x3E:
           out.write('&gt;');
         case 0xA0:
-          out.write('&nbsp;');
+          out.write('&#160;');
         case 0x2028 || 0x0A || 0x0B:
-          out.write('<br>');
+          out.write('<br/>');
         case 0x09:
           out.write('\t');
         default:
@@ -378,12 +570,147 @@ class HtmlWriter {
     return out.toString();
   }
 
+  // Notes
+
+  /// The raised mark of a footnote or endnote, linked to its text at the end
+  /// of the page; only the mark when the opened document doesn't have it.
+  String _noteMark(OpaqueContent content, Map<String, dynamic> attributes) {
+    final note = _inNotes ? null : _note(content);
+    final String mark;
+    if (note == null) {
+      mark = _text(content.text);
+    } else {
+      // The note's number links back to its first mark.
+      final id = note.marked ? '' : ' id="${note.referenceId}"';
+      note.marked = true;
+      mark = '<a href="#${note.id}"$id>${note.mark}</a>';
+    }
+    if (mark.isEmpty) return '';
+    return '<sup>${_formatted(mark, {...attributes}..remove('script'))}</sup>';
+  }
+
+  _Note? _note(OpaqueContent content) {
+    final package = this.package;
+    if (package == null || content.packageId != package.id) return null;
+    final reference = _noteReference.firstMatch(content.xml);
+    if (reference == null) return null;
+    final kind = reference[1]!;
+    // A note marked many times is written once, so the page can't grow with
+    // the marks.
+    final key = '$kind ${reference[2]}';
+    if (_noteByReference[key] case final note?) return note;
+    final bodies = _noteBodies[kind] ??= _readNotes(package, kind);
+    final body = bodies[reference[2]];
+    if (body == null) return null;
+    final endnote = kind == 'endnote';
+    final notes = endnote ? _endnotes : _footnotes;
+    final number = notes.length + 1;
+    final prefix = endnote ? 'en' : 'fn';
+    final note = _Note(
+      body,
+      // Word's own marks: 1, 2, 3 for footnotes and i, ii, iii for endnotes.
+      mark: endnote ? _roman(number) : '$number',
+      id: _uniqueId('$prefix-$number'),
+      referenceId: _uniqueId('${prefix}ref-$number'),
+    );
+    notes.add(note);
+    return _noteByReference[key] = note;
+  }
+
+  Map<String, Delta> _readNotes(DocxPackage package, String kind) {
+    try {
+      return DocxCodec(_noteTables).notes(package, kind);
+    } catch (_) {
+      // A damaged notes part leaves only the marks.
+      return const {};
+    }
+  }
+
+  /// The footnotes and then the endnotes.
+  void _notes(StringBuffer out) {
+    _inNotes = true;
+    for (final (kind, notes) in [
+      ('footnotes', _footnotes),
+      ('endnotes', _endnotes),
+    ]) {
+      if (notes.isEmpty) continue;
+      _counter.breakRun();
+      out.writeln('<section class="$kind">\n<hr/>');
+      for (final note in notes) {
+        out.write('<div id="${note.id}">');
+        _blocks(_noteBlocks(note), out, 0, _noteTables);
+        out.writeln('</div>');
+      }
+      out.writeln('</section>');
+    }
+  }
+
+  /// The note's blocks; the first starts with the note's number, which links
+  /// back to its mark.
+  static List<DocumentBlock> _noteBlocks(_Note note) {
+    final blocks = documentBlocks(note.body);
+    final number = TextPiece(note.mark, {
+      'link': '#${note.referenceId}',
+      'script': 'super',
+    });
+    final first = blocks.firstOrNull;
+    if (first is! LineBlock || first.list != null) {
+      return [
+        LineBlock([number], const {}),
+        ...blocks,
+      ];
+    }
+    return [
+      LineBlock([
+        number,
+        const TextPiece(' ', {}),
+        ...first.pieces,
+      ], first.attributes),
+      ...blocks.skip(1),
+    ];
+  }
+
+  /// [base], or [base] and a number when another id of the page has it.
+  String _uniqueId(String base) {
+    var id = base;
+    for (var copy = 2; !_ids.add(id); copy++) {
+      id = '$base-$copy';
+    }
+    return id;
+  }
+
+  static String _roman(int number) {
+    final out = StringBuffer();
+    var rest = number;
+    for (final (value, letters) in const [
+      (1000, 'm'),
+      (900, 'cm'),
+      (500, 'd'),
+      (400, 'cd'),
+      (100, 'c'),
+      (90, 'xc'),
+      (50, 'l'),
+      (40, 'xl'),
+      (10, 'x'),
+      (9, 'ix'),
+      (5, 'v'),
+      (4, 'iv'),
+      (1, 'i'),
+    ]) {
+      for (; rest >= value; rest -= value) {
+        out.write(letters);
+      }
+    }
+    return out.toString();
+  }
+
   // Tables
 
   void _table(
     TableModel table,
     StringBuffer out,
-    int depth, {
+    int depth,
+    TableStore store, {
     bool inlineBorders = false,
   }) {
     if (table.rows.isEmpty) return;
@@ -394,6 +721,7 @@ class HtmlWriter {
             documentBlocks(cell.controller.document.toDelta()),
             out,
             depth,
+            store,
           );
         }
       }
@@ -413,7 +741,7 @@ class HtmlWriter {
     if (widths.isNotEmpty) {
       out.write('<colgroup>');
       for (final width in widths) {
-        out.write('<col style="width:${_pt(width)}">');
+        out.write('<col style="width:${_pt(width)}"/>');
       }
       out.write('</colgroup>');
     }
@@ -423,13 +751,27 @@ class HtmlWriter {
         (table.rows[headers].propertiesXml?.contains('tblHeader') ?? false)) {
       headers++;
     }
+    // Browsers cut a merged cell at the header's end, so the header takes in
+    // the rows its cells reach.
+    for (var row = 0; row < headers; row++) {
+      final cells = table.rows[row].cells;
+      for (var cell = 0; cell < cells.length; cell++) {
+        if (cells[cell].verticalMerge == VerticalMerge.restart) {
+          headers = math.max(
+            headers,
+            row + _rowspan(table, starts, row, starts[row][cell]),
+          );
+        }
+      }
+    }
     for (var index = 0; index < table.rows.length; index++) {
       if (index == 0 && headers > 0) out.write('<thead>');
       if (index == headers) {
         out.write('${headers > 0 ? '</thead>' : ''}<tbody>');
       }
-      out.write('<tr>');
       final row = table.rows[index];
+      final height = _rowHeight(row.propertiesXml);
+      out.write(height == null ? '<tr>' : '<tr style="height:${_pt(height)}">');
       for (var cell = 0; cell < row.cells.length; cell++) {
         final model = row.cells[cell];
         if (model.verticalMerge == VerticalMerge.continuation) continue;
@@ -438,6 +780,8 @@ class HtmlWriter {
             : 1;
         final style = [
           if (model.fill case final fill?) 'background-color:#${_hex(fill)}',
+          if (_cellAlign(model.propertiesXml) case final align?)
+            'vertical-align:$align',
           if (table.bordered && inlineBorders) 'border:0.5pt solid #000000',
         ];
         out.write(
@@ -450,6 +794,7 @@ class HtmlWriter {
           documentBlocks(model.controller.document.toDelta()),
           content,
           depth + 1,
+          store,
         );
         out.write('${content.toString().trimRight()}</td>');
       }
@@ -490,6 +835,49 @@ class HtmlWriter {
     return span;
   }
 
+  /// Points of a .docx row's height; browsers take it as the least, as Word
+  /// does unless the row's height is exact.
+  static double? _rowHeight(String? xml) {
+    if (xml == null || !xml.contains('trHeight')) return null;
+    final height = _properties(xml)['trHeight'];
+    if (height?.getAttribute('hRule', namespaceUri: '*') == 'auto') {
+      return null;
+    }
+    final twips = int.tryParse(_val(height) ?? '');
+    return twips == null || twips <= 0 ? null : math.min(twips / 20, 1584);
+  }
+
+  /// CSS `vertical-align` of a .docx cell that isn't aligned to the top.
+  static String? _cellAlign(String? xml) {
+    if (xml == null || !xml.contains('vAlign')) return null;
+    return switch (_val(_properties(xml)['vAlign'])) {
+      'center' => 'middle',
+      'bottom' => 'bottom',
+      _ => null,
+    };
+  }
+
+  /// The children of .docx properties the editor keeps, like a paragraph's
+  /// `w:pPr`, by name; none when they are damaged.
+  static Map<String, XmlElement> _properties(Object? xml) {
+    if (xml is! String || xml.isEmpty) return const {};
+    try {
+      return {
+        for (final element in XmlDocument.parse(xml).rootElement.childElements)
+          element.name.local: element,
+      };
+    } on XmlException {
+      return const {};
+    }
+  }
+
+  static String? _val(XmlElement? element) =>
+      element?.getAttribute('val', namespaceUri: '*');
+
+  /// Whether a .docx on/off property, like `w:bidi`, is on.
+  static bool _isOn(XmlElement? element) =>
+      element != null && !const {'0', 'false', 'off'}.contains(_val(element));
+
   static String _pt(double points) => '${formatNumber(points)}pt';
 
   static String _hex(Color color) => (color.toARGB32() & 0xFFFFFF)
@@ -506,7 +894,28 @@ class _OpenList {
   final Object key;
 }
 
+class _Note {
+  _Note(
+    this.body, {
+    required this.mark,
+    required this.id,
+    required this.referenceId,
+  });
+
+  final Delta body;
+
+  /// Shown at the reference and before the note's text.
+  final String mark;
+  final String id;
+  final String referenceId;
+  var marked = false;
+}
+
+final _notXml = RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]');
+
+/// [text] escaped for markup; characters XML can't hold are left out.
 String escapeHtmlText(String text) => text
+    .replaceAll(_notXml, '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;');

@@ -614,12 +614,15 @@ h1 { font-size: 20pt; color: navy; font-weight: normal; margin-top: 30pt }
 
       expect(
         html,
-        startsWith('<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">'),
+        startsWith(
+          '<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml">\n'
+          '<head>\n<meta charset="utf-8"/>',
+        ),
       );
       expect(html, contains('<title>A &lt;b&gt; &amp; "c"</title>'));
       expect(html, contains('<h2>A &lt;b&gt; &amp; "c"</h2>'));
       expect(html, contains('@page { size: 612pt 792pt;'));
-      expect(html, contains('<p>tab\there<br>next&nbsp;nbsp</p>'));
+      expect(html, contains('<p>tab\there<br/>next&#160;nbsp</p>'));
       expect(
         html,
         contains(
@@ -672,10 +675,10 @@ h1 { font-size: 20pt; color: navy; font-weight: normal; margin-top: 30pt }
         ),
       );
       expect(html, contains('<td colspan="2"><p>wide</p></td>'));
-      expect(html, contains('<col style="width:100pt">'));
+      expect(html, contains('<col style="width:100pt"/>'));
       expect(
         html,
-        contains('<img src="$_pngUri" alt="" style="width:30pt;height:15pt">'),
+        contains('<img src="$_pngUri" alt="" style="width:30pt;height:15pt"/>'),
       );
       expect(
         html,
