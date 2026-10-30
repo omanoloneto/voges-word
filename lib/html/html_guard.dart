@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:html/parser.dart' show HtmlParser;
@@ -54,7 +53,7 @@ String originalTagName(String name) =>
 /// never closes an element the parser keeps open, rejects pages that nest
 /// deeper than [maxDepth] or make more than [maxElements] elements, and
 /// pages that would keep the parser busy for long: too much text or too many
-/// attributes, content it moves out of tables, parse errors or end tags it
+/// attributes, content it moves out of tables, parse errors, and elements it
 /// searches the stack for in vain. In XHTML, `<x/>` is an empty element.
 GuardedHtml guardHtml(
   String html, {
@@ -88,6 +87,13 @@ const _maxFosterWork = 50000000;
 /// parser searches for it; about half a second of parsing.
 const _maxParserWork = 3000000;
 const _errorWork = 16;
+
+/// Elements the parser passes over, in all, looking for an element that isn't
+/// in scope (the paragraph or list item a block would close, the ruby of an
+/// annotation, the heading levels an end tag doesn't close) or for what a
+/// closed table was in; about two seconds of parsing. Pages nested a few
+/// dozen levels deep stay far below.
+const _maxStackWork = 20000000;
 
 /// References past the last code point, which package:html can't read.
 final _longReference = RegExp(
@@ -215,6 +221,9 @@ const _blockEnds = {
 };
 
 const _headings = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'};
+
+/// Elements the parser closes when an element implies their end.
+const _impliedEnds = {'dd', 'dt', 'li', 'option', 'optgroup', 'p', 'rp', 'rt'};
 
 // Scope limits and special elements are supersets of package:html's, so the
 // model stops where the parser stops or earlier and never pops more.
@@ -367,11 +376,16 @@ class _Guard {
 
   /// Children of each element in [_stack] so far.
   final _children = <int>[1, 0];
+
+  /// For each element in [_stack], where the nearest element at or below it
+  /// that bounds the parser's scopes is.
+  final _scopeFloors = <int>[0, 0];
   var _text = 0;
   var _attributes = 0;
   var _references = 0;
   var _fosterWork = 0;
   var _parserWork = 0;
+  var _stackWork = 0;
 
   /// The last content put in front of the innermost table was text, which
   /// the parser adds to.
@@ -475,6 +489,18 @@ class _Guard {
     }
   }
 
+  /// The parser looks [times] times for an element that isn't in scope,
+  /// down to the nearest element that bounds it.
+  void _searchScope([int times = 1]) =>
+      _walk(times * (_stack.length - _scopeFloors.last));
+
+  void _walk(int elements) {
+    _stackWork += elements;
+    if (_stackWork > _maxStackWork) {
+      throw DocumentProblemException(DocumentProblem.tooLarge);
+    }
+  }
+
   /// Characters package:html reports one by one: NUL, controls, lone
   /// surrogates and noncharacters.
   void _invalidCharacters(String html) {
@@ -511,6 +537,27 @@ class _Guard {
     return end;
   }
 
+  /// [text] as markup, with `&` and `<` written as the references the parser
+  /// reads back; they count as the page's own and lengthen its text.
+  String _escape(String text) {
+    var ampersands = 0;
+    var lessThans = 0;
+    for (var index = 0; index < text.length; index++) {
+      switch (text.codeUnitAt(index)) {
+        case 0x26:
+          ampersands++;
+        case 0x3C:
+          lessThans++;
+      }
+    }
+    _references += ampersands + lessThans;
+    _text += 4 * ampersands + 3 * lessThans;
+    if (_references > _maxReferences || _text > _maxText) {
+      throw DocumentProblemException(DocumentProblem.tooLarge);
+    }
+    return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;');
+  }
+
   /// Counts a tag the parser gets: its attributes and its parse errors.
   void _tagWork(_Tag tag) {
     _attributes += tag.attributes;
@@ -544,9 +591,9 @@ class _Guard {
                 : content,
           );
         case 'xmp' || 'plaintext':
-          _out.write('<pre>${const HtmlEscape().convert(content)}</pre>');
           _start('pre');
           _textRun(tag.end, contentEnd);
+          _out.write('<pre>${_escape(content)}</pre>');
           _end('pre');
         case 'iframe':
           _dropped = true;
@@ -648,11 +695,19 @@ class _Guard {
   int _declarationEnd(int lt) {
     final s = source;
     if (s.startsWith('<!--', lt)) {
-      final close = s.indexOf('-->', lt + 2);
-      final bang = s.indexOf('--!>', lt + 4);
-      var end = close < 0 ? s.length : close + 3;
-      if (bang >= 0 && bang + 4 < end) end = bang + 4;
-      return end;
+      // The first `-->`, or `--!>` past the opening `<!--`; each `--` is
+      // looked at once, so many comments cost no more than their length.
+      for (
+        var dashes = s.indexOf('--', lt + 2);
+        dashes >= 0;
+        dashes = s.indexOf('--', dashes + 1)
+      ) {
+        if (s.startsWith('>', dashes + 2)) return dashes + 3;
+        if (dashes >= lt + 4 && s.startsWith('!>', dashes + 2)) {
+          return dashes + 4;
+        }
+      }
+      return s.length;
     }
     final gt = s.indexOf('>', lt + 2);
     return gt < 0 ? s.length : gt + 1;
@@ -1042,10 +1097,15 @@ class _Guard {
 
   void _start(String name, {bool hidden = false}) {
     if (name != 'col' && name != 'html') _leaveColumnGroup();
+    if (name == 'col') {
+      // The parser closes cells, rows, sections and captions to put the
+      // column in a column group, which it makes when none is open.
+      if (_stack.last != 'colgroup') _tablePart('colgroup');
+      if (_stack.last == 'colgroup') _insert(name);
+      return;
+    }
     if (_void.contains(name)) {
       if (name == 'hr') _closeParagraph();
-      // A column may come with the column group the parser makes for it.
-      if (name == 'col') _count();
       _insert(name, hidden: hidden);
       return;
     }
@@ -1053,8 +1113,8 @@ class _Guard {
       _foster();
     }
     if (_closesParagraph.contains(name)) {
+      if (name == 'table' && _inTableMode()) _closeTable();
       _closeParagraph();
-      if (name == 'table' && _inTableMode()) _popThrough('table');
       _push(name);
       return;
     }
@@ -1076,6 +1136,16 @@ class _Guard {
       case 'option' || 'optgroup':
         if (_stack.last == 'option') _pop();
         _push(name);
+      case 'rp' || 'rt':
+        // The parser looks for the ruby the annotation belongs to and closes
+        // the paragraphs, items and annotations open in it.
+        _searchScope();
+        if (_inScope('ruby', _scope)) {
+          while (_impliedEnds.contains(_stack.last)) {
+            _pop();
+          }
+        }
+        _push(name);
       case 'caption' ||
           'colgroup' ||
           'tbody' ||
@@ -1094,7 +1164,15 @@ class _Guard {
 
   void _end(String name) {
     if (_headings.contains(name)) {
-      if (_headings.any((heading) => _inScope(heading, _scope))) {
+      // The parser looks for each level in turn until one is in scope, twice.
+      var missing = 0;
+      final open = _headings.any((heading) {
+        if (_inScope(heading, _scope)) return true;
+        missing++;
+        return false;
+      });
+      _searchScope(2 * missing);
+      if (open) {
         while (_stack.length > 2 && !_headings.contains(_pop())) {}
       }
       return;
@@ -1104,6 +1182,8 @@ class _Guard {
         if (_inScope('p', _buttonScope)) {
           _popThrough('p');
         } else {
+          // The parser looks for one twice, then makes an empty paragraph.
+          _parse(_errorWork + 2 * _stack.length);
           _insert(name);
         }
       case 'li':
@@ -1122,7 +1202,12 @@ class _Guard {
           'td' ||
           'th' ||
           'caption':
-        if (_inScope(name, _tableScope)) _popThrough(name);
+        if (!_inScope(name, _tableScope)) break;
+        if (name == 'table') {
+          _closeTable();
+        } else {
+          _popThrough(name);
+        }
       case 'colgroup':
         if (_stack.last == 'colgroup') _pop();
       default:
@@ -1146,8 +1231,18 @@ class _Guard {
     }
   }
 
+  /// The parser then looks down its stack for what the table was in.
+  void _closeTable() {
+    _popThrough('table');
+    _walk(_stack.length);
+  }
+
   void _closeParagraph() {
-    if (_inScope('p', _buttonScope)) _popThrough('p');
+    if (_inScope('p', _buttonScope)) {
+      _popThrough('p');
+    } else {
+      _searchScope();
+    }
   }
 
   void _closeItem(Set<String> names) {
@@ -1161,9 +1256,11 @@ class _Guard {
           node != 'address' &&
           node != 'div' &&
           node != 'p') {
-        return;
+        break;
       }
     }
+    // The parser's search ends at an element that bounds scopes or before.
+    _searchScope();
   }
 
   String? _tableContext() {
@@ -1234,6 +1331,7 @@ class _Guard {
 
   void _push(String name) {
     _children.last++;
+    _scopeFloors.add(_scope.contains(name) ? _stack.length : _scopeFloors.last);
     _stack.add(name);
     _children.add(0);
     _open[name] = (_open[name] ?? 0) + 1;
@@ -1266,6 +1364,7 @@ class _Guard {
   String _pop() {
     final name = _stack.removeLast();
     _children.removeLast();
+    _scopeFloors.removeLast();
     _open[name] = _open[name]! - 1;
     if (name == 'table') _fosteredText = false;
     return name;

@@ -127,15 +127,27 @@ String _declaredUtf8(Uint8List bytes) {
     return utf8.decode(bytes);
   } on FormatException {
     final text = utf8.decode(bytes, allowMalformed: true);
-    var balance = 0;
+    var valid = 0;
+    var replaced = 0;
     for (final rune in text.runes) {
       if (rune == 0xFFFD) {
-        balance--;
+        replaced++;
       } else if (rune >= 0x80) {
-        balance++;
+        valid++;
       }
     }
-    return balance > 0 ? text : decodeCodePage(bytes, 1252);
+    // U+FFFD written in the page is a character like any other.
+    var written = 0;
+    for (var index = 0; index + 2 < bytes.length; index++) {
+      if (bytes[index] == 0xEF &&
+          bytes[index + 1] == 0xBF &&
+          bytes[index + 2] == 0xBD) {
+        written++;
+      }
+    }
+    return valid + written > replaced - written
+        ? text
+        : decodeCodePage(bytes, 1252);
   }
 }
 

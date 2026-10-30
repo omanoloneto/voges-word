@@ -195,6 +195,24 @@ void main() {
       );
     }
     expect(headings.look.headings[3]?.color.toARGB32(), 0xFFC00000);
+
+    // Or of a dark box around the content.
+    for (final (open, close) in [
+      ('<div class="page">', '</div>'),
+      ('<main>', '</main>'),
+    ]) {
+      final boxed = _read(
+        '<style>.page, main { background: #121212; color: #e0e0e0 } '
+        'h1 { color: #ffffff } h2 { color: #ffd700 }</style>'
+        '$open<h1>Release notes</h1><p>This version fixes several bugs.</p>'
+        '$close<h2>Light page</h2>',
+      );
+      final look = boxed.look;
+      expect(look.headings[1]?.color.toARGB32(), 0xFF000000, reason: open);
+      expect(_run(boxed.delta, 'Release'), isEmpty, reason: open);
+      // Headings on the white page keep their color.
+      expect(look.headings[2]?.color.toARGB32(), 0xFFFFD700, reason: open);
+    }
   });
 
   test('transparent colors are no colors, and translucent ones blend in', () {
@@ -286,6 +304,23 @@ void main() {
       ]),
     );
     expect(_plain(xml.delta), 'ação \u{FFFD}\n');
+
+    // U+FFFD the page already holds is UTF-8, not a byte that isn't.
+    final replaced = _decode(
+      Uint8List.fromList([
+        ...utf8.encode(
+          '<meta charset="utf-8"><p>Quote from José: \u{FFFD}It works'
+          '\u{FFFD}, he said\u{FFFD}s.</p><p>Price: 10',
+        ),
+        0xA0,
+        ...utf8.encode(' euros</p>'),
+      ]),
+    );
+    expect(
+      _plain(replaced.delta),
+      'Quote from José: \u{FFFD}It works\u{FFFD}, he said\u{FFFD}s.\n'
+      'Price: 10\u{FFFD} euros\n',
+    );
 
     // Without any UTF-8 in it, the label is wrong and the page Western.
     final mislabeled = _decode(
@@ -861,6 +896,96 @@ $blank$blank</table>''', tables);
         '<p>&#0000000000000000000000065; &#x00000041;</p>',
       );
       expect(_plain(loaded.delta), 'a \u{FFFD} b\nc \u{FFFD} d\nA A\n');
+    });
+
+    test('comments cost only their own length', () {
+      final text = 'x' * (1024 * 1024);
+      final watch = Stopwatch()..start();
+      // Server-rendered pages mark many nodes with an empty comment.
+      for (final comment in ['<!---->', '<!-- n --!>']) {
+        final runs = _runs('${comment * 3000}<p>$text</p>');
+        expect(runs.single.text, hasLength(text.length), reason: comment);
+      }
+      expect(watch.elapsed, lessThan(const Duration(seconds: 5)));
+
+      // Comments end where the parser ends them.
+      final loaded = _read(
+        '<p>a<!-->b<!--->c<!---->d<!-- x --!>e<!--!> f -->g'
+        '<!---!> h -->i<!-- <!-- nested --> j<!-- a -- b --->k</p>',
+      );
+      expect(_plain(loaded.delta), 'abcdegi jk\n');
+    });
+
+    test('a column in a cell or caption does not hide moved content', () {
+      // The parser closes the cell or caption, so what follows the column is
+      // moved in front of the table.
+      final watch = Stopwatch()..start();
+      for (final part in ['<tr><td>', '<caption>', '<tr><th><div>']) {
+        expect(
+          () => readHtml('<table>$part<col>${'x<br>' * 20000}</table>'),
+          _tooLarge(),
+          reason: part,
+        );
+      }
+      expect(watch.elapsed, lessThan(const Duration(seconds: 5)));
+
+      final tables = TableStore();
+      final loaded = _read(
+        '<table><col width="100"><col width="200">'
+        '<tr><td>a</td><td>b</td></tr></table>',
+        tables,
+      );
+      final table = _tables(loaded.delta, tables).single;
+      expect(table.rows.single.cells.map(_cellText), ['a', 'b']);
+      expect(table.columnWidths, [1500, 3000]);
+    });
+
+    test('searches for elements that are not open are budgeted', () {
+      // Each of these makes the parser look through every open element.
+      final watch = Stopwatch()..start();
+      for (final page in [
+        '${'<span>' * 250}${'</p>' * 199000}',
+        '${'<span>' * 250}${'<li>' * 199000}',
+        '${'<div>' * 250}${'<p>x</p>' * 199000}',
+        '${'<span>' * 250}${'<h6>x</h6>' * 60000}',
+        '<ruby>${'<span>' * 250}${'<rt>x</rt>' * 199000}',
+        // A closed table makes it look for what the table was in.
+        '${'<span>' * 250}${'<table></table>' * 60000}',
+      ]) {
+        expect(
+          () => readHtml(page),
+          _tooLarge(),
+          reason: page.substring(page.length - 12),
+        );
+      }
+      expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+
+      // Annotations close the paragraphs open in their ruby, so this nests as
+      // deep as it looks.
+      expect(
+        () => readHtml('<ruby>${'<p>a<rt>b<div>' * 200}'),
+        throwsA(isA<FormatException>()),
+      );
+
+      // Pages nested as deep as real ones read.
+      const blocks = '<ul><li>item</li></ul><h4>Title</h4><p>text</p>';
+      final page = readHtml('${'<div>' * 30}${blocks * 20000}');
+      expect(page.spec.body, hasLength(60000));
+    });
+
+    test('xmp and plaintext count the references they become', () {
+      for (final page in [
+        '<xmp>${'<' * 4100000}',
+        '<plaintext>${'&' * 4100000}',
+        // Fewer references, but more text than allowed once written out.
+        '<xmp>${'&' * 3500000}</xmp>',
+      ]) {
+        expect(() => readHtml(page), _tooLarge(), reason: page.substring(0, 8));
+      }
+      final loaded = _read(
+        '<xmp>a & b <i> "c" \'d\' / e</xmp><plaintext>&amp; <p>',
+      );
+      expect(_plain(loaded.delta), 'a & b <i> "c" \'d\' / e\n&amp; <p>\n');
     });
   });
 }

@@ -164,6 +164,7 @@ const _blockTags = {
   'colgroup',
 };
 const _listTags = {'ul', 'ol', 'menu', 'dir'};
+const _headingTags = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'};
 
 enum _Kind { inline, block, paragraph, table, section, row, cell }
 
@@ -504,6 +505,9 @@ class _Reader {
   /// The page's background, which the document leaves out.
   String? _pageBackdrop;
 
+  /// The background behind the first heading of each level that has one.
+  final _headingBackdrops = <String, String>{};
+
   final _fonts = <String?, int>{};
   final _sizes = <double?, int>{};
   final _colors = <String?, int>{};
@@ -699,6 +703,9 @@ class _Reader {
     }
     final style = _styleOf(element, name, parent);
     if (name == 'body') _pageBackdrop = style.backdrop;
+    if (style.backdrop case final backdrop? when _headingTags.contains(name)) {
+      _headingBackdrops.putIfAbsent(name, () => backdrop);
+    }
     if (style.hidden || element.attributes.containsKey('hidden')) {
       if (style.breakBefore || style.breakAfter) _pageBreak();
       return null;
@@ -2443,7 +2450,10 @@ class _Reader {
             italic: style.italic ?? level >= 5,
             underline: style.underline,
             allCaps: style.allCaps,
-            color: _readableColor(style.color, box.background ?? _pageBackdrop),
+            color: _readableColor(
+              style.color,
+              box.background ?? _headingBackdrops['h$level'] ?? _pageBackdrop,
+            ),
           ),
           paragraph: ParagraphFormat(
             keepNext: true,
