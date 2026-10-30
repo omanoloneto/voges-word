@@ -15,7 +15,7 @@ import 'picture_decoding.dart';
 /// and images (anchored logos at the position Word uses).
 class HeaderFooterPainter extends ChangeNotifier {
   HeaderFooterPainter(this.stories, this.look) {
-    ready = _decodeImages();
+    ready = _decodeImages(_pixelRatio);
   }
 
   /// Completes when the header and footer images are ready.
@@ -25,7 +25,18 @@ class HeaderFooterPainter extends ChangeNotifier {
   final DocumentLook look;
   final _images = <String, ui.Image>{};
   final _layouts = <(HeaderFooterStory, int, int), _StoryLayout>{};
+  var _pixelRatio = _sharpestScreen;
   var _disposed = false;
+
+  /// Decodes the pictures again when the pages are drawn on a screen sharper
+  /// than the one they were decoded for, as when the window moves to another
+  /// screen or the system's scaling grows; until then the current ones are
+  /// drawn.
+  void raisePixelRatio(double devicePixelRatio) {
+    if (_disposed || devicePixelRatio <= _pixelRatio) return;
+    _pixelRatio = devicePixelRatio;
+    _decodeImages(devicePixelRatio).ignore();
+  }
 
   Iterable<HeaderFooterStory> get _all => [
     ...stories.headers.values,
@@ -122,8 +133,9 @@ class HeaderFooterPainter extends ChangeNotifier {
   static bool _isField(String type) =>
       type == EmbedTypes.pageNumber || type == EmbedTypes.opaqueInline;
 
-  /// Each picture is decoded once, at the largest size it is drawn.
-  Future<void> _decodeImages() async {
+  /// Each picture is decoded once for [pixelRatio], at the largest size it is
+  /// drawn; a later call for a sharper screen takes over.
+  Future<void> _decodeImages(double pixelRatio) async {
     final sizes = <String, Size>{};
     for (final story in _all) {
       for (final op in story.delta.toList()) {
@@ -137,7 +149,6 @@ class HeaderFooterPainter extends ChangeNotifier {
         }
       }
     }
-    final pixelRatio = _devicePixelRatio;
     for (final MapEntry(key: source, value: size) in sizes.entries) {
       final decoded = decodeDataUri(source);
       if (decoded == null || size.isEmpty) continue;
@@ -148,10 +159,11 @@ class HeaderFooterPainter extends ChangeNotifier {
         );
         final frame = await codec.getNextFrame();
         codec.dispose();
-        if (_disposed) {
+        if (_disposed || pixelRatio < _pixelRatio) {
           frame.image.dispose();
           return;
         }
+        _images.remove(source)?.dispose();
         _images[source] = frame.image;
         notifyListeners();
       } catch (_) {
@@ -162,7 +174,7 @@ class HeaderFooterPainter extends ChangeNotifier {
 
   /// The sharpest screen's: the pictures stay sharp when the window moves to
   /// another screen.
-  static double get _devicePixelRatio {
+  static double get _sharpestScreen {
     final platform = PaintingBinding.instance.platformDispatcher;
     return [
       for (final view in platform.views) view.devicePixelRatio,

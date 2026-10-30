@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 
@@ -32,7 +30,7 @@ class ImageEmbedBuilder extends EmbedBuilder {
   }
 }
 
-class EmbeddedImage extends StatelessWidget {
+class EmbeddedImage extends StatefulWidget {
   const EmbeddedImage({
     required this.source,
     this.width,
@@ -63,17 +61,16 @@ class EmbeddedImage extends StatelessWidget {
   final double? width;
   final double? height;
 
-  static final _cache = <String, ({Uint8List bytes, String mime})?>{};
+  static final _pictures = _ShownPictures();
 
   /// Decodes before drawing off-screen (PDF and printing); it uses the same
   /// provider as the widget, so the Image finds the picture in the cache.
   Future<void> precache(BuildContext context) async {
-    final decoded = _decode(source);
-    if (decoded == null || !isDisplayable(decoded.mime)) return;
-    final pixels = imagePixelSize(decoded.bytes);
-    if (_isTooLarge(pixels)) return;
+    final picture = _pictures.read(source);
+    if (picture == null || !isDisplayable(picture.mime)) return;
+    if (_isTooLarge(picture.pixels)) return;
     await precacheImage(
-      _picture(context, decoded.bytes, _sizeFor(pixels)),
+      _provider(context, _sizeFor(picture.pixels)),
       context,
       onError: (error, stackTrace) {},
     );
@@ -89,12 +86,8 @@ class EmbeddedImage extends StatelessWidget {
     return Size(width, height ?? width / naturalRatio);
   }
 
-  static PictureImage _picture(
-    BuildContext context,
-    Uint8List bytes,
-    Size size,
-  ) => PictureImage(
-    bytes,
+  PictureImage _provider(BuildContext context, Size size) => PictureImage(
+    source,
     drawnPictureSize(
       size.width,
       size.height,
@@ -105,35 +98,49 @@ class EmbeddedImage extends StatelessWidget {
   static bool _isTooLarge(({int width, int height})? pixels) =>
       pixels != null && exceedsPictureLimit(pixels.width, pixels.height);
 
-  static ({Uint8List bytes, String mime})? _decode(String source) {
-    if (_cache.containsKey(source)) {
-      final cached = _cache.remove(source);
-      _cache[source] = cached;
-      return cached;
-    }
-    final decoded = decodeDataUri(source);
-    _cache[source] = decoded;
-    if (_cache.length > 128) _cache.remove(_cache.keys.first);
-    return decoded;
+  @override
+  State<EmbeddedImage> createState() => _EmbeddedImageState();
+}
+
+class _EmbeddedImageState extends State<EmbeddedImage> {
+  _Picture? _picture;
+
+  @override
+  void initState() {
+    super.initState();
+    _picture = EmbeddedImage._pictures.hold(widget.source);
+  }
+
+  @override
+  void didUpdateWidget(EmbeddedImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.source == oldWidget.source) return;
+    _picture = EmbeddedImage._pictures.hold(widget.source);
+    EmbeddedImage._pictures.release(oldWidget.source);
+  }
+
+  @override
+  void dispose() {
+    EmbeddedImage._pictures.release(widget.source);
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final decoded = _decode(source);
-    final pixels = decoded == null ? null : imagePixelSize(decoded.bytes);
-    final size = _sizeFor(pixels);
+    final picture = _picture;
+    final size = widget._sizeFor(picture?.pixels);
     final l10n = context.l10n;
     final unsupported = l10n.unsupportedImage(
-      decoded == null ? '' : extensionForMime(decoded.mime).toUpperCase(),
+      picture == null ? '' : extensionForMime(picture.mime).toUpperCase(),
     );
     final Widget image;
-    if (decoded == null || !isDisplayable(decoded.mime)) {
+    if (picture == null || !isDisplayable(picture.mime)) {
       image = _placeholder(context, unsupported);
-    } else if (_isTooLarge(pixels)) {
+    } else if (EmbeddedImage._isTooLarge(picture.pixels)) {
       image = _placeholder(context, l10n.pictureTooLarge);
     } else {
       image = Image(
-        image: _picture(context, decoded.bytes, size),
+        image: widget._provider(context, size),
         fit: BoxFit.fill,
         gaplessPlayback: true,
         errorBuilder: (context, error, stackTrace) => _placeholder(
@@ -168,6 +175,65 @@ class EmbeddedImage extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// A picture's format, and its size in pixels by its header.
+typedef _Picture = ({String mime, ({int width, int height})? pixels});
+
+/// Pictures read from their data URIs, each kept while a widget shows it,
+/// so the page is built again without reading any of them, however many
+/// there are. The last ones no longer shown are kept a while: when a line
+/// is added or removed above, each widget shows the picture of the one
+/// next to it.
+class _ShownPictures {
+  final _shown = <String, ({_Picture? picture, int widgets})>{};
+  final _recent = <String, _Picture?>{};
+
+  _Picture? hold(String source) {
+    final shown = _shown[source];
+    final _Picture? picture;
+    if (shown != null) {
+      picture = shown.picture;
+    } else if (_recent.containsKey(source)) {
+      picture = _recent.remove(source);
+    } else {
+      picture = _readPicture(source);
+    }
+    _shown[source] = (picture: picture, widgets: (shown?.widgets ?? 0) + 1);
+    return picture;
+  }
+
+  void release(String source) {
+    final shown = _shown[source];
+    if (shown == null) return;
+    if (shown.widgets > 1) {
+      _shown[source] = (picture: shown.picture, widgets: shown.widgets - 1);
+      return;
+    }
+    _shown.remove(source);
+    _remember(source, shown.picture);
+  }
+
+  /// For a picture drawn off-screen, which may not be shown.
+  _Picture? read(String source) {
+    if (_shown[source] case final shown?) return shown.picture;
+    if (_recent.containsKey(source)) return _recent[source];
+    final picture = _readPicture(source);
+    _remember(source, picture);
+    return picture;
+  }
+
+  void _remember(String source, _Picture? picture) {
+    _recent.remove(source);
+    _recent[source] = picture;
+    if (_recent.length > 128) _recent.remove(_recent.keys.first);
+  }
+
+  static _Picture? _readPicture(String source) {
+    final decoded = readPictureUri(source);
+    if (decoded == null) return null;
+    return (mime: decoded.mime, pixels: imagePixelSize(decoded.bytes));
   }
 }
 

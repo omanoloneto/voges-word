@@ -96,14 +96,36 @@ Future<ui.Codec> openPicture(
   return codec;
 }
 
-/// A picture drawn through [openPicture] at [drawnSize]. The same bytes at
-/// the same size give the same key, so a precached picture is found in the
-/// cache when the page draws it; at another size it is decoded again.
+/// Bytes kept of the pictures decoded last; the newest is always kept.
+const _recentBytesLimit = 32 << 20;
+
+final _recent = <String, ({Uint8List bytes, String mime})>{};
+var _recentBytes = 0;
+
+/// The picture in a data URI. The last ones decoded are kept, since a page
+/// reads a picture's header and draws it right after.
+({Uint8List bytes, String mime})? readPictureUri(String uri) {
+  if (_recent.remove(uri) case final picture?) return _recent[uri] = picture;
+  final picture = decodeDataUri(uri);
+  if (picture == null) return null;
+  _recent[uri] = picture;
+  _recentBytes += picture.bytes.length;
+  while (_recentBytes > _recentBytesLimit && _recent.length > 1) {
+    _recentBytes -= _recent.remove(_recent.keys.first)!.bytes.length;
+  }
+  return picture;
+}
+
+/// The picture in data URI [uri], drawn through [openPicture] at
+/// [drawnSize]. The same picture at the same size gives the same key, from
+/// any widget or copy of the document, so rebuilding the page, precaching
+/// and the PDF's pages find it in the cache; at another size it is decoded
+/// again.
 @immutable
 class PictureImage extends ImageProvider<PictureImage> {
-  const PictureImage(this.bytes, this.drawnSize);
+  const PictureImage(this.uri, this.drawnSize);
 
-  final Uint8List bytes;
+  final String uri;
 
   /// Device pixels, from [drawnPictureSize].
   final ({int width, int height}) drawnSize;
@@ -117,22 +139,29 @@ class PictureImage extends ImageProvider<PictureImage> {
     PictureImage key,
     ImageDecoderCallback decode,
   ) => MultiFrameImageStreamCompleter(
-    codec: openPicture(key.bytes, drawnSize: key.drawnSize, decode: decode),
+    codec: _open(key, decode),
     scale: 1,
     debugLabel: '$key',
   );
 
-  @override
-  bool operator ==(Object other) =>
-      other is PictureImage &&
-      identical(other.bytes, bytes) &&
-      other.drawnSize == drawnSize;
+  static Future<ui.Codec> _open(
+    PictureImage key,
+    ImageDecoderCallback decode,
+  ) async {
+    final picture = readPictureUri(key.uri);
+    if (picture == null) throw const FormatException('Not a picture data URI');
+    return openPicture(picture.bytes, drawnSize: key.drawnSize, decode: decode);
+  }
 
   @override
-  int get hashCode => Object.hash(identityHashCode(bytes), drawnSize);
+  bool operator ==(Object other) =>
+      other is PictureImage && other.drawnSize == drawnSize && other.uri == uri;
+
+  @override
+  int get hashCode => Object.hash(uri, drawnSize);
 
   @override
   String toString() =>
-      'PictureImage(${describeIdentity(bytes)}, '
+      'PictureImage(${shortHash(uri)}, '
       '${drawnSize.width}x${drawnSize.height})';
 }

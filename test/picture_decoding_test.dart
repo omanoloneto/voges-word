@@ -4,10 +4,12 @@ import 'dart:ui' as ui;
 
 import 'package:archive/archive.dart' show getCrc32;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:voges_word/app.dart';
 import 'package:voges_word/docx/docx_builder.dart';
 import 'package:voges_word/docx/docx_codec.dart';
 import 'package:voges_word/docx/image_formats.dart';
@@ -19,8 +21,13 @@ import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/editor/editor_session.dart';
 import 'package:voges_word/editor/embeds/embed_builders.dart';
 import 'package:voges_word/editor/header_footer_painter.dart';
+import 'package:voges_word/editor/paper_view.dart';
 import 'package:voges_word/editor/picture_decoding.dart';
 import 'package:voges_word/files/document_files.dart';
+import 'package:voges_word/files/recent_files.dart';
+import 'package:voges_word/files/system_open.dart';
+import 'package:voges_word/fonts/font_catalog.dart';
+import 'package:voges_word/l10n/app_language.dart';
 import 'package:voges_word/l10n/l10n.dart';
 import 'package:voges_word/print/page_renderer.dart';
 
@@ -162,6 +169,100 @@ void _screen(WidgetTester tester, double ratio) {
 Iterable<ui.Image?> _drawn(WidgetTester tester) =>
     tester.widgetList<RawImage>(find.byType(RawImage)).map((raw) => raw.image);
 
+/// [_png] carrying [padding] more bytes in a private chunk, so its data URI
+/// is long.
+Uint8List _paddedPng(int width, int height, int padding) {
+  final png = _png(width, height);
+  final chunk = Uint8List(12 + padding)..setAll(4, ascii.encode('vwPd'));
+  ByteData.sublistView(chunk)
+    ..setUint32(0, padding)
+    ..setUint32(8 + padding, getCrc32(chunk.sublist(4, 8 + padding)));
+  return (BytesBuilder(copy: false)
+        ..add(png.sublist(0, 33))
+        ..add(chunk)
+        ..add(png.sublist(33)))
+      .takeBytes();
+}
+
+/// A window of 1400 by 1000 logical pixels on a screen of [ratio], like the
+/// same window moved to another screen.
+void _window(WidgetTester tester, double ratio) {
+  tester.view
+    ..physicalSize = Size(1400 * ratio, 1000 * ratio)
+    ..devicePixelRatio = ratio
+    ..display.devicePixelRatio = ratio;
+  addTearDown(tester.view.reset);
+  addTearDown(tester.view.display.reset);
+}
+
+/// Lets the engine finish every decode the pages asked for.
+Future<void> _settle(WidgetTester tester, _DecoderSpy spy) async {
+  var requests = -1;
+  for (var quiet = 0; quiet < 3;) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    final settled =
+        spy.requests == requests && spy.imageCache.pendingImageCount == 0;
+    quiet = settled ? quiet + 1 : 0;
+    requests = spy.requests;
+  }
+}
+
+Future<EditorSession> _openInApp(WidgetTester tester, DocumentSpec spec) async {
+  final tables = TableStore();
+  final docx = DocxCodec(tables);
+  final files = DocumentFiles();
+  final session = EditorSession(
+    docx: docx,
+    plainText: PlainTextCodec(look: docx.createEmpty().look, tables: tables),
+    files: files,
+    tables: tables,
+  );
+  session.open(
+    OpenedFile(
+      name: 'pictures.docx',
+      bytes: DocxBuilder(spec).build().encode(),
+    ),
+  );
+  await tester.pumpWidget(
+    VogesWordApp(
+      session: session,
+      systemOpen: SystemOpen(files),
+      recents: RecentFiles(files),
+      fonts: FontCatalog(
+        listSystemFonts: () async => const [],
+        readGoogleCatalog: () async => '',
+      ),
+      launchArguments: const [],
+      language: AppLanguage(),
+    ),
+  );
+  return session;
+}
+
+class _Rebuilt extends StatefulWidget {
+  const _Rebuilt(this.sources, {super.key});
+
+  final List<String> sources;
+
+  @override
+  State<_Rebuilt> createState() => _RebuiltState();
+}
+
+class _RebuiltState extends State<_Rebuilt> {
+  void rebuild() => setState(() {});
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      for (final source in widget.sources)
+        EmbeddedImage(source: source, width: 6, height: 4),
+    ],
+  );
+}
+
 void main() {
   final spy = _DecoderSpy();
   final tooLarge = lookupAppLocalizations(const Locale('en')).pictureTooLarge;
@@ -170,8 +271,15 @@ void main() {
     spy
       ..requests = 0
       ..log.clear()
-      ..imageCache.clear();
+      ..imageCache.clear()
+      ..imageCache.clearLiveImages();
   });
+
+  /// Closes the app, whose editor keeps a cursor timer running.
+  Future<void> closeApp(WidgetTester tester) async {
+    await tester.pumpWidget(const SizedBox());
+    await _settle(tester, spy);
+  }
 
   testWidgets(
     'pictures over 100 megapixels by their header show a placeholder and never reach the decoder',
@@ -478,6 +586,168 @@ void main() {
         open(gif(5000, 2, frames: 2), (width: 100, height: 1)),
         throwsA(isA<PictureTooLargeException>()),
       );
+    },
+  );
+
+  for (final count in [100, 140, 400]) {
+    testWidgets(
+      'with $count pictures, typing, zooming and the PDF decode none again, and a sharper screen decodes each once',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        _window(tester, 1);
+        final spec = DocumentSpec();
+        for (var index = 0; index < count; index++) {
+          spec.body.add(
+            ParagraphSpec([
+              ImageSpec(
+                _png(100 + index, 80),
+                'image/png',
+                width: 60,
+                height: 40,
+              ),
+            ]),
+          );
+        }
+        final session = await _openInApp(tester, spec);
+        await _settle(tester, spy);
+        expect(spy.requests, count, reason: 'opening');
+
+        Future<int> decodesFor(Future<void> Function() action) async {
+          spy.requests = 0;
+          await action();
+          await _settle(tester, spy);
+          return spy.requests;
+        }
+
+        Future<void> type() async => session.controller.replaceText(
+          0,
+          0,
+          'a',
+          const TextSelection.collapsed(offset: 1),
+        );
+
+        expect(await decodesFor(type), 0, reason: 'typing');
+        expect(
+          await decodesFor(() async {
+            for (var step = 0; step < 2; step++) {
+              await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+              await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+              await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+              await tester.pump();
+            }
+          }),
+          0,
+          reason: 'zooming',
+        );
+        expect(
+          tester.widget<PaperView>(find.byType(PaperView)).zoom,
+          greaterThan(1),
+        );
+        final page = tester.element(find.byType(PaperView));
+        expect(
+          await decodesFor(() async {
+            final pdf = await tester.runAsync(() => documentPdf(page, session));
+            expect(pdf, isNotNull);
+          }),
+          0,
+          reason: 'the PDF',
+        );
+        expect(
+          await decodesFor(() async => _window(tester, 2)),
+          count,
+          reason: 'a sharper screen',
+        );
+        expect(await decodesFor(type), 0, reason: 'typing there');
+        await closeApp(tester);
+      },
+      timeout: const Timeout(Duration(minutes: 4)),
+    );
+  }
+
+  testWidgets(
+    'building the pages again reads no picture again, however many and however large',
+    (tester) async {
+      final small = GlobalKey<_RebuiltState>();
+      final large = GlobalKey<_RebuiltState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: SingleChildScrollView(
+            child: Column(
+              children: [
+                _Rebuilt([
+                  for (var index = 0; index < 300; index++)
+                    dataUriFromMime(_png(100 + index, 80), 'image/png'),
+                ], key: small),
+                _Rebuilt([
+                  for (var index = 0; index < 300; index++)
+                    dataUriFromMime(
+                      _paddedPng(100 + index, 80, 256 << 10),
+                      'image/png',
+                    ),
+                ], key: large),
+              ],
+            ),
+          ),
+        ),
+      );
+      await _settle(tester, spy);
+      expect(spy.requests, 600);
+
+      Future<Duration> rebuild(GlobalKey<_RebuiltState> pictures) async {
+        final watch = Stopwatch()..start();
+        pictures.currentState!.rebuild();
+        await tester.pump();
+        return watch.elapsed;
+      }
+
+      spy.requests = 0;
+      await rebuild(small);
+      await rebuild(large);
+      var smallTime = Duration.zero;
+      var largeTime = Duration.zero;
+      for (var round = 0; round < 5; round++) {
+        smallTime += await rebuild(small);
+        largeTime += await rebuild(large);
+      }
+      await _settle(tester, spy);
+
+      expect(spy.requests, 0);
+      // Reading each data URI on every build took four to seven times as long.
+      expect(
+        largeTime,
+        lessThan(smallTime * 2 + const Duration(milliseconds: 250)),
+      );
+    },
+  );
+
+  testWidgets(
+    'header pictures are decoded again when the window moves to a sharper screen, not to a less sharp one',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      _window(tester, 1);
+      final spec = DocumentSpec()
+        ..body.add(ParagraphSpec([const TextSpec('Text')]))
+        ..headers[PageVariant.normal] = [
+          ParagraphSpec([
+            ImageSpec(_png(4000, 2000), 'image/png', width: 300, height: 150),
+          ]),
+        ];
+      await _openInApp(tester, spec);
+      await _settle(tester, spy);
+      expect(spy.log, ['4000x2000 -> 834x417']);
+
+      spy.log.clear();
+      _window(tester, 2);
+      await _settle(tester, spy);
+      expect(spy.log, ['4000x2000 -> 1600x800']);
+
+      spy.log.clear();
+      _window(tester, 1);
+      await _settle(tester, spy);
+      expect(spy.log, isEmpty);
+      await closeApp(tester);
     },
   );
 }
