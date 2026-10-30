@@ -9,12 +9,27 @@ import 'package:voges_word/document/delta_blocks.dart';
 import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/embeds.dart';
 import 'package:voges_word/document/tables.dart';
+import 'package:voges_word/docx/docx_builder.dart';
 import 'package:voges_word/docx/docx_codec.dart';
 import 'package:voges_word/docx/docx_package.dart';
 import 'package:voges_word/html/markdown_codec.dart';
+import 'package:xml/xml.dart';
 
 final _pngUri =
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+/// A PNG of [size] bytes, as a screenshot pasted into a note: one pixel,
+/// then bytes that look as random as compressed pixels do.
+String _screenshot(int size, int seed) {
+  final png = base64Decode(_pngUri.substring(_pngUri.indexOf(',') + 1));
+  final bytes = Uint8List(size)..setAll(0, png);
+  var state = seed;
+  for (var index = png.length; index < size; index++) {
+    state = (state * 1103515245 + 12345) & 0x7FFFFFFF;
+    bytes[index] = state >> 16;
+  }
+  return 'data:image/png;base64,${base64Encode(bytes)}';
+}
 
 LoadedDocument _read(String markdown, [TableStore? tables]) => MarkdownCodec(
   DocxCodec(tables ?? TableStore()),
@@ -56,6 +71,45 @@ String _plain(Delta delta) => [
     if (operation.data is String) operation.data,
 ].join();
 
+int _pictures(Delta delta) => delta
+    .toList()
+    .where(
+      (operation) =>
+          operation.data is Map &&
+          (operation.data as Map).containsKey(EmbedTypes.image),
+    )
+    .length;
+
+/// The symbol and font of the list level of the line holding [text].
+(String?, String?) _level(LoadedDocument loaded, String text) {
+  final line = _line(loaded.delta, text);
+  final numbering = XmlDocument.parse(
+    (loaded.source! as DocxPackage).text('word/numbering.xml')!,
+  );
+  XmlElement find(String name, String attribute, Object? value) => numbering
+      .findAllElements('w:$name')
+      .firstWhere((element) => element.getAttribute(attribute) == '$value');
+  final number = find(
+    'num',
+    'w:numId',
+    line.attributes[HiddenAttributes.numbering],
+  );
+  final level =
+      find(
+            'abstractNum',
+            'w:abstractNumId',
+            number.getElement('w:abstractNumId')!.getAttribute('w:val'),
+          )
+          .findElements('w:lvl')
+          .firstWhere(
+            (element) => element.getAttribute('w:ilvl') == '${line.indent}',
+          );
+  return (
+    level.getElement('w:lvlText')?.getAttribute('w:val'),
+    level.findAllElements('w:rFonts').firstOrNull?.getAttribute('w:ascii'),
+  );
+}
+
 TableModel _table(Delta delta, TableStore tables) =>
     tables[tableIdOf(
       documentBlocks(delta)
@@ -96,36 +150,37 @@ void main() {
       'Lists',
       {'header': 2},
     ]);
-    expect(lines.sublist(3, 10), [
+    expect(
+      [...lines.sublist(3, 6), ...lines.sublist(8, 10)],
       [
-        'First',
-        {'list': 'bullet'},
+        [
+          'First',
+          {'list': 'bullet'},
+        ],
+        [
+          'Second',
+          {'list': 'bullet'},
+        ],
+        [
+          'Nested',
+          {'list': 'bullet', 'indent': 1},
+        ],
+        [
+          'Three',
+          {'list': 'ordered'},
+        ],
+        [
+          'Four',
+          {'list': 'ordered'},
+        ],
       ],
-      [
-        'Second',
-        {'list': 'bullet'},
-      ],
-      [
-        'Nested',
-        {'list': 'bullet', 'indent': 1},
-      ],
-      [
-        '☑ Done',
-        {'list': 'bullet'},
-      ],
-      [
-        '☐ Pending',
-        {'list': 'bullet'},
-      ],
-      [
-        'Three',
-        {'list': 'ordered'},
-      ],
-      [
-        'Four',
-        {'list': 'ordered'},
-      ],
-    ]);
+    );
+    expect(
+      [for (final line in lines.sublist(6, 8)) line.first],
+      ['Done', 'Pending'],
+    );
+    expect(_level(loaded, 'Done'), ('☑', 'Segoe UI Symbol'));
+    expect(_level(loaded, 'Pending'), ('☐', 'Segoe UI Symbol'));
     expect(
       (loaded.source! as DocxPackage).text('word/numbering.xml'),
       contains('<w:start w:val="3"/>'),
@@ -235,46 +290,160 @@ void main() {
       }
     });
 
-    test('task lists keep their boxes', () {
-      const markdown =
-          '- [x] Write the parser\n- [ ] Write the tests\n\n1. [x] Ordered\n';
-      final loaded = _read(markdown);
-      expect(_lines(loaded.delta), [
-        [
-          '☑ Write the parser',
-          {'list': 'bullet'},
-        ],
-        [
-          '☐ Write the tests',
-          {'list': 'bullet'},
-        ],
-        [
-          '☑ Ordered',
-          {'list': 'ordered'},
-        ],
-      ]);
-      expect(_write(loaded.delta, null, loaded.source), markdown);
+    test('task items are ☑ and ☐ list levels', () {
+      for (final markdown in [
+        '- [x] Write the parser\n- [ ] Write the tests\n\n1. [x] Ordered\n',
+        // Items of a loose list hold their box in a paragraph.
+        '- [x] Write the parser\n\n- [ ] Write the tests\n\n1. [x] Ordered\n',
+        '<ul><li><input type="checkbox" checked> Write the parser</li>'
+            '<li><input type="checkbox"> Write the tests</li></ul>\n\n'
+            '1. [x] Ordered\n',
+      ]) {
+        final loaded = _read(markdown);
+        expect(
+          _plain(loaded.delta),
+          'Write the parser\nWrite the tests\nOrdered\n',
+          reason: markdown,
+        );
+        for (final (text, box) in [
+          ('parser', '☑'),
+          ('tests', '☐'),
+          ('Ordered', '☑'),
+        ]) {
+          expect(_level(loaded, text), (
+            box,
+            'Segoe UI Symbol',
+          ), reason: markdown);
+        }
+      }
 
       final checklist = _write(
         Delta()
           ..insert('done')
           ..insert('\n', {'list': 'checked'})
           ..insert('todo')
-          ..insert('\n', {'list': 'unchecked'}),
+          ..insert('\n', {'list': 'unchecked'})
+          ..insert('☑ typed')
+          ..insert('\n', {'list': 'bullet'}),
       );
-      expect(checklist, '- [x] done\n- [ ] todo\n');
+      expect(checklist, '- [x] done\n- [ ] todo\n- [x] typed\n');
       final again = _read(checklist);
-      expect(_lines(again.delta), [
+      expect(_level(again, 'done'), ('☑', 'Segoe UI Symbol'));
+      expect(_level(again, 'todo'), ('☐', 'Segoe UI Symbol'));
+    });
+
+    test('fences in list items leave what follows them out of the code', () {
+      final install = _read(
+        '- Install:\n  ```bash\n  pip install x\n    ```\n## Usage\n'
+        'Run `x --help`.\n',
+      );
+      expect(_lines(install.delta), [
         [
-          '☑ done',
+          'Install:',
           {'list': 'bullet'},
         ],
         [
-          '☐ todo',
-          {'list': 'bullet'},
+          'pip install x',
+          {'indent': 1},
+        ],
+        [
+          'Usage',
+          {'header': 2},
+        ],
+        ['Run x --help.', <String, dynamic>{}],
+      ]);
+      expect(_run(install.delta, 'pip install x'), {'font': 'Courier New'});
+      expect(_run(install.delta, 'x --help'), {'font': 'Courier New'});
+
+      final steps = _read(
+        '1. Install:\n\n   ```bash\n   pip install x\n    ```\n\n'
+        '   Then **run** it:\n\n   ```bash\n   x --help\n   ```\n',
+      );
+      expect(_lines(steps.delta), [
+        [
+          'Install:',
+          {'list': 'ordered'},
+        ],
+        [
+          'pip install x',
+          {'indent': 1},
+        ],
+        [
+          'Then run it:',
+          {'indent': 1},
+        ],
+        [
+          'x --help',
+          {'indent': 1},
         ],
       ]);
-      expect(_write(again.delta, null, again.source), checklist);
+      expect(_run(steps.delta, 'run'), {'bold': true});
+      expect(_run(steps.delta, 'x --help'), {'font': 'Courier New'});
+    });
+
+    test('pictures inside data URIs open in every form notes write', () {
+      final shot = _screenshot(480000, 1);
+      for (final markdown in [
+        'Text\n\n![Screenshot]($shot)\n',
+        'Text\n\n![Screenshot]($shot "Screenshot")\n',
+        'Text\n\n![screen\\_shot]($shot)\n',
+        'The screenshot:\n<img src="$shot" width="300">\n',
+        'Text\n\n![Shot][s0]\n\n[s0]: $shot\n',
+      ]) {
+        final loaded = _read(markdown);
+        expect(_pictures(loaded.delta), 1, reason: markdown.substring(0, 20));
+        expect(loaded.notices, isEmpty, reason: markdown.substring(0, 20));
+      }
+      // More than the text Markdown may have, all of it in pictures.
+      final shots = [for (var i = 0; i < 3; i++) _screenshot(1050000, i)];
+      for (final markdown in [
+        [for (final shot in shots) '![Shot]($shot "Shot")'].join('\n\n'),
+        [for (final shot in shots) '![a\\_b]($shot)'].join('\n\n'),
+        [
+          for (final shot in shots) 'Shot:\n<img src="$shot" width="300">',
+        ].join('\n\n'),
+        '${[for (var i = 0; i < 3; i++) '![Shot][s$i]'].join('\n\n')}\n\n'
+            '${[for (var i = 0; i < 3; i++) '[s$i]: ${shots[i]}'].join('\n')}\n',
+      ]) {
+        expect(markdown.length, greaterThan(4 * 1024 * 1024));
+        expect(
+          _pictures(_read(markdown).delta),
+          3,
+          reason: markdown.substring(0, 20),
+        );
+      }
+    });
+
+    test('links read back as they were written', () {
+      const markdown =
+          '[sheet](https://fonts.googleapis.com/css?family=Roboto|Open+Sans), '
+          '[escaped](https://example.com/a%7Cb), [page](docs/ação.md) and '
+          '[query](https://example.com/?a=1&copy)\n';
+      final loaded = _read(markdown);
+      expect(
+        [
+          for (final operation in loaded.delta.toList())
+            if (operation.attributes?['link'] case final String link) link,
+        ],
+        [
+          'https://fonts.googleapis.com/css?family=Roboto|Open+Sans',
+          'https://example.com/a%7Cb',
+          'docs/ação.md',
+          'https://example.com/?a=1&copy',
+        ],
+      );
+      expect(_write(loaded.delta, null, loaded.source), markdown);
+
+      final references = _read(
+        'See [the guide][guide], [Docs][] and [docs].\n\n'
+        '[guide]: https://example.com/guide|1\n[docs]: docs/a.md\n',
+      ).delta;
+      expect(
+        _run(references, 'the guide')['link'],
+        'https://example.com/guide|1',
+      );
+      expect(_run(references, 'Docs')['link'], 'docs/a.md');
+      expect(_run(references, 'docs')['link'], 'docs/a.md');
     });
 
     test('links to other files stay; links the editor drops are told', () {
@@ -728,9 +897,87 @@ void main() {
       final again = _read(markdown).delta;
       expect(_run(again, 'Price:'), {'bold': true});
       expect(_run(again, 'Done!'), {'italic': true});
+
+      // CommonMark 0.31 counts symbols as punctuation and GitHub doesn't:
+      // only delimiters both read as formatting are written.
+      final symbols = _write(
+        Delta()
+          ..insert('€', {'italic': true})
+          ..insert('charlie. Cost ')
+          ..insert('10 €', {'bold': true})
+          ..insert('x\n'),
+      );
+      expect(symbols, '<em>€</em>charlie. Cost <strong>10 €</strong>x\n');
+      final read = _read(symbols).delta;
+      expect(_run(read, '€'), {'italic': true});
+      expect(_run(read, '10 €'), {'bold': true});
     });
 
-    test('a link with a pipe stays in its table cell', () {
+    test('only lines that look like metadata are written as front matter', () {
+      Delta monospace(List<String> lines) {
+        final delta = Delta();
+        for (final line in lines) {
+          delta
+            ..insert(line, {'font': 'Courier New'})
+            ..insert('\n');
+        }
+        return delta..insert('Text\n');
+      }
+
+      // A <pre> at the top of a page or a Courier paragraph can hold these.
+      for (final lines in [
+        ['---', '<img src=x onerror=alert(1)>', '---'],
+        ['---', 'title: <img src=x onerror=alert(1)>', '---'],
+        ['+++', 'Just some text', '+++'],
+      ]) {
+        expect(
+          _write(monospace(lines)),
+          '```\n${lines.join('\n')}\n```\n\nText\n',
+          reason: lines[1],
+        );
+      }
+      const front = [
+        '---',
+        'title: "Hello, world"',
+        'tags:',
+        '  - news',
+        'description: >',
+        '  A longer text.',
+        '# draft: true',
+        '...',
+      ];
+      expect(_write(monospace(front)), '${front.join('\n')}\n\nText\n');
+    });
+
+    test('numbered levels restart after a bullet of their Word list', () {
+      final spec = DocumentSpec();
+      final list = spec.addList(
+        ListSpec([
+          const ListLevelSpec(format: NumberFormat.bullet, text: '•'),
+          for (var level = 1; level < 9; level++)
+            ListLevelSpec(format: NumberFormat.decimal, text: '%${level + 1}.'),
+        ]),
+      );
+      ParagraphSpec item(String text, [int level = 0]) => ParagraphSpec([
+        TextSpec(text),
+      ], format: ParagraphFormat(list: ListRef(list, level)));
+      spec.body.addAll([
+        item('Bullet A'),
+        item('A1', 1),
+        item('A2', 1),
+        item('Bullet B'),
+        item('B1', 1),
+      ]);
+      final tables = TableStore();
+      final loaded = DocxCodec(tables).read(DocxBuilder(spec).build());
+
+      expect(
+        _write(loaded.delta, tables, loaded.source),
+        '- Bullet A\n  1. A1\n  2. A2\n- Bullet B\n  1. B1\n',
+      );
+    });
+
+    test('a link with a pipe stays in its table cell and reads back', () {
       final tables = TableStore();
       final table = tables.createEmpty(rows: 2, columns: 2, totalWidth: 4000);
       table.rows.first.cells.first.controller.document.insert(0, 'Font');
@@ -761,7 +1008,7 @@ void main() {
           read.rows.last.cells.last.controller.document.toDelta(),
           'sheet',
         )['link'],
-        'https://fonts.googleapis.com/css?family=Roboto%7COpen+Sans',
+        'https://fonts.googleapis.com/css?family=Roboto|Open+Sans',
       );
     });
 
@@ -920,7 +1167,7 @@ void main() {
       expect(() => _read('data:a;base64,${'A' * 50} ' * 100000), tooLarge());
     });
 
-    test('brackets and tags that never close are refused before parsing', () {
+    test('brackets and tags that never close are refused in time', () {
       for (final markdown in [
         'x ${('<?${'/' * 300}') * 12000}',
         'x ${('<!A${'/' * 600}') * 6000}',
@@ -931,6 +1178,63 @@ void main() {
         final watch = Stopwatch()..start();
         expect(() => _read(markdown), fails());
         expect(watch.elapsed, lessThan(const Duration(seconds: 20)));
+      }
+    });
+
+    test('long and nested link labels open at once', () {
+      for (final markdown in [
+        'Intro\n\n[${'Ä' * 100000}]\n',
+        'Intro\n\n[${'A,' * 100000}]\n',
+        '${'[' * 2000}${'a ' * 100000}${']' * 2000}',
+        'Intro\n\n[${'Ä' * 100000}](x y\n',
+        'Intro\n\n[a][${'Ä' * 100000}]\n\n[a]: https://example.com\n',
+      ]) {
+        final watch = Stopwatch()..start();
+        final loaded = _read(markdown);
+        expect(watch.elapsed, lessThan(const Duration(seconds: 5)));
+        expect(_plain(loaded.delta).length, greaterThan(100000));
+      }
+    });
+
+    test('lookups that would take long are refused in time', () {
+      for (final markdown in [
+        // Every bracket is compared with every footnote.
+        '${List.generate(20000, (i) => 'x [a$i] y').join('\n\n')}\n\n'
+            '${List.generate(20000, (i) => '[^n$i]: note').join('\n\n')}\n',
+        // Every label is copied once per capital letter.
+        '[${'Ä' * 999}]\n\n' * 4000,
+        // The alt text of a picture is read as any other text.
+        '![${'a' * 100000}]($_pngUri)\n',
+      ]) {
+        final watch = Stopwatch()..start();
+        expect(() => _read(markdown), fails());
+        expect(watch.elapsed, lessThan(const Duration(seconds: 20)));
+      }
+    });
+
+    test('paragraphs with many links and tags open', () {
+      for (final markdown in [
+        [
+          for (var i = 0; i < 1000; i++)
+            '[Article $i: how to write a good title for a post]'
+                '(https://blog.example.com/2024/01/how-to-write-article-$i)',
+        ].join('\n'),
+        [
+          for (var i = 0; i < 500; i++)
+            '<a href="https://github.com/contributor$i"><img '
+                'src="https://avatars.githubusercontent.com/u/$i?v=4" '
+                'alt="Contributor $i" width="50" /></a>',
+        ].join('\n'),
+        [
+          for (var i = 0; i < 2000; i++)
+            'Line $i of the long poem goes on and on<br>',
+        ].join('\n'),
+      ]) {
+        expect(
+          () => _read(markdown),
+          returnsNormally,
+          reason: markdown.substring(0, 30),
+        );
       }
     });
 

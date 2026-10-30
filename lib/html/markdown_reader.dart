@@ -23,6 +23,14 @@ const _maxInlineWork = 150000000;
 /// see [_scans].
 const _maxScanWork = 50000000;
 
+/// Work package:markdown may do on brackets, about a nanosecond a unit: see
+/// [_LinkWork].
+const _maxLinkWork = 1000000000;
+
+/// Longest label that can name a reference or a footnote, in CommonMark and
+/// on GitHub.
+const _maxLabel = 999;
+
 /// Cells of Markdown tables; package:markdown pads every row to the width of
 /// the header.
 const _maxCells = 300000;
@@ -38,15 +46,16 @@ typedef MarkdownHtml = ({String html, Set<DocumentNotice> notices});
 /// GitHub flavored Markdown as HTML. package:markdown recurses on nesting and
 /// is slow on some shapes, so the text is checked first: nesting depth,
 /// reference definitions, tables and, on a first parse of its blocks, how
-/// much work each inline block would take. Front matter and the content of
-/// fenced code never reach it.
+/// much work each inline block would take; brackets are counted as they are
+/// parsed. Front matter and the content of fenced code never reach it.
 MarkdownHtml markdownHtml(String markdown) {
   final text = markdown.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   var pictures = 0;
-  for (final pattern in [_picture, _htmlPicture]) {
-    for (final match in pattern.allMatches(text)) {
-      pictures += (match[1] ?? match[2])!.length;
-    }
+  for (final picture in _pictures(text)) {
+    pictures += picture.uri;
+  }
+  for (final match in _pictureDefinition.allMatches(text)) {
+    pictures += match[1]!.length;
   }
   if (text.length - pictures > maxMarkdownText) {
     throw DocumentProblemException(DocumentProblem.tooLarge);
@@ -67,20 +76,79 @@ MarkdownHtml markdownHtml(String markdown) {
   return (html: '$head${parsed.html}', notices: parsed.notices);
 }
 
-/// Markdown pictures inside `data:` URIs, which package:markdown reads once
-/// as the destination; group 1 or 2 is the URI.
+/// Where a picture's `data:` URI is in a text: the characters
+/// package:markdown reads only once, from [start] to [end], and the length
+/// of the URI.
+typedef _Picture = ({int start, int end, int uri});
+
+/// Markdown pictures inside `data:` URIs, with an optional title: group 1
+/// runs to the destination, which is group 2 or 3. An alt text with a
+/// backtick might close a code span opened before it, which would leave the
+/// URI to be read as text.
 final _picture = RegExp(
-  r'!\[[^\[\]\n\\]*\]\([ \t]*'
+  r'(!\[(?:[^\[\]\\`]|\\[^`])*\]\([ \t\n]*)'
   r'(?:<(data:[\w/+.-]+;base64,[A-Za-z0-9+/=]*)>|'
-  r'(data:[\w/+.-]+;base64,[A-Za-z0-9+/=]*))[ \t]*\)',
+  r'(data:[\w/+.-]+;base64,[A-Za-z0-9+/=]*))'
+  r'''(?:[ \t\n]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[ \t\n]*\)''',
 );
 
-/// HTML pictures inside `data:` URIs, as tables that Markdown can't hold
-/// keep them.
+/// `<img>` tags, as tables that Markdown can't hold keep their pictures,
+/// that package:markdown's pattern for raw HTML takes whole. A backtick in
+/// one might close a code span opened before it.
 final _htmlPicture = RegExp(
-  r'''<img\b[^<>]*?\bsrc\s*=\s*["']?(data:[\w/+.-]+;base64,[A-Za-z0-9+/=]+)''',
+  r'<img(?:\s+[a-zA-Z_:][\w.:-]*'
+  r'''(?:\s*=\s*(?:[^\s"'=<>`]+|'[^'`]*'|"[^"`]*"))?)*\s*/?>''',
   caseSensitive: false,
 );
+
+/// The `data:` URI of a picture tag's `src`, in group 1.
+final _pictureSource = RegExp(
+  r'''\ssrc\s*=\s*["']?(data:[\w/+.-]+;base64,[A-Za-z0-9+/=]+)''',
+  caseSensitive: false,
+);
+
+/// Reference definitions of pictures inside `data:` URIs, as in
+/// `![Shot][s0]` and `[s0]: data:…`; group 1 is the URI.
+final _pictureDefinition = RegExp(
+  r'^ {0,3}\[(?:[^\[\]\\]|\\[^])+\]:[ \t]*\n?[ \t]*<?'
+  r'(data:[\w/+.-]+;base64,[A-Za-z0-9+/=]*)',
+  multiLine: true,
+);
+
+/// The pictures of [text], in order. Those of a tag the backslash before it
+/// turns into text don't count.
+List<_Picture> _pictures(String text) {
+  final found = <_Picture>[
+    for (final match in _picture.allMatches(text))
+      (
+        start: match.start + match[1]!.length,
+        end: match.end,
+        uri: (match[2] ?? match[3])!.length,
+      ),
+  ];
+  for (final tag in _htmlPicture.allMatches(text)) {
+    var backslashes = 0;
+    while (tag.start - backslashes > 0 &&
+        text.codeUnitAt(tag.start - backslashes - 1) == 0x5C) {
+      backslashes++;
+    }
+    final source = backslashes.isEven
+        ? _pictureSource.firstMatch(tag[0]!)
+        : null;
+    if (source == null) continue;
+    final uri = source[1]!;
+    final end = tag.start + source.end;
+    found.add((start: end - uri.length, end: end, uri: uri.length));
+  }
+  found.sort((a, b) => a.start - b.start);
+  final pictures = <_Picture>[];
+  for (final picture in found) {
+    if (pictures.isEmpty || picture.start >= pictures.last.end) {
+      pictures.add(picture);
+    }
+  }
+  return pictures;
+}
 
 /// Lines of the front matter static site generators read at the top of a
 /// file, between `---` (or `...`) lines in YAML or `+++` lines in TOML; 0
@@ -104,12 +172,14 @@ const _codeMark = '\uE000';
 const _codeEnd = '\uE001';
 final _codeLine = RegExp('$_codeMark([0-9]{1,9})$_codeEnd');
 
-final _fenceOpening = RegExp(r'^ {0,3}(`{3,}(?=[^`]*$)|~{3,})');
+/// Fences at the start of a line. Indented ones may belong to a list item,
+/// whose lines package:markdown reads with laziness of its own, so they are
+/// left to it.
+final _fenceOpening = RegExp(r'^(`{3,}(?=[^`]*$)|~{3,})');
 final _fenceClosing = RegExp(r'^ {0,3}(`{3,}|~{3,})\s*$');
 
 /// [lines] with the content of fenced code blocks replaced by marks, whose
-/// text goes to [code]; null when there's none. The spaces before the
-/// content stay, so code inside list items stays inside them.
+/// text goes to [code]; null when there's none.
 List<String>? _takeOutCode(List<String> lines, List<String> code) {
   List<String>? skeleton;
   String? fence;
@@ -144,22 +214,25 @@ MarkdownHtml? _parse(List<String> lines, List<String> code) {
   _checkInlines(
     md.BlockParser(
       lines.map(md.Line.new).toList(),
-      md.Document(extensionSet: _gitHub),
+      _document(_LinkWork()),
     ).parseLines(),
   );
   final renderer = _Renderer(code);
-  final html = renderer.render(
-    md.Document(extensionSet: _gitHub).parseLines(lines),
-  );
+  final html = renderer.render(_document(_LinkWork()).parseLines(lines));
   return renderer.misplaced ? null : (html: html, notices: renderer.notices);
 }
 
-/// GitHub's extensions, with GitHub's e-mail links: an address that doesn't
-/// end with a letter, like `react@18.3`, stays text.
-final _gitHub = md.ExtensionSet(md.ExtensionSet.gitHubFlavored.blockSyntaxes, [
-  for (final syntax in md.ExtensionSet.gitHubFlavored.inlineSyntaxes)
-    syntax is md.AutolinkExtensionSyntax ? _Autolinks() : syntax,
-]);
+/// GitHub's extensions, with GitHub's e-mail links (an address that doesn't
+/// end with a letter, like `react@18.3`, stays text) and links whose work is
+/// counted in [work].
+md.Document _document(_LinkWork work) => md.Document(
+  extensionSet: md.ExtensionSet(md.ExtensionSet.gitHubFlavored.blockSyntaxes, [
+    for (final syntax in md.ExtensionSet.gitHubFlavored.inlineSyntaxes)
+      syntax is md.AutolinkExtensionSyntax ? _Autolinks() : syntax,
+    _Links(work),
+    _Pictures(work),
+  ]),
+);
 
 class _Autolinks extends md.AutolinkExtensionSyntax {
   @override
@@ -351,17 +424,20 @@ void _checkInlines(List<md.Node> nodes) {
     final node = stack.removeLast();
     if (node is md.UnparsedContent) {
       final text = node.textContent;
-      final tokens = _tokens(text);
-      final (:scanned, :pictures) = _scans(text);
-      work += tokens * tokens;
-      scans += scanned;
-      characters += text.length - pictures;
+      final pictures = _pictures(text);
+      characters += text.length;
+      for (final picture in pictures) {
+        characters -= picture.uri;
+      }
       if (characters > maxMarkdownText) {
         throw DocumentProblemException(DocumentProblem.tooLarge);
       }
-      if (work > _maxInlineWork || scans > _maxScanWork) {
+      final tokens = _tokens(text);
+      work += tokens * tokens;
+      if (work > _maxInlineWork) {
         throw const FormatException('The Markdown is too complex.');
       }
+      scans += _scans(text, pictures, _maxScanWork - scans);
     } else if (node is md.Element) {
       stack.addAll(node.children ?? const []);
     }
@@ -393,56 +469,57 @@ int _tokens(String text) {
   return count;
 }
 
-/// Characters package:markdown may read in [text] besides its one pass, and
-/// the characters of its [_picture]s, which it reads once. A bracket or a
-/// tag that doesn't close reads to the end, backticks to the next run as
+/// Characters package:markdown may read in [text] besides its one pass,
+/// refused past [limit]; its [pictures] it reads once. Raw HTML and
+/// autolinks read as far as their patterns go, backticks to the next run as
 /// long, a web address to the next space, and every character of a run of
-/// letters, digits or spaces reads the rest of the run.
-({int scanned, int pictures}) _scans(String text) {
+/// letters, digits or spaces reads the rest of the run. Brackets are counted
+/// as they are parsed.
+int _scans(String text, List<_Picture> pictures, int limit) {
   final length = text.length;
-  final found = _picture.allMatches(text).iterator;
-  var picture = found.moveNext() ? found.current.start : length;
-  var pictures = 0;
   var work = 0;
+  void read(int characters) {
+    work += characters;
+    if (work > limit) {
+      throw const FormatException('The Markdown is too complex.');
+    }
+  }
+
+  var next = 0;
   var word = 0;
   var spaces = 0;
   var addresses = 0;
   final ticks = <({int start, int count})>[];
   for (var index = 0; index < length; index++) {
-    if (index == picture) {
-      final end = found.current.end;
-      pictures += end - index;
-      work += word * word + spaces * spaces + addresses * (end - index);
+    if (next < pictures.length && index == pictures[next].start) {
+      final end = pictures[next++].end;
+      read(word * word + spaces * spaces + addresses * (end - index));
       word = 0;
       spaces = 0;
       index = end - 1;
-      picture = found.moveNext() ? found.current.start : length;
       continue;
     }
     final char = text.codeUnitAt(index);
     if (_isWord(char)) {
       word++;
     } else {
-      work += word * word;
+      read(word * word);
       word = 0;
     }
     if (char == 0x20) {
       spaces++;
     } else {
-      work += spaces * spaces;
+      read(spaces * spaces);
       spaces = 0;
     }
     if (char <= 0x20 || char == 0x3C) {
       addresses = 0;
     } else {
-      work += addresses;
+      read(addresses);
     }
     switch (char) {
-      case 0x5D:
-        work += length - index;
-      case 0x3C
-          when index + 1 < length && _opensTag(text.codeUnitAt(index + 1)):
-        work += length - index;
+      case 0x3C:
+        read(_tagEnd(text, index) - index);
       case 0x60 when index == 0 || text.codeUnitAt(index - 1) != 0x60:
         var end = index + 1;
         while (end < length && text.codeUnitAt(end) == 0x60) {
@@ -463,13 +540,13 @@ int _tokens(String text) {
         addresses++;
     }
   }
-  work += word * word + spaces * spaces;
-  final next = <int, int>{};
+  read(word * word + spaces * spaces);
+  final runs = <int, int>{};
   for (final run in ticks.reversed) {
-    work += (next[run.count] ?? length) - run.start;
-    next[run.count] = run.start;
+    read((runs[run.count] ?? length) - run.start);
+    runs[run.count] = run.start;
   }
-  return (scanned: work, pictures: pictures);
+  return work;
 }
 
 /// Letters, digits and the other characters of e-mail addresses.
@@ -482,13 +559,297 @@ bool _isWord(int char) =>
     char == 0x2B ||
     char == 0x5F;
 
-/// Whether `<` and [char] may start inline HTML or an autolink.
-bool _opensTag(int char) =>
+bool _isLetter(int char) =>
+    (char >= 0x41 && char <= 0x5A) || (char >= 0x61 && char <= 0x7A);
+
+/// How far package:markdown's patterns for raw HTML and autolinks may read
+/// from the `<` at [start]: to the end of a comment, processing
+/// instruction, CDATA section or declaration, past the quoted values of a
+/// tag, or to the end of an autolink; to the end of [text] when none ends.
+int _tagEnd(String text, int start) {
+  final length = text.length;
+  int after(String end, int from) {
+    final index = text.indexOf(end, from);
+    return index < 0 ? length : index + end.length;
+  }
+
+  if (text.startsWith('<!--', start)) return after('--', start + 4);
+  if (text.startsWith('<![CDATA[', start)) return after(']]>', start + 9);
+  final next = start + 1 < length ? text.codeUnitAt(start + 1) : 0;
+  if (next == 0x21) return after('>', start + 2);
+  if (next == 0x3F) return after('?>', start + 2);
+  if (next != 0x2F && !_isLetter(next)) return start + 1;
+  // A tag ends at its `>` and can't hold a `<` outside its quotes.
+  var index = start + 1;
+  while (index < length) {
+    final char = text.codeUnitAt(index);
+    if (char == 0x3E || char == 0x3C) break;
+    if (char == 0x22 || char == 0x27) {
+      index = text.indexOf(String.fromCharCode(char), index + 1);
+      if (index < 0) return length;
+    }
+    index++;
+  }
+  return math.max(math.min(index + 1, length), _autolinkEnd(text, start + 1));
+}
+
+/// Where the pattern for an autolink like `<https://…>` whose scheme starts
+/// at [index] stops: its address reads up to a space or a `>`.
+int _autolinkEnd(String text, int index) {
+  final length = text.length;
+  final scheme = index;
+  while (index < length) {
+    final char = text.codeUnitAt(index);
+    if (!_isLetter(char) && char != 0x2D && char != 0x2B && char != 0x2E) {
+      break;
+    }
+    index++;
+  }
+  if (index - scheme >= 2 && _isAt(text, index, 0x3A)) {
+    while (index < length &&
+        text.codeUnitAt(index) > 0x20 &&
+        text.codeUnitAt(index) != 0x3E) {
+      index++;
+    }
+  }
+  return math.min(index + 1, length);
+}
+
+/// Counts what package:markdown does on brackets before it does it, in
+/// about nanoseconds: reading a destination or a label takes 10 a
+/// character, normalizing a label for a lookup 50 a character plus a copy
+/// of it per character it may fold, and the lookup 30 per footnote.
+class _LinkWork {
+  var _work = 0;
+
+  void add(int work) {
+    _work += work;
+    if (_work > _maxLinkWork) {
+      throw const FormatException('The Markdown is too complex.');
+    }
+  }
+}
+
+/// Brackets whose cost is counted before package:markdown resolves them. A
+/// bracket that isn't an inline link has its whole text normalized as a
+/// reference, copied once per capital letter, and compared with every
+/// footnote; a text longer than [_maxLabel] is no reference at all, so it
+/// isn't looked up.
+mixin _Counted on md.LinkSyntax {
+  _LinkWork get work;
+
+  @override
+  Iterable<md.Node>? close(
+    md.InlineParser parser,
+    md.SimpleDelimiter opener,
+    md.Delimiter? closer, {
+    String? tag,
+    required List<md.Node> Function() getChildren,
+  }) {
+    final text = parser.source;
+    final end = parser.pos;
+    final next = end + 1 < text.length ? text.codeUnitAt(end + 1) : null;
+    var start = opener.endPos;
+    var stop = end;
+    if (next == 0x28) {
+      final link = _inlineLink(text, end + 1);
+      work.add((link.end - end) * 10 + end - start);
+      if (link.found) {
+        return super.close(
+          parser,
+          opener,
+          closer,
+          tag: tag,
+          getChildren: getChildren,
+        );
+      }
+    } else if (next == 0x5B &&
+        !(end + 2 < text.length && text.codeUnitAt(end + 2) == 0x5D)) {
+      final label = _referenceLabel(text, end + 1);
+      work.add((label.end - end) * 10);
+      if (!label.found) return null;
+      start = end + 2;
+      stop = label.end;
+    }
+    if (stop - start > _maxLabel) return null;
+    var folded = 0;
+    for (var index = start; index < stop; index++) {
+      if (_folds(text.codeUnitAt(index))) folded++;
+    }
+    work.add(
+      (stop - start) * (50 + folded) +
+          parser.document.footnoteReferences.length * 30,
+    );
+    return super.close(
+      parser,
+      opener,
+      closer,
+      tag: tag,
+      getChildren: getChildren,
+    );
+  }
+}
+
+/// Characters package:markdown's case folding may replace, each with a copy
+/// of the whole label: the blocks of the scripts that have case.
+bool _folds(int char) =>
     (char >= 0x41 && char <= 0x5A) ||
-    (char >= 0x61 && char <= 0x7A) ||
-    char == 0x2F ||
-    char == 0x3F ||
-    char == 0x21;
+    (char >= 0xB5 && char < 0x590) ||
+    (char >= 0x10A0 && char < 0x1100) ||
+    (char >= 0x13A0 && char < 0x1400) ||
+    (char >= 0x1C80 && char < 0x2200) ||
+    (char >= 0x24B6 && char < 0x24EA) ||
+    (char >= 0x2C00 && char < 0x2D00) ||
+    (char >= 0xA640 && char < 0xA800) ||
+    (char >= 0xAB70 && char < 0xABC0) ||
+    (char >= 0xFB00 && char < 0xFB18) ||
+    (char >= 0xFF21 && char < 0xFF3B);
+
+class _Links extends md.LinkSyntax with _Counted {
+  _Links(this.work);
+
+  @override
+  final _LinkWork work;
+
+  /// The destination as written, its backslash escapes resolved:
+  /// package:markdown percent-encodes characters like `|`, so links would
+  /// read back changed.
+  @override
+  md.Node createNode(
+    String destination,
+    String? title, {
+    required List<md.Node> Function() getChildren,
+  }) {
+    final link =
+        super.createNode(destination, title, getChildren: getChildren)
+            as md.Element;
+    link.attributes['href'] = destination
+        .replaceAllMapped(_escaped, (match) => match[1]!)
+        .replaceAllMapped(_markup, (match) => _entities[match[0]]!);
+    return link;
+  }
+}
+
+class _Pictures extends md.ImageSyntax with _Counted {
+  _Pictures(this.work);
+
+  @override
+  final _LinkWork work;
+}
+
+final _escaped = RegExp(r'''\\([!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~])''');
+
+/// `<`, `>` and the `&`s that start no character reference, which HTML
+/// would read otherwise in an attribute.
+final _markup = RegExp(
+  r'[<>]|&(?!#[0-9]{1,7};|#[xX][0-9a-fA-F]{1,6};|[A-Za-z][A-Za-z0-9]*;)',
+);
+const _entities = {'<': '&lt;', '>': '&gt;', '&': '&amp;'};
+
+/// Where package:markdown's reading of an inline link from the `(` at
+/// [open] stops, and whether it finds one: the steps of [md.LinkSyntax].
+({int end, bool found}) _inlineLink(String text, int open) {
+  final length = text.length;
+  var index = _skipLinkSpaces(text, open + 1);
+  if (index == length) return (end: index, found: false);
+  if (text.codeUnitAt(index) == 0x3C) {
+    for (index++; ; index++) {
+      if (index == length) return (end: index, found: false);
+      final char = text.codeUnitAt(index);
+      if (char == 0x5C) {
+        if (++index == length) return (end: index, found: false);
+      } else if (char == 0x0A || char == 0x0D || char == 0x0C) {
+        return (end: index, found: false);
+      } else if (char == 0x3E) {
+        break;
+      }
+    }
+    if (++index == length) return (end: index, found: false);
+    final char = text.codeUnitAt(index);
+    if (char == 0x29) return (end: index, found: true);
+    if (!_endsDestination(char)) return (end: index, found: false);
+    final title = _linkTitle(text, index);
+    return (end: title.end, found: title.found || _isAt(text, title.end, 0x29));
+  }
+  var depth = 1;
+  while (true) {
+    final char = text.codeUnitAt(index);
+    if (char == 0x5C) {
+      if (++index == length) return (end: index, found: false);
+    } else if (_endsDestination(char)) {
+      final title = _linkTitle(text, index);
+      index = title.end;
+      if (!title.found && !_isAt(text, index, 0x29)) {
+        return (end: index, found: false);
+      }
+      if (--depth == 0) return (end: index, found: true);
+    } else if (char == 0x28) {
+      depth++;
+    } else if (char == 0x29 && --depth == 0) {
+      return (end: index, found: true);
+    }
+    if (++index == length) return (end: index, found: false);
+  }
+}
+
+/// Where the title of an inline link after the spaces at [index] ends at
+/// its `)`, or where reading it stops.
+({int end, bool found}) _linkTitle(String text, int index) {
+  final length = text.length;
+  index = _skipLinkSpaces(text, index);
+  if (index == length) return (end: index, found: false);
+  final delimiter = text.codeUnitAt(index);
+  if (delimiter != 0x22 && delimiter != 0x27 && delimiter != 0x28) {
+    return (end: index, found: false);
+  }
+  final close = delimiter == 0x28 ? 0x29 : delimiter;
+  if (++index == length) return (end: index, found: false);
+  while (true) {
+    final char = text.codeUnitAt(index);
+    if (char == 0x5C) {
+      if (++index == length) return (end: index, found: false);
+    } else if (char == close) {
+      break;
+    }
+    if (++index == length) return (end: index, found: false);
+  }
+  index = _skipLinkSpaces(text, index + 1);
+  return (end: index, found: _isAt(text, index, 0x29));
+}
+
+/// Where the label of a full reference link from the `[` at [open] ends at
+/// its `]`, or where reading it stops.
+({int end, bool found}) _referenceLabel(String text, int open) {
+  final length = text.length;
+  var index = open + 1;
+  if (index == length) return (end: index, found: false);
+  while (true) {
+    final char = text.codeUnitAt(index);
+    if (char == 0x5C) {
+      if (++index == length) return (end: index, found: false);
+    } else if (char == 0x5B) {
+      return (end: index, found: false);
+    } else if (char == 0x5D) {
+      return (end: index, found: true);
+    }
+    if (++index == length) return (end: index, found: false);
+  }
+}
+
+int _skipLinkSpaces(String text, int index) {
+  while (index < text.length) {
+    final char = text.codeUnitAt(index);
+    if (char != 0x20 && (char < 0x09 || char > 0x0D)) break;
+    index++;
+  }
+  return index;
+}
+
+bool _endsDestination(int char) =>
+    char == 0x20 || char == 0x0A || char == 0x0D || char == 0x0C;
+
+bool _isAt(String text, int index, int char) =>
+    index < text.length && text.codeUnitAt(index) == char;
 
 /// Raw HTML GitHub shows as text, as its tag filter does, and elements the
 /// HTML reader leaves out with their content: a `<script>` or `<button>` in
@@ -504,8 +865,9 @@ final _shownAsText = RegExp(
 /// already hold HTML: escaped text, or the raw HTML written in the Markdown,
 /// which the HTML reader treats as any other page. Tables get borders, as
 /// GitHub shows them, and quotes a right indent, as word processors do,
-/// which also tells them from the paragraphs of list items. Task list
-/// boxes become ☐ and ☑.
+/// which also tells them from the paragraphs of list items. The boxes of
+/// task list items go before their text, where the HTML reader makes them
+/// ☐ and ☑ list levels.
 class _Renderer {
   _Renderer(this.code);
 
@@ -526,16 +888,25 @@ class _Renderer {
         case _End(:final tag):
           out.write('</$tag>');
           if (tag == 'pre') pre--;
-        case md.Element(tag: 'input', :final attributes)
-            when attributes['type'] == 'checkbox':
-          out.write(attributes.containsKey('checked') ? '☑ ' : '☐ ');
         case md.Element(tag: 'hr'):
           // The editor has no rule; saving leaves it out.
           notices.add(DocumentNotice.contentNotImported);
+        case md.Element(
+              tag: 'p',
+              children: [
+                final md.Element box && md.Element(tag: 'input'),
+                ...final rest,
+              ],
+            )
+            when box.attributes['type'] == 'checkbox':
+          // A loose item's box would come inside its paragraph.
+          stack
+            ..add(md.Element('p', rest))
+            ..add(box);
         case final md.Element element:
           _start(element, out);
           final children = element.children;
-          if (children == null) {
+          if (children == null || element.tag == 'input') {
             out.write(' />');
             continue;
           }

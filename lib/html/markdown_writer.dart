@@ -35,7 +35,8 @@ class MarkdownWriter {
   }
 
   /// Front matter at the top of the document, which the Markdown reader
-  /// shows as monospace lines: written back as it was, without a fence.
+  /// shows as monospace lines: written back as it was, without a fence, when
+  /// every line looks like YAML or TOML.
   ({String text, int blocks})? _frontMatter(List<DocumentBlock> blocks) {
     final lines = <String>[];
     for (var index = 0; index < blocks.length; index++) {
@@ -54,13 +55,31 @@ class MarkdownWriter {
       }
       for (var line = math.max(start, 1); line < lines.length; line++) {
         final text = lines[line].trimRight();
-        if (text != fence && (fence != '---' || text != '...')) continue;
+        if (text != fence && (fence != '---' || text != '...')) {
+          if (!_isMetadata(lines[line])) return null;
+          continue;
+        }
         if (line < lines.length - 1) return null;
         return (text: lines.join('\n'), blocks: index + 1);
       }
     }
     return null;
   }
+
+  /// A line of YAML or TOML: a key, a list item, a table, a comment, or an
+  /// empty or indented line. Renderers without front matter read the lines
+  /// as Markdown, so none may hold a tag they would show as HTML.
+  static bool _isMetadata(String line) =>
+      !line.contains(_tag) &&
+      (line.trim().isEmpty ||
+          line.startsWith(_space) ||
+          line.startsWith(_metadata));
+
+  static final _tag = RegExp('<[A-Za-z/!?]');
+  static final _space = RegExp(r'\s');
+  static final _metadata = RegExp(
+    r'''#|\[|-(?:\s|$)|[\w"'.$@-][^:=]*(?::(?:\s|$)|=)''',
+  );
 
   List<String> _blocks(List<DocumentBlock> blocks) {
     final chunks = <String>[];
@@ -272,6 +291,8 @@ class MarkdownWriter {
       }
       number = _counter.next(line);
       marker = '$number$delimiter';
+    } else {
+      _counter.countBullet(line);
     }
     final offset = indent + marker.length + 1;
     final (:checkbox, :pieces) = _task(line);
@@ -646,11 +667,22 @@ class MarkdownWriter {
   }
 
   /// Whether every delimiter run follows CommonMark's flanking rules, so it
-  /// reads back as formatting.
+  /// reads back as formatting: on GitHub and in package:markdown, where
+  /// punctuation is Unicode's, and in CommonMark 0.31, where symbols like €
+  /// or ✓ are punctuation too.
   static bool _parsesBack(
     String text,
     List<({int start, int end, bool opening})> delimiters,
+  ) =>
+      _flanks(text, delimiters, _punctuation) &&
+      _flanks(text, delimiters, _punctuationOrSymbol);
+
+  static bool _flanks(
+    String text,
+    List<({int start, int end, bool opening})> delimiters,
+    RegExp punctuation,
   ) {
+    bool isPunctuation(String char) => punctuation.hasMatch(char);
     for (var index = 0; index < delimiters.length; index++) {
       final delimiter = delimiters[index];
       final next = index + 1 < delimiters.length ? delimiters[index + 1] : null;
@@ -667,18 +699,18 @@ class MarkdownWriter {
       final after = delimiter.end < text.length ? text[delimiter.end] : null;
       if (delimiter.opening) {
         if (after == null || _isSpace(after)) return false;
-        if (_isPunctuation(after) &&
+        if (isPunctuation(after) &&
             before != null &&
             !_isSpace(before) &&
-            !_isPunctuation(before)) {
+            !isPunctuation(before)) {
           return false;
         }
       } else {
         if (before == null || _isSpace(before)) return false;
-        if (_isPunctuation(before) &&
+        if (isPunctuation(before) &&
             after != null &&
             !_isSpace(after) &&
-            !_isPunctuation(after)) {
+            !isPunctuation(after)) {
           return false;
         }
       }
@@ -688,14 +720,14 @@ class MarkdownWriter {
 
   static bool _isSpace(String char) => char.trim().isEmpty;
 
-  static bool _isPunctuation(String char) => _punctuation.hasMatch(char);
-
   /// Punctuation as GitHub and package:markdown tell it: ASCII punctuation
-  /// and Unicode's, not symbols like € or ✓.
+  /// and Unicode's.
   static final _punctuation = RegExp(
     r'''[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~\p{P}]''',
     unicode: true,
   );
+
+  static final _punctuationOrSymbol = RegExp(r'[\p{P}\p{S}]', unicode: true);
 
   /// Text with Markdown's special characters escaped, so it reads back as
   /// the same text. The start of web and e-mail addresses is escaped too:
