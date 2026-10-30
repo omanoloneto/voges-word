@@ -7,7 +7,9 @@ import 'package:xml/xml.dart';
 
 import '../document/document_codec.dart';
 import '../document/headers_footers.dart';
+import '../document/picture_crop.dart';
 import '../docx/docx_builder.dart';
+import '../docx/image_formats.dart';
 import 'odf_xml.dart';
 import 'odt_package.dart';
 import 'odt_styles.dart';
@@ -22,8 +24,7 @@ const _svg = OdfNamespaces.svg;
 const _xlink = OdfNamespaces.xlink;
 const _xml = 'http://www.w3.org/XML/1998/namespace';
 const _dr3d = 'urn:oasis:names:tc:opendocument:xmlns:dr3d:1.0';
-const _loext =
-    'urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0';
+const _loext = OdfNamespaces.loext;
 
 /// Where blocks are read; only the body takes page and section breaks.
 enum _Place { body, cell, frame, note, header }
@@ -46,6 +47,7 @@ class _ParagraphStyle {
     required this.directRun,
     required this.resolved,
     required this.resolvedRun,
+    required this.textCase,
     required this.breaks,
     required this.masterPage,
     required this.outlineLevel,
@@ -62,6 +64,7 @@ class _ParagraphStyle {
   /// What the defaults and the whole style chain give.
   final ParagraphFormat resolved;
   final RunFormat resolvedRun;
+  final TextCase textCase;
   final PageBreaks breaks;
   final String? masterPage;
   final int? outlineLevel;
@@ -77,6 +80,11 @@ class _ListState {
 }
 
 typedef _Cover = ({int lastRow, int span, String? background});
+
+typedef _Picture = ({Uint8List bytes, String mime});
+
+/// Fractions of a picture's width or height cut off each side.
+typedef _Cut = ({double left, double top, double right, double bottom});
 
 String _idKey(String family, String? name) => '$family/$name';
 
@@ -135,7 +143,8 @@ bool _samePage(PageSpec a, PageSpec b) =>
     (a.width - b.width).abs() < 0.5 &&
     (a.height - b.height).abs() < 0.5 &&
     a.margins == b.margins &&
-    a.columns == b.columns;
+    a.columns == b.columns &&
+    a.numberFormat == b.numberFormat;
 
 /// Builds a [DocumentSpec] from an OpenDocument Text package.
 class OdtReader {
@@ -154,12 +163,21 @@ class OdtReader {
   static const _maxTableDepth = 16;
   static const _maxColumns = 63;
 
-  /// Characters of text, plus picture bytes / 8, the document may produce,
-  /// repeated rows and cells included.
+  /// Characters of text, picture bytes / 8 and roughly the bytes of markup
+  /// each paragraph, run, cell and other element adds, repeated rows and
+  /// cells included.
   static const _maxOutput = 64 * 1024 * 1024;
+
+  /// Rough markup of one element of the built document.
+  static const _elementCost = 32;
+  static const _pictureCost = 1024;
+
+  /// Pixels decoded to crop pictures; past it they are shown whole.
+  static const _maxCropPixels = 160000000;
 
   late final DocumentSpec _spec;
   late final RunFormat _baseRun;
+  late final TextCase _baseCase;
   late final ParagraphFormat _baseParagraph;
   final _ids = <String, String>{};
   final _usedIds = <String>{
@@ -180,14 +198,20 @@ class OdtReader {
   final _listsById = <String, int>{};
   final _listsByStyle = <String?, int>{};
   final _pages = <String?, PageSpec>{};
+  final _crops = <(Uint8List, double, double, double, double), _Picture?>{};
+  _Outline? _outline;
   var _lists = 0;
   var _cells = 0;
   var _output = 0;
+  var _cropPixels = 0.0;
   var _started = false;
   var _pendingBreak = false;
-  var _sections = 0;
   String? _firstMaster;
   String? _master;
+
+  /// The page style each section starts with, and every one the body uses.
+  final _sectionMasters = <String?>[];
+  final _usedMasters = <String>{};
 
   DocumentSpec read() {
     final defaults = _styles.defaultStyle('paragraph');
@@ -196,6 +220,7 @@ class OdtReader {
     _baseRun = const RunFormat(
       size: 12,
     ).merge(_styles.runOf(text, inheritedSize: 12));
+    _baseCase = OdtStyles.textCaseOf(text) ?? TextCase.asWritten;
     _baseParagraph = _styles.paragraphOf(paragraph);
     _spec = DocumentSpec(
       defaultRun: RunFormat(
@@ -217,6 +242,7 @@ class OdtReader {
           35.4,
     );
     _addStyles();
+    _outline = _Outline.of(_styles.outlineStyle);
     if (package.hasMacros || _hasScripts()) {
       notices.add(DocumentNotice.contentNotImported);
     }
@@ -229,10 +255,10 @@ class OdtReader {
         .odfChild(_office, 'text')!;
     _blocks(body, _spec.body, _Context(_styles.body, _Place.body));
 
-    // One section takes the headers of the page style it started with.
-    final master = _sections > 0 ? _master : _firstMaster;
-    _spec.page = _page(master);
-    _readHeadersFooters(master);
+    if (_sectionMasters.isEmpty) _sectionMasters.add(_firstMaster);
+    _usedMasters.addAll(_sectionMasters.whereType<String>());
+    _spec.page = _page(_sectionMasters.last);
+    _readHeadersFooters();
     return _spec;
   }
 
@@ -262,6 +288,10 @@ class OdtReader {
       throw DocumentProblemException(DocumentProblem.tooLarge);
     }
   }
+
+  /// Roughly what the builder writes for a run's formatting.
+  static int _formatCost(RunFormat format) =>
+      format.isEmpty ? 0 : 64 + 4 * (format.font?.length ?? 0);
 
   // Styles
 
@@ -381,6 +411,7 @@ class OdtReader {
   _ParagraphStyle _resolveParagraphStyle(StyleScope scope, String? name) {
     var run = _baseRun;
     var paragraph = _baseParagraph;
+    var textCase = _baseCase;
     var direct = const ParagraphFormat();
     var directRun = const RunFormat();
     bool? before;
@@ -390,14 +421,13 @@ class OdtReader {
     String? list;
     OdfStyle? named;
     for (final style in _styles.chain(scope, 'paragraph', name)) {
-      final ownRun = _styles.runOf(
-        style.properties('text'),
-        inheritedSize: run.size ?? 12,
-      );
+      final text = style.properties('text');
+      final ownRun = _styles.runOf(text, inheritedSize: run.size ?? 12);
       final properties = style.properties('paragraph');
       final ownParagraph = _styles.paragraphOf(properties);
       run = run.merge(ownRun);
       paragraph = paragraph.merge(ownParagraph);
+      textCase = OdtStyles.textCaseOf(text) ?? textCase;
       final breaks = OdtStyles.breaksOf(properties);
       before = breaks.before ?? before;
       after = breaks.after ?? after;
@@ -419,6 +449,7 @@ class OdtReader {
       directRun: directRun,
       resolved: paragraph,
       resolvedRun: run,
+      textCase: textCase,
       breaks: (before: before, after: after),
       masterPage: master,
       outlineLevel: outline,
@@ -445,7 +476,13 @@ class OdtReader {
           _list(element, out, context, level: 0);
         case 'numbered-paragraph':
           _numberedParagraph(element, out, context);
-        case 'section' || 'index-body' || 'index-title':
+        case 'section':
+          if (_hiddenSection(element)) {
+            notices.add(DocumentNotice.contentNotImported);
+          } else {
+            _blocks(element, out, context);
+          }
+        case 'index-body' || 'index-title':
           _blocks(element, out, context);
         case 'table-of-content' ||
             'illustration-index' ||
@@ -469,11 +506,35 @@ class OdtReader {
       _Inlines(this, context, floating, paragraphSize: _baseRun.size ?? 12)
         ..node(element, const RunFormat(), inlines)
         ..flush();
-      if (inlines.isNotEmpty) out.add(ParagraphSpec(inlines));
+      if (inlines.isNotEmpty) {
+        _charge(2 * _elementCost);
+        out.add(ParagraphSpec(inlines));
+      }
       out.addAll(floating);
     } else if (namespace == _office && local == 'annotation') {
       notices.add(DocumentNotice.commentsHidden);
     }
+  }
+
+  /// Hidden always, or by a condition that held when the file was saved.
+  static bool _hiddenSection(XmlElement section) =>
+      switch (section.odfAttribute(_text, 'display')) {
+        'none' => true,
+        'condition' => section.odfAttribute(_text, 'is-hidden') == 'true',
+        _ => false,
+      };
+
+  /// A hidden-paragraph field whose condition held when the file was saved.
+  static bool _hiddenParagraph(XmlElement container) {
+    for (final child in container.childElements) {
+      if (child.isOdf(_text, 'hidden-paragraph')) {
+        if (child.odfAttribute(_text, 'is-hidden') == 'true') return true;
+      } else if ((child.isOdf(_text, 'span') || child.isOdf(_text, 'a')) &&
+          _hiddenParagraph(child)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void _paragraph(
@@ -483,6 +544,10 @@ class OdtReader {
     ListRef? list,
     double? indent,
   }) {
+    if (_hiddenParagraph(element)) {
+      notices.add(DocumentNotice.contentNotImported);
+      return;
+    }
     final style = _paragraphStyle(
       context.scope,
       element.odfAttribute(_text, 'style-name'),
@@ -496,6 +561,11 @@ class OdtReader {
                   1)
               .clamp(1, 9)
         : null;
+    final number =
+        list ??
+        (heading != null && indent == null
+            ? _outlineNumber(element, style, heading, context)
+            : null);
 
     var format = ParagraphFormat(
       styleId: style.styleId == 'Normal' ? null : style.styleId,
@@ -507,9 +577,9 @@ class OdtReader {
       format = _withoutTabs(style.resolved);
       run = style.resolvedRun;
     }
-    if (list != null) {
+    if (number != null) {
       // The numbering sets the indents and the tab after the number.
-      format = _withoutIndents(format, list: list);
+      format = _withoutIndents(format, list: number);
     } else {
       if (indent != null) {
         format = format.merge(
@@ -532,6 +602,9 @@ class OdtReader {
         ),
       );
     }
+    _charge(
+      2 * _elementCost + _elementCost * format.tabs.length + _formatCost(run),
+    );
 
     final inlines = <InlineSpec>[if (newPage) const BreakSpec(BreakKind.page)];
     final floating = <BlockSpec>[];
@@ -540,12 +613,37 @@ class OdtReader {
         context,
         floating,
         paragraphSize: style.resolvedRun.size ?? 12,
+        textCase: style.textCase,
       )
       ..read(element, run, inlines)
       ..flush();
     out
       ..add(ParagraphSpec(inlines, format: format, heading: heading, mark: run))
       ..addAll(floating);
+  }
+
+  /// Headings outside lists take their numbers from the outline style, as
+  /// in LibreOffice, unless their style has a list of its own.
+  ListRef? _outlineNumber(
+    XmlElement heading,
+    _ParagraphStyle style,
+    int level,
+    _Context context,
+  ) {
+    final outline = _outline;
+    if (outline == null ||
+        context.place == _Place.header ||
+        style.styleId == null ||
+        style.listStyle != null && style.listStyle != outline.name ||
+        heading.odfAttribute(_text, 'is-list-header') == 'true') {
+      return null;
+    }
+    final restart = heading.odfAttribute(_text, 'restart-numbering') == 'true'
+        ? (int.tryParse(heading.odfAttribute(_text, 'start-value') ?? '') ??
+                  outline.spec.levels[level - 1].start)
+              .clamp(0, 32767)
+        : null;
+    return outline.number(level - 1, restart, _addList);
   }
 
   /// Page and section breaks before a paragraph or table of the body;
@@ -563,14 +661,17 @@ class OdtReader {
     if (!_started) {
       _started = true;
       if (known != null) _master = _firstMaster = known;
+      _sectionMasters.add(_master);
       return false;
     }
     if (known != null) {
       final previous = _master;
       _master = known;
+      _usedMasters.add(known);
       if (_samePage(_page(known), _page(previous))) return true;
+      _charge(16 * _elementCost);
       out.add(SectionBreakSpec(_page(previous)));
-      _sections++;
+      _sectionMasters.add(known);
       return false;
     }
     return pending || (breaks.before ?? false);
@@ -586,8 +687,12 @@ class OdtReader {
     _ListState? parent,
   }) {
     final own = element.odfAttribute(_text, 'style-name');
-    final _ListState state;
-    if (parent != null && (own == null || own == parent.styleName)) {
+    final inherited =
+        parent != null && (own == null || own == parent.styleName);
+    final firstItem = element.odfChild(_text, 'list-item');
+    var startsHere = false;
+    _ListState state;
+    if (inherited) {
       state = parent;
     } else {
       final styleName =
@@ -599,9 +704,10 @@ class OdtReader {
           (element.odfAttribute(_text, 'continue-numbering') == 'true'
               ? _listsByStyle[styleName]
               : null);
+      startsHere = continued == null;
       state = _ListState(
         styleName,
-        continued ?? _addList(_withStart(spec, level, _firstStart(element))),
+        continued ?? _addList(_withStart(spec, level, _startOf(firstItem))),
         spec,
       );
     }
@@ -612,6 +718,21 @@ class OdtReader {
     for (final item in element.childElements) {
       final header = item.isOdf(_text, 'list-header');
       if (!header && !item.isOdf(_text, 'list-item')) continue;
+      final start = header ? null : _startOf(item);
+      if (start != null &&
+          level <= 8 &&
+          !(startsHere && identical(item, firstItem))) {
+        // The numbering starts again at this item.
+        state = _ListState(
+          state.styleName,
+          _addList(_withStart(state.spec, level, start)),
+          state.spec,
+        );
+        if (!inherited) {
+          if (id != null) _listsById[id] = state.numId;
+          _listsByStyle[state.styleName] = state.numId;
+        }
+      }
       var numbered = !header;
       for (final child in item.childElements) {
         if (child.isOdf(_text, 'p') || child.isOdf(_text, 'h')) {
@@ -647,27 +768,27 @@ class OdtReader {
     return null;
   }
 
-  static int? _firstStart(XmlElement list) {
-    final item = list.odfChild(_text, 'list-item');
-    return int.tryParse(item?.odfAttribute(_text, 'start-value') ?? '');
-  }
+  static int? _startOf(XmlElement? item) =>
+      int.tryParse(item?.odfAttribute(_text, 'start-value') ?? '');
 
-  static ListSpec _withStart(ListSpec spec, int level, int? start) {
-    if (start == null || level > 8) return spec;
-    return ListSpec([
-      for (final (index, definition) in spec.levels.indexed)
-        index == level
-            ? ListLevelSpec(
-                format: definition.format,
-                text: definition.text,
-                start: start.clamp(0, 32767),
-                indentLeft: definition.indentLeft,
-                hanging: definition.hanging,
-                font: definition.font,
-              )
-            : definition,
-    ]);
-  }
+  static ListSpec _withStart(ListSpec spec, int level, int? start) =>
+      start == null || level > 8 ? spec : _startingAt(spec, {level: start});
+
+  /// [spec] with the levels in [starts] counting from other numbers.
+  static ListSpec _startingAt(ListSpec spec, Map<int, int> starts) => ListSpec([
+    for (final (index, definition) in spec.levels.indexed)
+      switch (starts[index]) {
+        final start? when start != definition.start => ListLevelSpec(
+          format: definition.format,
+          text: definition.text,
+          start: start.clamp(0, 32767),
+          indentLeft: definition.indentLeft,
+          hanging: definition.hanging,
+          font: definition.font,
+        ),
+        _ => definition,
+      },
+  ]);
 
   static double _levelIndent(ListSpec spec, int level) {
     final index = math.min(level, spec.levels.length - 1);
@@ -727,8 +848,10 @@ class OdtReader {
           _nonEmpty(style?.masterPageName),
           OdtStyles.breaksOf(properties),
         )) {
-      out.add(SectionBreakSpec(_page(_master)));
-      _sections++;
+      // A page break, as in LibreOffice: a new section would show the first
+      // page's header again.
+      _charge(4 * _elementCost);
+      out.add(const ParagraphSpec([BreakSpec(BreakKind.page)]));
     }
     final reader = _TableReader(
       this,
@@ -815,7 +938,7 @@ class OdtReader {
 
   // Pictures
 
-  ({Uint8List bytes, String mime})? _picture(XmlElement image) {
+  _Picture? _picture(XmlElement image) {
     final href = image.odfAttribute(_xlink, 'href')?.trim();
     Uint8List? bytes;
     if (href != null && href.isNotEmpty) {
@@ -869,6 +992,181 @@ class OdtReader {
     return null;
   }
 
+  /// `fo:clip` of a frame's graphic style.
+  String? _clipOf(StyleScope scope, XmlElement frame) {
+    String? clip;
+    for (final style in _styles.chain(
+      scope,
+      'graphic',
+      frame.odfAttribute(_draw, 'style-name'),
+    )) {
+      clip = style.properties('graphic')?.odfAttribute(_fo, 'clip') ?? clip;
+    }
+    return clip;
+  }
+
+  /// What the frame shows of [picture], sized within [width] by [height]
+  /// without stretching it.
+  ({Uint8List bytes, String mime, double? width, double? height}) _framed(
+    _Picture picture,
+    String? clip,
+    double? width,
+    double? height,
+  ) {
+    final sides = _clipSides(clip);
+    if (sides == null) {
+      return (
+        bytes: picture.bytes,
+        mime: picture.mime,
+        width: width,
+        height: height,
+      );
+    }
+    final cut = _cutOf(picture.bytes, sides);
+    final cropped = cut == null ? null : _crop(picture, cut);
+    // Left whole, it shows what the crop hid.
+    if (cropped == null) notices.add(DocumentNotice.contentNotImported);
+    final shown = cropped ?? picture;
+    final size = _fit(shown.bytes, width, height);
+    return (
+      bytes: shown.bytes,
+      mime: shown.mime,
+      width: size.width,
+      height: size.height,
+    );
+  }
+
+  _Picture? _crop(_Picture picture, _Cut cut) {
+    final key = (picture.bytes, cut.left, cut.top, cut.right, cut.bottom);
+    if (_crops.containsKey(key)) return _crops[key];
+    final pixels = imagePixelSize(picture.bytes);
+    if (pixels == null) return null;
+    final work = pixels.width.toDouble() * pixels.height;
+    if (_cropPixels + work > _maxCropPixels) return null;
+    _cropPixels += work;
+    return _crops[key] = cropPicture(
+      picture.bytes,
+      picture.mime,
+      left: cut.left,
+      top: cut.top,
+      right: cut.right,
+      bottom: cut.bottom,
+    );
+  }
+
+  /// `rect(top, right, bottom, left)` in points; null when it cuts nothing.
+  static List<double>? _clipSides(String? clip) {
+    final match = RegExp(r'^\s*rect\s*\((.*)\)\s*$').firstMatch(clip ?? '');
+    if (match == null) return null;
+    final sides = [
+      for (final side in match[1]!.trim().split(RegExp(r'[\s,]+')))
+        side == 'auto' ? 0.0 : odfLength(side),
+    ];
+    if (sides.length != 4 ||
+        sides.any((side) => side == null) ||
+        sides.every((side) => side! <= 0)) {
+      return null;
+    }
+    return sides.cast<double>();
+  }
+
+  /// The clip is measured on the picture at its own resolution, 96 dpi when
+  /// the file has none, as LibreOffice does.
+  static _Cut? _cutOf(Uint8List bytes, List<double> sides) {
+    final pixels = imagePixelSize(bytes);
+    if (pixels == null || pixels.width <= 0 || pixels.height <= 0) return null;
+    final dpi = _resolution(bytes) ?? (x: 96.0, y: 96.0);
+    final width = pixels.width * 72 / dpi.x;
+    final height = pixels.height * 72 / dpi.y;
+    return (
+      top: sides[0] / height,
+      right: sides[1] / width,
+      bottom: sides[2] / height,
+      left: sides[3] / width,
+    );
+  }
+
+  /// Dots per inch a PNG (pHYs) or JPEG (JFIF) file gives.
+  static ({double x, double y})? _resolution(Uint8List bytes) {
+    final data = ByteData.sublistView(bytes);
+    ({double x, double y})? valid(double x, double y) =>
+        x >= 1 && y >= 1 && x <= 100000 && y <= 100000 ? (x: x, y: y) : null;
+    if (bytes.length > 8 && bytes[0] == 0x89 && bytes[1] == 0x50) {
+      for (var offset = 8; offset + 8 <= bytes.length;) {
+        final length = data.getUint32(offset);
+        final type = String.fromCharCodes(bytes, offset + 4, offset + 8);
+        if (type == 'IDAT') return null;
+        if (type == 'pHYs' && length >= 9 && offset + 17 <= bytes.length) {
+          // Only a unit of metres says how large the dots are.
+          if (bytes[offset + 16] != 1) return null;
+          return valid(
+            data.getUint32(offset + 8) * 0.0254,
+            data.getUint32(offset + 12) * 0.0254,
+          );
+        }
+        offset += 12 + length;
+      }
+      return null;
+    }
+    if (bytes.length > 17 &&
+        bytes[0] == 0xFF &&
+        bytes[1] == 0xD8 &&
+        bytes[2] == 0xFF &&
+        bytes[3] == 0xE0 &&
+        String.fromCharCodes(bytes, 6, 11) == 'JFIF\u0000') {
+      final x = data.getUint16(14).toDouble();
+      final y = data.getUint16(16).toDouble();
+      return switch (bytes[13]) {
+        1 => valid(x, y),
+        2 => valid(x * 2.54, y * 2.54),
+        _ => null,
+      };
+    }
+    return null;
+  }
+
+  /// The largest size within [width] by [height] with the picture's
+  /// proportions.
+  static ({double? width, double? height}) _fit(
+    Uint8List bytes,
+    double? width,
+    double? height,
+  ) {
+    final shape = _shape(bytes);
+    if (width == null ||
+        height == null ||
+        shape == null ||
+        shape.width <= 0 ||
+        shape.height <= 0) {
+      return (width: width, height: height);
+    }
+    final scale = math.min(width / shape.width, height / shape.height);
+    return (width: shape.width * scale, height: shape.height * scale);
+  }
+
+  /// A picture's pixels, or the frame a metafile is drawn in.
+  static ({double width, double height})? _shape(Uint8List bytes) {
+    if (imagePixelSize(bytes) case final pixels?) {
+      return (width: pixels.width.toDouble(), height: pixels.height.toDouble());
+    }
+    final data = ByteData.sublistView(bytes);
+    int at(int offset) => data.getInt32(offset, Endian.little);
+    int short(int offset) => data.getInt16(offset, Endian.little);
+    if (_imageType(bytes) == 'image/x-emf') {
+      return (
+        width: (at(32) - at(24)).toDouble(),
+        height: (at(36) - at(28)).toDouble(),
+      );
+    }
+    if (bytes.length > 14 && data.getUint32(0, Endian.little) == 0x9AC6CDD7) {
+      return (
+        width: (short(10) - short(6)).toDouble(),
+        height: (short(12) - short(8)).toDouble(),
+      );
+    }
+    return null;
+  }
+
   // Page setup, headers and footers
 
   /// The page style used on most pages, and the one of the first page when
@@ -897,11 +1195,19 @@ class OdtReader {
     return null;
   }
 
+  /// The headers (or footers) of a page style, for every kind of page.
+  static Iterable<XmlElement> _parts(
+    ({XmlElement? main, XmlElement? first}) masters,
+    String kind,
+  ) => [
+    _part(masters.main, kind),
+    _part(masters.main, '$kind-left'),
+    _part(masters.main, '$kind-first'),
+    _part(masters.first, kind),
+  ].nonNulls;
+
   bool _hasPart(({XmlElement? main, XmlElement? first}) masters, String kind) =>
-      _part(masters.main, kind) != null ||
-      _part(masters.main, '$kind-left') != null ||
-      _part(masters.main, '$kind-first') != null ||
-      _part(masters.first, kind) != null;
+      _parts(masters, kind).isNotEmpty;
 
   PageSpec _page(String? master) => _pages[master] ??= _readPage(master);
 
@@ -961,8 +1267,25 @@ class OdtReader {
       columnSpacing:
           _positive(odfLength(columns?.odfAttribute(_fo, 'column-gap'))) ??
           defaults.columnSpacing,
+      numberFormat: switch (properties?.odfAttribute(_style, 'num-format')) {
+        'i' => NumberFormat.lowerRoman,
+        'I' => NumberFormat.upperRoman,
+        'a' => NumberFormat.lowerLetter,
+        'A' => NumberFormat.upperLetter,
+        '' => NumberFormat.none,
+        _ => null,
+      },
     );
   }
+
+  /// The `style:num-format` of a page style, which its page count fields
+  /// follow.
+  String? _pageNumbering(String? master) => _styles
+      .pageLayouts[_masters(
+        master,
+      ).main?.odfAttribute(_style, 'page-layout-name')]
+      ?.odfChild(_style, 'page-layout-properties')
+      ?.odfAttribute(_style, 'num-format');
 
   /// Height of a header or footer plus its distance to the body.
   double _partSpace(XmlElement? partStyle, String side) {
@@ -975,22 +1298,52 @@ class OdtReader {
     return math.min(height + math.max(spacing ?? 0, 0), 720);
   }
 
-  void _readHeadersFooters(String? name) {
-    final masters = _masters(name);
-    final main = masters.main;
-    if (main == null) return;
+  /// One set serves the whole document: the last section's, or the nearest
+  /// earlier one's when it has none of a kind.
+  void _readHeadersFooters() {
+    final latestFirst = _sectionMasters.reversed.toSet();
+    String? source(String kind) {
+      for (final master in latestFirst) {
+        if (_hasPart(_masters(master), kind)) return master;
+      }
+      return null;
+    }
+
+    final header = source('header');
+    final footer = source('footer');
+    for (final (kind, master) in [('header', header), ('footer', footer)]) {
+      final kept = {
+        for (final part in _parts(_masters(master), kind)) part.innerXml,
+      };
+      final dropped = _usedMasters.any(
+        (used) => _parts(
+          _masters(used),
+          kind,
+        ).any((part) => !kept.contains(part.innerXml)),
+      );
+      if (dropped) notices.add(DocumentNotice.contentNotImported);
+    }
+
+    final headers = _masters(header);
+    final footers = _masters(footer);
+    bool firstDiffers(
+      ({XmlElement? main, XmlElement? first}) masters,
+      String kind,
+    ) => masters.first != null || _part(masters.main, '$kind-first') != null;
     _spec
       ..differentFirstPage =
-          masters.first != null ||
-          _part(main, 'header-first') != null ||
-          _part(main, 'footer-first') != null
+          firstDiffers(headers, 'header') || firstDiffers(footers, 'footer')
       ..differentOddEven =
-          _part(main, 'header-left') != null ||
-          _part(main, 'footer-left') != null;
-    for (final (kind, stories) in [
-      ('header', _spec.headers),
-      ('footer', _spec.footers),
+          _part(headers.main, 'header-left') != null ||
+          _part(footers.main, 'footer-left') != null;
+    for (final (kind, name, masters, stories) in [
+      ('header', header, headers, _spec.headers),
+      ('footer', footer, footers, _spec.footers),
     ]) {
+      final main = masters.main;
+      if (main == null) continue;
+      // Its fields and tables follow its own page style.
+      _master = name;
       final normal = _part(main, kind);
       if (normal != null) stories[PageVariant.normal] = _story(normal);
       if (_spec.differentOddEven) {
@@ -1013,6 +1366,66 @@ class OdtReader {
   }
 }
 
+/// Heading numbers of the outline style as LibreOffice counts them, and the
+/// lists that show the same numbers in Word.
+class _Outline {
+  _Outline(this.spec, this.name);
+
+  /// Null when the style numbers no level, as LibreOffice's default.
+  static _Outline? of(XmlElement? style) {
+    if (style == null) return null;
+    final spec = OdtStyles.listSpecOf(style);
+    return spec.levels.every((level) => level.format == NumberFormat.none)
+        ? null
+        : _Outline(spec, style.odfAttribute(_style, 'name'));
+  }
+
+  final ListSpec spec;
+
+  /// Heading styles may name it as their list.
+  final String? name;
+
+  final _counts = List<int?>.filled(9, null);
+  final _listCounts = List<int?>.filled(9, null);
+  var _listStarts = const <int>[];
+  int? _numId;
+
+  /// The number of a heading at [level], from 0; [restart] starts the
+  /// level again at that value.
+  ListRef number(int level, int? restart, int Function(ListSpec) addList) {
+    final starts = [for (final definition in spec.levels) definition.start];
+    _counts[level] = restart ?? (_counts[level] ?? starts[level] - 1) + 1;
+    _counts.fillRange(level + 1, 9, null);
+    final shown = [
+      for (var index = 0; index <= level; index++)
+        _counts[index] ?? starts[index],
+    ];
+    // Word's list only counts on, so a restart needs another list.
+    var numId = _numId;
+    if (numId != null) {
+      for (var index = 0; index <= level; index++) {
+        final counted = index == level
+            ? (_listCounts[index] ?? _listStarts[index] - 1) + 1
+            : _listCounts[index] ?? _listStarts[index];
+        if (counted != shown[index]) numId = null;
+      }
+    }
+    if (numId == null) {
+      _listStarts = [
+        for (var index = 0; index < 9; index++)
+          index <= level ? shown[index] : starts[index],
+      ];
+      numId = _numId = addList(
+        OdtReader._startingAt(spec, _listStarts.asMap()),
+      );
+      _listCounts.fillRange(0, 9, null);
+    }
+    _listCounts[level] = shown[level];
+    _listCounts.fillRange(level + 1, 9, null);
+    return ListRef(numId, level);
+  }
+}
+
 /// The rows of a table, with spans and merges on the column grid.
 class _TableReader {
   _TableReader(this.reader, this.context);
@@ -1024,7 +1437,8 @@ class _TableReader {
   final rows = <RowSpec>[];
   var bordered = false;
   final _cover = <int, _Cover>{};
-  final _contents = <XmlElement, ({List<BlockSpec> blocks, int cost})>{};
+  final _contents =
+      <XmlElement, ({List<BlockSpec> blocks, int cost, int cells})>{};
   var _row = 0;
 
   void read(XmlElement parent, {bool header = false}) {
@@ -1128,6 +1542,7 @@ class _TableReader {
       }
     }
     reader._countCells(math.max(cells.length, 1));
+    reader._charge(OdtReader._elementCost * (1 + 2 * cells.length));
     if (cells.isEmpty) return;
     final rowProperties = reader._styles
         .find(
@@ -1150,18 +1565,25 @@ class _TableReader {
     );
   }
 
-  /// Read once; repeated cells reuse it and still count toward the limit.
+  /// Read once; repeated cells reuse it and still count everything it holds
+  /// toward the limits.
   List<BlockSpec> _content(XmlElement cell) {
     final cached = _contents[cell];
     if (cached != null) {
-      reader._charge(cached.cost);
+      reader
+        .._charge(cached.cost)
+        .._countCells(cached.cells);
       return cached.blocks;
     }
-    final before = reader._output;
+    final output = reader._output;
+    final cells = reader._cells;
     final blocks = <BlockSpec>[];
     reader._blocks(cell, blocks, context);
-    reader._charge(1);
-    _contents[cell] = (blocks: blocks, cost: reader._output - before);
+    _contents[cell] = (
+      blocks: blocks,
+      cost: reader._output - output,
+      cells: reader._cells - cells,
+    );
     return blocks;
   }
 
@@ -1185,6 +1607,9 @@ class _TableReader {
   }
 }
 
+/// Letters that continue a word, for capitalized text.
+final _wordCharacter = RegExp(r"[\p{L}\p{N}\p{M}'’]", unicode: true);
+
 /// The inline content of one paragraph.
 class _Inlines {
   _Inlines(
@@ -1192,7 +1617,8 @@ class _Inlines {
     this.context,
     this.floating, {
     required this.paragraphSize,
-  });
+    TextCase textCase = TextCase.asWritten,
+  }) : _case = textCase;
 
   final OdtReader reader;
   final _Context context;
@@ -1207,6 +1633,8 @@ class _Inlines {
   // start.
   var _space = true;
   var _inLink = false;
+  TextCase _case;
+  var _inWord = false;
   final _pending = StringBuffer();
   RunFormat? _pendingFormat;
   List<InlineSpec>? _pendingOut;
@@ -1220,6 +1648,9 @@ class _Inlines {
   void flush() {
     final out = _pendingOut;
     if (out != null && _pending.isNotEmpty) {
+      reader._charge(
+        OdtReader._elementCost + OdtReader._formatCost(_pendingFormat!),
+      );
       out.add(TextSpec(_pending.toString(), _pendingFormat!));
     }
     _pending.clear();
@@ -1238,7 +1669,11 @@ class _Inlines {
     if (namespace == _text) {
       switch (local) {
         case 'span':
-          read(node, _span(node, format), out);
+          final (spanFormat, spanCase) = _span(node, format);
+          final outer = _case;
+          _case = spanCase ?? outer;
+          read(node, spanFormat, out);
+          _case = outer;
         case 'a':
           _link(node, format, out);
         case 's':
@@ -1253,12 +1688,14 @@ class _Inlines {
           _space = false;
         case 'line-break':
           _add(const BreakSpec(BreakKind.line), out);
+          _inWord = false;
         case 'bookmark' || 'bookmark-start':
           final name = _nonEmpty(node.odfAttribute(_text, 'name'));
           if (name != null) _add(BookmarkSpec(name), out);
         case 'note':
           _note(node, format, out);
         case 'page-number':
+          // The section's page numbering gives the format.
           _add(
             FieldSpec(
               _numbered('PAGE', node),
@@ -1270,7 +1707,11 @@ class _Inlines {
         case 'page-count':
           _add(
             FieldSpec(
-              _numbered('NUMPAGES', node),
+              _numbered(
+                'NUMPAGES',
+                node,
+                reader._pageNumbering(reader._master),
+              ),
               result: _shown(node),
               format: format,
             ),
@@ -1279,6 +1720,20 @@ class _Inlines {
         case 'ruby':
           final base = node.odfChild(_text, 'ruby-base');
           if (base != null) read(base, format, out);
+          final annotation = node.odfChild(_text, 'ruby-text');
+          if (annotation != null && annotation.innerText.trim().isNotEmpty) {
+            // The reading follows its text, as in plain text.
+            reader.notices.add(DocumentNotice.contentNotImported);
+            _emit('(', format, out);
+            read(annotation, format, out);
+            _emit(')', format, out);
+          }
+        case 'hidden-text':
+          if (node.odfAttribute(_text, 'is-hidden') == 'true') {
+            reader.notices.add(DocumentNotice.contentNotImported);
+          } else {
+            read(node, format, out);
+          }
         case 'soft-page-break' ||
             'bookmark-end' ||
             'change' ||
@@ -1286,8 +1741,8 @@ class _Inlines {
             'change-end' ||
             'note-citation' ||
             'note-body' ||
+            'number' ||
             'script' ||
-            'hidden-text' ||
             'hidden-paragraph' ||
             'tracked-changes':
           return;
@@ -1329,43 +1784,76 @@ class _Inlines {
     if (buffer.isNotEmpty) _emit(buffer.toString(), format, out);
   }
 
+  /// Word has no lowercase or capitalized runs, so the text changes case.
   void _emit(String text, RunFormat format, List<InlineSpec> out) {
-    reader._charge(text.length);
+    final shown = switch (_case) {
+      TextCase.asWritten => text,
+      TextCase.lower => text.toLowerCase(),
+      TextCase.capitalized => _capitalized(text),
+    };
+    if (shown.isNotEmpty) {
+      _inWord = _wordCharacter.hasMatch(String.fromCharCode(shown.runes.last));
+    }
+    reader._charge(shown.length);
     if (!identical(format, _pendingFormat) || !identical(out, _pendingOut)) {
       flush();
       _pendingFormat = format;
       _pendingOut = out;
     }
-    _pending.write(text);
+    _pending.write(shown);
+  }
+
+  String _capitalized(String text) {
+    final out = StringBuffer();
+    var inWord = _inWord;
+    for (final rune in text.runes) {
+      final character = String.fromCharCode(rune);
+      out.write(inWord ? character : character.toUpperCase());
+      inWord = _wordCharacter.hasMatch(character);
+    }
+    return out.toString();
   }
 
   void _add(InlineSpec inline, List<InlineSpec> out) {
     flush();
+    reader._charge(switch (inline) {
+      FieldSpec(:final format) =>
+        5 * (OdtReader._elementCost + OdtReader._formatCost(format)),
+      NoteSpec(:final format) =>
+        4 * OdtReader._elementCost + OdtReader._formatCost(format),
+      _ => 4 * OdtReader._elementCost,
+    });
     out.add(inline);
     if (inline is! BookmarkSpec && inline is! LinkSpec) _space = false;
   }
 
   /// Character styles keep their name; their formatting is also applied
   /// directly, since spans nest and a Word run has one style.
-  RunFormat _span(XmlElement span, RunFormat format) {
+  (RunFormat, TextCase?) _span(XmlElement span, RunFormat format) {
     final chain = reader._styles.chain(
       context.scope,
       'text',
       span.odfAttribute(_text, 'style-name'),
     );
     var result = format;
+    TextCase? textCase;
     OdfStyle? named;
     for (final style in chain) {
+      final properties = style.properties('text');
       result = result.merge(
         reader._styles.runOf(
-          style.properties('text'),
+          properties,
           inheritedSize: result.size ?? paragraphSize,
         ),
       );
+      textCase = OdtStyles.textCaseOf(properties) ?? textCase;
       if (!style.automatic) named = style;
     }
     final id = named == null ? null : reader._ids[_idKey('text', named.name)];
-    return id == null ? result : result.merge(RunFormat(styleId: id));
+    return (
+      id == null ? result : result.merge(RunFormat(styleId: id)),
+      textCase,
+    );
   }
 
   void _link(XmlElement link, RunFormat format, List<InlineSpec> out) {
@@ -1384,6 +1872,13 @@ class _Inlines {
 
   void _note(XmlElement note, RunFormat format, List<InlineSpec> out) {
     if (context.place == _Place.note || context.place == _Place.header) return;
+    final label = note
+        .odfChild(_text, 'note-citation')
+        ?.odfAttribute(_text, 'label');
+    if (_nonEmpty(label) != null) {
+      // The note keeps its text but gets a number for its own mark.
+      reader.notices.add(DocumentNotice.contentNotImported);
+    }
     final blocks = <BlockSpec>[];
     final body = note.odfChild(_text, 'note-body');
     if (body != null) {
@@ -1405,14 +1900,18 @@ class _Inlines {
     );
   }
 
-  static String _numbered(String field, XmlElement element) =>
-      switch (element.odfAttribute(_style, 'num-format')) {
-        'i' => '$field \\* roman',
-        'I' => '$field \\* ROMAN',
-        'a' => '$field \\* alphabetic',
-        'A' => '$field \\* ALPHABETIC',
-        _ => field,
-      };
+  /// The field's own number format, or else [pageStyle]'s.
+  static String _numbered(
+    String field,
+    XmlElement element, [
+    String? pageStyle,
+  ]) => switch (element.odfAttribute(_style, 'num-format') ?? pageStyle) {
+    'i' => '$field \\* roman',
+    'I' => '$field \\* ROMAN',
+    'a' => '$field \\* alphabetic',
+    'A' => '$field \\* ALPHABETIC',
+    _ => field,
+  };
 
   static String _shown(XmlElement element) {
     final text = element.innerText.trim();
@@ -1437,13 +1936,19 @@ class _Inlines {
           missing = true;
           continue;
         }
-        reader._charge(picture.bytes.length ~/ 8 + 1);
+        final shown = reader._framed(
+          picture,
+          reader._clipOf(context.scope, frame),
+          width,
+          height,
+        );
+        reader._charge(shown.bytes.length ~/ 8 + OdtReader._pictureCost);
         _add(
           ImageSpec(
-            picture.bytes,
-            picture.mime,
-            width: width,
-            height: height,
+            shown.bytes,
+            shown.mime,
+            width: shown.width,
+            height: shown.height,
             description: description,
           ),
           out,

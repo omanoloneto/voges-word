@@ -3,8 +3,10 @@ import 'dart:typed_data';
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voges_word/document/document_codec.dart';
+import 'package:voges_word/document/embeds.dart';
 import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/docx/docx_codec.dart';
+import 'package:voges_word/docx/docx_package.dart';
 import 'package:voges_word/odt/odt_codec.dart';
 
 import 'odt_fixtures.dart';
@@ -237,6 +239,88 @@ void main() {
       () => _decode(odtFile(body: '$lists')),
       _problem(DocumentProblem.tooLarge),
     );
+  });
+
+  test('empty paragraphs count toward the output limit', () {
+    final stops = [
+      for (var index = 1; index <= 64; index++)
+        '<style:tab-stop style:position="${index * 0.2}cm"/>',
+    ].join();
+    expect(
+      () => _decode(
+        odtFile(
+          styles:
+              '<style:default-style style:family="paragraph"><style:paragraph-properties>'
+              '<style:tab-stops>$stops</style:tab-stops></style:paragraph-properties>'
+              '</style:default-style>'
+              '<style:style style:name="Standard" style:family="paragraph"/>',
+          body: '<text:p/>' * 32000,
+        ),
+      ),
+      _problem(DocumentProblem.tooLarge),
+    );
+  });
+
+  test('reused cells count every cell they hold', () {
+    const inner =
+        '<table:table><table:table-row table:number-rows-repeated="1000">'
+        '<table:table-cell><text:p>x</text:p></table:table-cell>'
+        '</table:table-row></table:table>';
+    expect(
+      () => _decode(
+        odtFile(
+          body:
+              '<table:table><table:table-row table:number-rows-repeated="2">'
+              '<table:table-cell table:number-columns-repeated="63">$inner'
+              '</table:table-cell></table:table-row></table:table>',
+        ),
+      ),
+      _problem(DocumentProblem.tooLarge),
+    );
+  });
+
+  test('made-up font names are dropped instead of repeated on every run', () {
+    final name = 'a' * 10000;
+    final loaded = _decode(
+      odtFile(
+        fonts:
+            '<style:font-face style:name="Long" svg:font-family="$name"/>'
+            '<style:font-face style:name="$name"/>',
+        automatic:
+            '<style:style style:name="P1" style:family="paragraph" style:parent-style-name="Standard">'
+            '<style:text-properties style:font-name="Long"/></style:style>'
+            '<style:style style:name="T1" style:family="text">'
+            '<style:text-properties fo:font-family="$name"/></style:style>'
+            '<style:style style:name="T2" style:family="text">'
+            '<style:text-properties style:font-name="$name"/></style:style>',
+        body:
+            '<text:p text:style-name="P1">one <text:span text:style-name="T1">two</text:span> '
+                '<text:span text:style-name="T2">three</text:span></text:p>' *
+            100,
+      ),
+    );
+    final document = (loaded.source! as DocxPackage).text('word/document.xml')!;
+    expect(document, isNot(contains('a' * 101)));
+    expect(_plain(loaded.delta), startsWith('one two three\n'));
+  });
+
+  test('a cropped picture used many times is cropped once', () {
+    final loaded = _decode(
+      odtFile(
+        automatic:
+            '<style:style style:name="fr1" style:family="graphic">'
+            '<style:graphic-properties fo:clip="rect(0cm, 0cm, 0cm, 13.2292cm)"/>'
+            '</style:style>',
+        body:
+            '<text:p>${'<draw:frame draw:style-name="fr1" svg:width="1cm" svg:height="2cm">'
+                    '<draw:image xlink:href="Pictures/a.png"/></draw:frame>' * 200}</text:p>',
+        extra: {'Pictures/a.png': halvesPng(1000, 1000)},
+      ),
+    );
+    final images = embedsOf(loaded.delta, EmbedTypes.image);
+    expect(images, hasLength(200));
+    expect(images.map((image) => pictureOf(image).width).toSet(), {500});
+    expect(loaded.notices, isEmpty);
   });
 
   test('style loops, absurd lengths and odd values still open', () {

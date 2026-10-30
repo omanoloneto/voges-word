@@ -63,6 +63,10 @@ String _key(String family, String name) => '$family\u0000$name';
 /// Whether a paragraph property starts or ends a page.
 typedef PageBreaks = ({bool? before, bool? after});
 
+/// Case changes of `fo:text-transform` that Word has no run property for;
+/// uppercase is [RunFormat.allCaps].
+enum TextCase { asWritten, lower, capitalized }
+
 /// The styles of a document, resolved into the builder's formats.
 class OdtStyles {
   OdtStyles._(
@@ -70,6 +74,7 @@ class OdtStyles {
     this._defaults,
     this._named,
     this._namedLists,
+    this.outlineStyle,
     this.pageLayouts,
     this.masterPages,
     this.body,
@@ -81,6 +86,7 @@ class OdtStyles {
     final defaults = <String, XmlElement>{};
     final named = <String, OdfStyle>{};
     final namedLists = <String, XmlElement>{};
+    XmlElement? outlineStyle;
     final pageLayouts = <String, XmlElement>{};
     final masterPages = <String, XmlElement>{};
 
@@ -98,7 +104,9 @@ class OdtStyles {
               face.odfAttribute(OdfNamespaces.svg, 'font-family'),
             ) ??
             name;
-        if (name != null && family != null) {
+        if (name != null &&
+            family != null &&
+            family.length <= maxFontNameLength) {
           fonts.putIfAbsent(name, () => family);
         }
       }
@@ -118,6 +126,8 @@ class OdtStyles {
       } else if (element.isOdf(_text, 'list-style')) {
         final name = element.odfAttribute(_style, 'name');
         if (name != null) namedLists.putIfAbsent(name, () => element);
+      } else if (element.isOdf(_text, 'outline-style')) {
+        outlineStyle ??= element;
       }
     }
     final masterAutomatic = stylesRoot?.odfChild(
@@ -145,6 +155,7 @@ class OdtStyles {
       defaults,
       named,
       namedLists,
+      outlineStyle,
       pageLayouts,
       masterPages,
       StyleScope(
@@ -158,6 +169,10 @@ class OdtStyles {
   final Map<String, XmlElement> _defaults;
   final Map<String, OdfStyle> _named;
   final Map<String, XmlElement> _namedLists;
+
+  /// How headings outside lists are numbered (LibreOffice's Heading
+  /// Numbering).
+  final XmlElement? outlineStyle;
   final Map<String, XmlElement> pageLayouts;
 
   /// In document order; the first one is the default.
@@ -198,7 +213,8 @@ class OdtStyles {
   XmlElement? listStyle(StyleScope scope, String? name) =>
       name == null ? null : scope.lists[name] ?? _namedLists[name];
 
-  String? fontFamily(String name) => _fonts[name] ?? name;
+  String? fontFamily(String name) =>
+      _fonts[name] ?? (name.length <= maxFontNameLength ? name : null);
 
   /// Character formatting set by `style:text-properties`; percentages of
   /// the font size are taken from [inheritedSize].
@@ -260,7 +276,7 @@ class OdtStyles {
           : VerticalPosition.subscript,
       allCaps: switch (transform) {
         'uppercase' => true,
-        'none' => false,
+        'none' || 'lowercase' || 'capitalize' => false,
         _ => null,
       },
       smallCaps: switch (variant) {
@@ -275,6 +291,15 @@ class OdtStyles {
       },
     );
   }
+
+  /// Null keeps the case the enclosing text has.
+  static TextCase? textCaseOf(XmlElement? properties) =>
+      switch (properties?.odfAttribute(_fo, 'text-transform')) {
+        'lowercase' => TextCase.lower,
+        'capitalize' => TextCase.capitalized,
+        'uppercase' || 'none' => TextCase.asWritten,
+        _ => null,
+      };
 
   static bool? _line(String? style, String? type) {
     if (style == null) return type == 'none' ? false : null;
@@ -321,7 +346,9 @@ class OdtStyles {
       lineSpacing: lineSpacing,
       keepNext: _keep(attribute(_fo, 'keep-with-next')),
       keepLines: _keep(attribute(_fo, 'keep-together')),
-      contextualSpacing: switch (attribute(_style, 'contextual-spacing')) {
+      // LibreOffice 4.3 to 6.4 wrote it as an extension.
+      contextualSpacing: switch (attribute(_style, 'contextual-spacing') ??
+          attribute(OdfNamespaces.loext, 'contextual-spacing')) {
         'true' => true,
         'false' => false,
         _ => null,
@@ -387,8 +414,9 @@ class OdtStyles {
     return (before: page('break-before'), after: page('break-after'));
   }
 
-  /// The levels of a `text:list-style`.
+  /// The levels of a `text:list-style`, or of the `text:outline-style`.
   static ListSpec listSpecOf(XmlElement listStyle) {
+    final outline = listStyle.isOdf(_text, 'outline-style');
     final byLevel = <int, XmlElement>{};
     for (final child in listStyle.childElements) {
       final level = int.tryParse(child.odfAttribute(_text, 'level') ?? '');
@@ -398,11 +426,35 @@ class OdtStyles {
     }
     final levels = <ListLevelSpec>[];
     for (var level = 1; level <= 9; level++) {
+      final element = byLevel[level];
       levels.add(
-        _level(byLevel[level], level, levels.isEmpty ? null : levels.last),
+        outline
+            ? _outlineLevel(element, level)
+            : _level(element, level, levels.isEmpty ? null : levels.last),
       );
     }
     return ListSpec(levels);
+  }
+
+  /// Headings sit at the margin unless the level says otherwise, and
+  /// levels left out show no number.
+  static ListLevelSpec _outlineLevel(XmlElement? element, int level) {
+    if (element == null || element.odfAttribute(_style, 'num-format') == null) {
+      return const ListLevelSpec(
+        format: NumberFormat.none,
+        text: '',
+        indentLeft: 0,
+        hanging: 0,
+      );
+    }
+    final numbered = _level(element, level, null);
+    return ListLevelSpec(
+      format: numbered.format,
+      text: numbered.text,
+      start: numbered.start,
+      indentLeft: numbered.indentLeft ?? 0,
+      hanging: numbered.indentLeft == null ? 0 : numbered.hanging,
+    );
   }
 
   static ListLevelSpec _level(
@@ -422,7 +474,8 @@ class OdtStyles {
       );
     }
     final indent = _indent(element.odfChild(_style, 'list-level-properties'));
-    if (element.isOdf(_text, 'list-level-style-number')) {
+    if (element.isOdf(_text, 'list-level-style-number') ||
+        element.isOdf(_text, 'outline-level-style')) {
       final format = _numberFormat(element.odfAttribute(_style, 'num-format'));
       final shown =
           (int.tryParse(element.odfAttribute(_text, 'display-levels') ?? '') ??

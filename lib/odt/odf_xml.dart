@@ -15,7 +15,15 @@ abstract final class OdfNamespaces {
   static const dc = 'http://purl.org/dc/elements/1.1/';
   static const number = 'urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0';
   static const manifest = 'urn:oasis:names:tc:opendocument:xmlns:manifest:1.0';
+
+  /// LibreOffice's extensions, some of them standard in later ODF versions.
+  static const loext =
+      'urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0';
 }
+
+/// Longer font names are made up; dropping them keeps every run from
+/// repeating them.
+const maxFontNameLength = 100;
 
 /// Lookups by namespace URI, since files may use any prefix.
 extension OdfElement on XmlElement {
@@ -86,7 +94,9 @@ String? odfFontFamily(String? value) {
               first.startsWith('"') && first.endsWith('"'))
       ? first.substring(1, first.length - 1).trim()
       : first;
-  return unquoted.isEmpty ? null : unquoted;
+  return unquoted.isEmpty || unquoted.length > maxFontNameLength
+      ? null
+      : unquoted;
 }
 
 /// Style names encode spaces and other characters as `_20_`.

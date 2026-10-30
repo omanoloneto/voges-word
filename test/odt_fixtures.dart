@@ -3,7 +3,9 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:flutter_quill/quill_delta.dart';
+import 'package:image/image.dart' as img;
 import 'package:voges_word/document/embeds.dart';
+import 'package:voges_word/docx/image_formats.dart';
 
 const odfNamespaces =
     'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
@@ -20,6 +22,49 @@ const odfNamespaces =
 final pngPixel = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
 );
+
+/// A PNG red on its left half and blue on its right half; [dpi] adds the
+/// resolution a pHYs chunk gives.
+Uint8List halvesPng(int width, int height, {int? dpi}) {
+  final image = img.Image(width: width, height: height);
+  for (var x = 0; x < width; x++) {
+    for (var y = 0; y < height; y++) {
+      image.setPixelRgb(
+        x,
+        y,
+        x < width / 2 ? 255 : 0,
+        0,
+        x < width / 2 ? 0 : 255,
+      );
+    }
+  }
+  final png = img.encodePng(image);
+  if (dpi == null) return png;
+  final perMetre = (dpi / 0.0254).round();
+  final chunk = ByteData(21)
+    ..setUint32(0, 9)
+    ..setUint32(8, perMetre)
+    ..setUint32(12, perMetre)
+    ..setUint8(16, 1);
+  final bytes = chunk.buffer.asUint8List();
+  bytes.setRange(4, 8, 'pHYs'.codeUnits);
+  chunk.setUint32(17, getCrc32(bytes.sublist(4, 17)));
+  // After the signature and IHDR.
+  return Uint8List.fromList([...png.take(33), ...bytes, ...png.skip(33)]);
+}
+
+/// Pixel size and the color of the top left pixel of a picture embed.
+({int width, int height, int red, int blue}) pictureOf(Object? embed) {
+  final picture = decodeDataUri(embed! as String)!;
+  final image = img.decodeImage(picture.bytes)!;
+  final pixel = image.getPixel(0, 0);
+  return (
+    width: image.width,
+    height: image.height,
+    red: pixel.r.toInt(),
+    blue: pixel.b.toInt(),
+  );
+}
 
 /// What LibreOffice writes for a new document, trimmed.
 const libreOfficeStyles = '''

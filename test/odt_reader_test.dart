@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voges_word/document/document_codec.dart';
@@ -520,5 +521,475 @@ void main() {
     final word = DocxCodec(TableStore()).encode(Delta()..insert('From Word\n'));
     expect(detectFormat('renamed.odt', word)?.format, DocumentFormat.odt);
     expect(_plain(_decode(word).delta), 'From Word\n');
+  });
+
+  test('headings outside lists take the numbers of the outline style', () {
+    const heading1 = 'text:style-name="Heading_20_1" text:outline-level="1"';
+    const heading2 = 'text:style-name="Heading_20_2" text:outline-level="2"';
+    final loaded = _decode(
+      odtFile(
+        styles:
+            '$libreOfficeStyles<text:outline-style style:name="Outline">'
+            '<text:outline-level-style text:level="1" style:num-format="1"/>'
+            '<text:outline-level-style text:level="2" style:num-format="1" text:display-levels="2"/>'
+            '<text:outline-level-style text:level="3" style:num-format=""/>'
+            '</text:outline-style>',
+        automatic:
+            '<style:style style:name="P1" style:family="paragraph" '
+            'style:parent-style-name="Heading_20_1" style:list-style-name=""/>',
+        body:
+            '<text:h $heading1>Introduction</text:h><text:p>para</text:p>'
+            '<text:h $heading2>Scope</text:h>'
+            '<text:h $heading1 text:is-list-header="true">Unnumbered</text:h>'
+            '<text:h text:style-name="P1" text:outline-level="1">No list</text:h>'
+            '<text:h $heading1>Methods</text:h>'
+            '<text:h $heading2 text:restart-numbering="true" text:start-value="5">Fifth</text:h>'
+            '<text:h $heading2>Sixth</text:h>'
+            '<text:h $heading1>Results</text:h>',
+      ),
+    );
+    final delta = loaded.delta;
+    Object? number(String text) =>
+        lineOf(delta, text)?[HiddenAttributes.numbering];
+
+    expect(lineOf(delta, 'Introduction')?['header'], 1);
+    expect(lineOf(delta, 'Introduction')?['list'], 'ordered');
+    expect(lineOf(delta, 'Scope')?['header'], 2);
+    expect(lineOf(delta, 'Scope')?['list'], 'ordered');
+    expect(number('Scope'), number('Introduction'));
+    expect(number('Methods'), number('Introduction'));
+    expect(lineOf(delta, 'para')?['list'], isNull);
+    expect(lineOf(delta, 'Unnumbered')?['list'], isNull);
+    expect(lineOf(delta, 'No list')?['list'], isNull);
+    // Word shows 2.5 and 2.6, then 3, from lists that start there.
+    expect(number('Fifth'), isNot(number('Methods')));
+    expect(number('Sixth'), number('Fifth'));
+    expect(number('Results'), isNot(number('Fifth')));
+    final numbering = _package(loaded).text('word/numbering.xml')!;
+    expect(numbering, contains('<w:lvlText w:val="%1"/>'));
+    expect(numbering, contains('<w:lvlText w:val="%1.%2"/>'));
+    expect(
+      numbering,
+      contains(
+        '<w:lvl w:ilvl="0"><w:start w:val="2"/><w:numFmt w:val="decimal"/>',
+      ),
+    );
+    expect(
+      numbering,
+      contains(
+        '<w:lvl w:ilvl="1"><w:start w:val="5"/><w:numFmt w:val="decimal"/>',
+      ),
+    );
+    expect(
+      numbering,
+      contains(
+        '<w:lvl w:ilvl="0"><w:start w:val="3"/><w:numFmt w:val="decimal"/>',
+      ),
+    );
+
+    // LibreOffice's default outline style numbers nothing.
+    final plain = _decode(
+      odtFile(
+        styles:
+            '$libreOfficeStyles<text:outline-style style:name="Outline">'
+            '<text:outline-level-style text:level="1" style:num-format=""/>'
+            '</text:outline-style>',
+        body: '<text:h $heading1>Introduction</text:h>',
+      ),
+    );
+    expect(lineOf(plain.delta, 'Introduction'), {'header': 1});
+    expect(_package(plain).text('word/numbering.xml'), isNull);
+  });
+
+  test('headers and footers of an earlier page style are kept', () {
+    const layouts =
+        '$a4Layout<style:page-layout style:name="pm2"><style:page-layout-properties '
+        'fo:page-width="29.7cm" fo:page-height="21cm" style:print-orientation="landscape" '
+        'fo:margin-top="2cm" fo:margin-bottom="2cm" fo:margin-left="2cm" fo:margin-right="2cm"/>'
+        '</style:page-layout>';
+    const standard =
+        '<style:master-page style:name="Standard" style:page-layout-name="pm1">'
+        '<style:header><text:p>Company report</text:p></style:header>'
+        '<style:footer><text:p>Page <text:page-number text:select-page="current">1</text:page-number></text:p></style:footer>'
+        '</style:master-page>';
+    const automatic =
+        '<style:style style:name="P2" style:family="paragraph" '
+        'style:parent-style-name="Standard" style:master-page-name="Landscape"/>';
+    const body =
+        '<text:p>first</text:p><text:p>second</text:p>'
+        '<text:p text:style-name="P2">appendix</text:p>';
+
+    final loaded = _decode(
+      odtFile(
+        masterAutomatic: layouts,
+        masters:
+            '$standard<style:master-page style:name="Landscape" style:page-layout-name="pm2"/>',
+        automatic: automatic,
+        body: body,
+      ),
+    );
+    final stories = loaded.headersFooters;
+    expect(
+      _plain(stories.headers[PageVariant.normal]!.delta).trim(),
+      'Company report',
+    );
+    expect(
+      opaqueOf(
+        stories.footers[PageVariant.normal]!.delta,
+      ).map((content) => fieldNameOf(content.xml)),
+      ['PAGE'],
+    );
+    final document = _package(loaded).text('word/document.xml')!;
+    expect('<w:headerReference'.allMatches(document), hasLength(2));
+    expect(loaded.notices, isEmpty);
+    final saved = OdtCodec(DocxCodec(_tables)).encode(
+      loaded.delta,
+      source: loaded.source,
+      look: loaded.look,
+      headersFooters: stories,
+    );
+    expect(
+      utf8.decode(ZipDecoder().decodeBytes(saved).find('styles.xml')!.content),
+      contains('Company report'),
+    );
+
+    // Only one set can be kept: the last page style's.
+    final other = _decode(
+      odtFile(
+        masterAutomatic: layouts,
+        masters:
+            '$standard<style:master-page style:name="Landscape" style:page-layout-name="pm2">'
+            '<style:header><text:p>Appendix header</text:p></style:header>'
+            '</style:master-page>',
+        automatic: automatic,
+        body: body,
+      ),
+    );
+    expect(
+      _plain(other.headersFooters.headers[PageVariant.normal]!.delta).trim(),
+      'Appendix header',
+    );
+    expect(
+      _plain(other.headersFooters.footers[PageVariant.normal]!.delta).trim(),
+      startsWith('Page'),
+    );
+    expect(other.notices, [DocumentNotice.contentNotImported]);
+  });
+
+  test('cropped pictures show only what the crop keeps', () {
+    Map<String, dynamic>? attributesOf(LoadedDocument loaded, int index) => [
+      for (final operation in operationsOf(loaded.delta))
+        if (operation.data case {EmbedTypes.image: final String _})
+          operation.attributes,
+    ][index];
+
+    final loaded = _decode(
+      odtFile(
+        automatic:
+            '<style:style style:name="fr1" style:family="graphic">'
+            '<style:graphic-properties fo:clip="rect(0cm, 2.6458cm, 0cm, 0cm)"/></style:style>'
+            '<style:style style:name="fr2" style:family="graphic">'
+            '<style:graphic-properties fo:clip="rect(0in 0in 0in 0.5208in)"/></style:style>',
+        body:
+            '<text:p><draw:frame draw:style-name="fr1" svg:width="2.6458cm" svg:height="2.6458cm">'
+            '<draw:image xlink:href="Pictures/a.png"/></draw:frame>'
+            '<draw:frame draw:style-name="fr2" svg:width="1in" svg:height="1in">'
+            '<draw:image xlink:href="Pictures/b.png"/></draw:frame></text:p>',
+        extra: {
+          'Pictures/a.png': halvesPng(200, 100),
+          // 192 dpi: 200 dots are 75pt wide.
+          'Pictures/b.png': halvesPng(200, 100, dpi: 192),
+        },
+      ),
+    );
+    final images = embedsOf(loaded.delta, EmbedTypes.image);
+    expect(pictureOf(images[0]), (width: 100, height: 100, red: 255, blue: 0));
+    expect(pictureOf(images[1]), (width: 100, height: 100, red: 0, blue: 255));
+    expect(attributesOf(loaded, 0)?['width'], '75');
+    expect(attributesOf(loaded, 0)?['height'], '75');
+    expect(loaded.notices, isEmpty);
+
+    // Nothing would be left, or a metafile can't be cut: the whole picture
+    // fits the frame unstretched.
+    final metafile = ByteData(108)
+      ..setUint32(0, 1, Endian.little)
+      ..setUint32(4, 108, Endian.little)
+      ..setInt32(32, 2000, Endian.little)
+      ..setInt32(36, 1000, Endian.little)
+      ..setUint32(40, 0x464D4520, Endian.little);
+    final whole = _decode(
+      odtFile(
+        automatic:
+            '<style:style style:name="fr1" style:family="graphic">'
+            '<style:graphic-properties fo:clip="rect(0cm, 3cm, 0cm, 3cm)"/></style:style>',
+        body:
+            '<text:p><draw:frame draw:style-name="fr1" svg:width="2cm" svg:height="2cm">'
+            '<draw:image xlink:href="Pictures/a.png"/></draw:frame>'
+            '<draw:frame draw:style-name="fr1" svg:width="2cm" svg:height="2cm">'
+            '<draw:image xlink:href="Pictures/b.emf"/></draw:frame></text:p>',
+        extra: {
+          'Pictures/a.png': halvesPng(200, 100),
+          'Pictures/b.emf': metafile.buffer.asUint8List(),
+        },
+      ),
+    );
+    expect(pictureOf(embedsOf(whole.delta, EmbedTypes.image).first).width, 200);
+    for (final index in [0, 1]) {
+      expect(attributesOf(whole, index)?['width'], '56.69');
+      expect(attributesOf(whole, index)?['height'], '28.35');
+    }
+    expect(whole.notices, [DocumentNotice.contentNotImported]);
+  });
+
+  test('a start value restarts the numbering at its item', () {
+    final loaded = _decode(
+      odtFile(
+        automatic:
+            '<text:list-style style:name="L1">'
+            '<text:list-level-style-number text:level="1" style:num-suffix="." style:num-format="1"/>'
+            '<text:list-level-style-number text:level="2" style:num-suffix=")" style:num-format="a"/>'
+            '</text:list-style>',
+        body:
+            '<text:list xml:id="list1" text:style-name="L1">'
+            '<text:list-item><text:p>one</text:p></text:list-item>'
+            '<text:list-item><text:p>two</text:p>'
+            '<text:list><text:list-item text:start-value="3"><text:p>sub c</text:p></text:list-item>'
+            '<text:list-item><text:p>sub d</text:p></text:list-item></text:list>'
+            '</text:list-item>'
+            '<text:list-item><text:p>three</text:p></text:list-item>'
+            '<text:list-item text:start-value="10"><text:p>ten</text:p></text:list-item>'
+            '<text:list-item><text:p>eleven</text:p></text:list-item>'
+            '</text:list>'
+            '<text:p>between</text:p>'
+            '<text:list text:continue-list="list1">'
+            '<text:list-item><text:p>twelve</text:p></text:list-item></text:list>',
+      ),
+    );
+    final delta = loaded.delta;
+    Object? number(String text) =>
+        lineOf(delta, text)?[HiddenAttributes.numbering];
+
+    expect(number('two'), number('one'));
+    expect(number('three'), number('one'));
+    expect(number('sub c'), isNot(number('one')));
+    expect(number('sub d'), number('sub c'));
+    expect(number('ten'), isNot(number('one')));
+    expect(number('eleven'), number('ten'));
+    expect(number('twelve'), number('ten'));
+    final numbering = _package(loaded).text('word/numbering.xml')!;
+    expect(numbering, contains('<w:lvl w:ilvl="1"><w:start w:val="3"/>'));
+    expect(numbering, contains('<w:lvl w:ilvl="0"><w:start w:val="10"/>'));
+  });
+
+  test('a page break before a table starts no new section', () {
+    final loaded = _decode(
+      odtFile(
+        masters:
+            '<style:master-page style:name="Standard" style:page-layout-name="pm1">'
+            '<style:header><text:p>Running header</text:p></style:header>'
+            '<style:header-first><text:p>Cover header</text:p></style:header-first>'
+            '</style:master-page>',
+        automatic:
+            '<style:style style:name="Table1" style:family="table">'
+            '<style:table-properties fo:break-before="page"/></style:style>',
+        body:
+            '<text:p>cover page</text:p>'
+            '<table:table table:style-name="Table1"><table:table-row>'
+            '<table:table-cell><text:p>cell</text:p></table:table-cell>'
+            '</table:table-row></table:table>',
+      ),
+    );
+    final delta = loaded.delta;
+    expect(embedsOf(delta, EmbedTypes.sectionBreak), isEmpty);
+    expect(embedsOf(delta, EmbedTypes.pageBreak), hasLength(1));
+    final operations = operationsOf(delta);
+    final table = operations.indexWhere(
+      (operation) =>
+          operation.data is Map &&
+          (operation.data as Map).containsKey(EmbedTypes.table),
+    );
+    expect(
+      operations.sublist(0, table).where((operation) => operation.data is Map),
+      [
+        isA<Operation>().having(
+          (operation) => operation.data,
+          'data',
+          contains(EmbedTypes.pageBreak),
+        ),
+      ],
+    );
+    final document = _package(loaded).text('word/document.xml')!;
+    expect('<w:sectPr>'.allMatches(document), hasLength(1));
+  });
+
+  test('hidden sections and paragraphs stay hidden', () {
+    final loaded = _decode(
+      odtFile(
+        body:
+            '<text:p>before</text:p>'
+            '<text:section text:name="Answers" text:display="none"><text:p>secret answer</text:p></text:section>'
+            '<text:section text:name="Cond" text:display="condition" text:condition="ooow:1" text:is-hidden="true">'
+            '<text:p>conditional</text:p></text:section>'
+            '<text:section text:name="Shown" text:display="condition" text:condition="ooow:0">'
+            '<text:p>shown section</text:p></text:section>'
+            '<text:p><text:hidden-paragraph text:condition="ooow:1" text:is-hidden="true"/>hidden paragraph</text:p>'
+            '<text:p><text:span><text:hidden-paragraph text:condition="ooow:1" text:is-hidden="true"/></text:span>hidden too</text:p>'
+            '<text:p><text:hidden-paragraph text:condition="ooow:0" text:is-hidden="false"/>visible paragraph</text:p>'
+            '<text:p>after</text:p>',
+      ),
+    );
+    expect(
+      _plain(loaded.delta),
+      'before\nshown section\nvisible paragraph\nafter\n',
+    );
+    expect(loaded.notices, [DocumentNotice.contentNotImported]);
+  });
+
+  test('hidden text fields show their text unless it is hidden', () {
+    final shown = _decode(
+      odtFile(
+        body:
+            '<text:p>a <text:hidden-text text:condition="ooow:1==2" text:string-value="shown text" '
+            'text:is-hidden="false">shown text</text:hidden-text> b</text:p>',
+      ),
+    );
+    expect(_plain(shown.delta), 'a shown text b\n');
+    expect(shown.notices, isEmpty);
+
+    final hidden = _decode(
+      odtFile(
+        body:
+            '<text:p>a<text:hidden-text text:condition="ooow:1" text:string-value="gone" '
+            'text:is-hidden="true">gone</text:hidden-text> b</text:p>',
+      ),
+    );
+    expect(_plain(hidden.delta), 'a b\n');
+    expect(hidden.notices, [DocumentNotice.contentNotImported]);
+  });
+
+  test('the page style numbers its pages in its own format', () {
+    const roman =
+        '<style:page-layout style:name="pm2"><style:page-layout-properties '
+        'fo:page-width="21cm" fo:page-height="29.7cm" style:num-format="i" '
+        'fo:margin-top="2cm" fo:margin-bottom="2cm" fo:margin-left="2cm" '
+        'fo:margin-right="2cm"/></style:page-layout>';
+    final loaded = _decode(
+      odtFile(
+        masterAutomatic: roman,
+        masters:
+            '<style:master-page style:name="Standard" style:page-layout-name="pm2">'
+            '<style:footer><text:p><text:page-number text:select-page="current">i</text:page-number>'
+            ' of <text:page-count>iii</text:page-count></text:p></style:footer>'
+            '</style:master-page>',
+      ),
+    );
+    final document = _package(loaded).text('word/document.xml')!;
+    expect(document, contains('<w:pgNumType w:fmt="lowerRoman"/>'));
+    final saved = DocxPackage.decode(
+      DocxCodec(_tables).encode(loaded.delta, source: loaded.source),
+    );
+    expect(
+      saved.text('word/document.xml'),
+      contains('<w:pgNumType w:fmt="lowerRoman"/>'),
+    );
+    final footer = loaded.headersFooters.footers[PageVariant.normal]!.delta;
+    final instructions = [
+      for (final content in opaqueOf(footer))
+        RegExp(
+          r'<w:instrText[^>]*>([^<]*)<',
+        ).firstMatch(content.xml)!.group(1)!.trim(),
+    ];
+    expect(instructions, ['PAGE', r'NUMPAGES \* roman']);
+
+    // Front matter in roman numerals, then arabic ones: two sections.
+    final front = _decode(
+      odtFile(
+        masterAutomatic: '$a4Layout$roman',
+        masters:
+            '<style:master-page style:name="Front" style:page-layout-name="pm2"/>'
+            '<style:master-page style:name="Standard" style:page-layout-name="pm1"/>',
+        automatic:
+            '<style:style style:name="P1" style:family="paragraph" style:parent-style-name="Standard" style:master-page-name="Front"/>'
+            '<style:style style:name="P2" style:family="paragraph" style:parent-style-name="Standard" style:master-page-name="Standard"/>',
+        body:
+            '<text:p text:style-name="P1">preface</text:p>'
+            '<text:p text:style-name="P2">chapter</text:p>',
+      ),
+    );
+    final sections = embedsOf(front.delta, EmbedTypes.sectionBreak);
+    expect(sections, hasLength(1));
+    expect(sectionXmlOf(sections.single), contains('w:fmt="lowerRoman"'));
+    final body = _package(front).text('word/document.xml')!;
+    expect('lowerRoman'.allMatches(body), hasLength(1));
+  });
+
+  test('LibreOffice 4.3 to 6.4 contextual spacing is read', () {
+    final loaded = _decode(
+      odtFile(
+        automatic:
+            '<style:style style:name="P1" style:family="paragraph" style:parent-style-name="Standard">'
+            '<style:paragraph-properties fo:margin-bottom="0.3cm" loext:contextual-spacing="true"/></style:style>',
+        body:
+            '<text:p text:style-name="P1">loext one</text:p>'
+            '<text:p text:style-name="P1">loext two</text:p>',
+      ),
+    );
+    expect(
+      lineOf(loaded.delta, 'loext one')?[HiddenAttributes.contextualGroup],
+      isNotNull,
+    );
+  });
+
+  test('ruby text follows its base', () {
+    final loaded = _decode(
+      odtFile(
+        body:
+            '<text:p><text:ruby><text:ruby-base>漢字</text:ruby-base>'
+            '<text:ruby-text>かんじ</text:ruby-text></text:ruby></text:p>',
+      ),
+    );
+    expect(_plain(loaded.delta), '漢字(かんじ)\n');
+    expect(loaded.notices, [DocumentNotice.contentNotImported]);
+  });
+
+  test('a note mark of its own is reported as lost', () {
+    String note(String citation) =>
+        '<text:p>see<text:note text:note-class="footnote">$citation'
+        '<text:note-body><text:p>the note</text:p></text:note-body></text:note></text:p>';
+    final numbered = _decode(
+      odtFile(body: note('<text:note-citation>1</text:note-citation>')),
+    );
+    expect(numbered.notices, isEmpty);
+    final marked = _decode(
+      odtFile(
+        body: note('<text:note-citation text:label="*">*</text:note-citation>'),
+      ),
+    );
+    expect(_package(marked).text('word/footnotes.xml'), contains('the note'));
+    expect(marked.notices, [DocumentNotice.contentNotImported]);
+  });
+
+  test('lowercase and capitalized text show in that case', () {
+    final loaded = _decode(
+      odtFile(
+        automatic:
+            '<style:style style:name="P1" style:family="paragraph" style:parent-style-name="Standard">'
+            '<style:text-properties fo:text-transform="capitalize"/></style:style>'
+            '<style:style style:name="T1" style:family="text"><style:text-properties fo:text-transform="lowercase"/></style:style>'
+            '<style:style style:name="T2" style:family="text"><style:text-properties fo:text-transform="capitalize"/></style:style>'
+            '<style:style style:name="T3" style:family="text"><style:text-properties fo:text-transform="none"/></style:style>',
+        body:
+            '<text:p><text:span text:style-name="T1">LOWER</text:span> '
+            '<text:span text:style-name="T2">capital words</text:span> '
+            'mid<text:span text:style-name="T2">dle</text:span></text:p>'
+            '<text:p text:style-name="P1">o’neil and rock-solid '
+            '<text:span text:style-name="T3">as written</text:span></text:p>',
+      ),
+    );
+    expect(
+      _plain(loaded.delta),
+      'lower Capital Words middle\nO’neil And Rock-Solid as written\n',
+    );
+    expect(loaded.notices, isEmpty);
   });
 }
