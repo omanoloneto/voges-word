@@ -61,6 +61,11 @@ class DocxReader {
     if (delta.isEmpty || !_endsWithNewline(delta)) delta.insert('\n');
 
     final section = x.child(body, 'sectPr');
+    final firstSection = x
+        .children(body, 'p')
+        .map((paragraph) => x.child(x.child(paragraph, 'pPr'), 'sectPr'))
+        .nonNulls
+        .firstOrNull;
     return LoadedDocument(
       delta: delta,
       look: _look(styles, x, section),
@@ -69,6 +74,7 @@ class DocxReader {
       headersFooters: _headersFooters(
         context,
         section,
+        firstSection ?? section,
         _xmlOf(partOf('settings')),
       ),
     );
@@ -77,21 +83,35 @@ class DocxReader {
   HeadersFooters _headersFooters(
     _ReadContext main,
     XmlElement? section,
+    XmlElement? firstSection,
     XmlDocument? settings,
   ) {
     final x = main.x;
-    Map<PageVariant, HeaderFooterStory> read(String reference) => {
-      if (section != null)
-        for (final element in x.children(section, reference))
-          switch (x.attr(element, 'type')) {
-            'first' => PageVariant.first,
-            'even' => PageVariant.even,
-            _ => PageVariant.normal,
-          }: ?_story(
-            main,
-            x.relAttr(element, 'id'),
-          ),
-    };
+    Map<PageVariant, HeaderFooterStory> read(String reference) {
+      Map<PageVariant, String?> ids(XmlElement? section) => {
+        if (section != null)
+          for (final element in x.children(section, reference))
+            switch (x.attr(element, 'type')) {
+              'first' => PageVariant.first,
+              'even' => PageVariant.even,
+              _ => PageVariant.normal,
+            }: x.relAttr(
+              element,
+              'id',
+            ),
+      };
+      final last = ids(section);
+      // DocxBuilder repeats the normal story as a later section's first-page
+      // one; the document's first page is then the first section's.
+      if (last[PageVariant.first] != null &&
+          last[PageVariant.first] == last[PageVariant.normal]) {
+        last[PageVariant.first] = ids(firstSection)[PageVariant.first];
+      }
+      return {
+        for (final MapEntry(key: variant, value: id) in last.entries)
+          variant: ?_story(main, id),
+      };
+    }
 
     double distance(String name) =>
         (double.tryParse(x.attr(x.child(section, 'pgMar'), name) ?? '') ??

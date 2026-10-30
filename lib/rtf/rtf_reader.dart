@@ -1597,7 +1597,7 @@ class RtfReader {
       replacement = LinkSpec(target, [
         for (final child in children)
           if (child is LinkSpec) ...child.children else child,
-      ]);
+      ], hyperlinkStyle: false);
     } else if (children.every((child) => child is TextSpec)) {
       final texts = children.cast<TextSpec>();
       replacement = FieldSpec(

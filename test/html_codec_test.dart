@@ -290,7 +290,7 @@ p { color: #111111 } .note { color: #222222 } p.note { color: #333333 }
       );
     });
 
-    test('links go only to the web, e-mail and bookmarks', () {
+    test('links go only to the web, e-mail, nearby files and bookmarks', () {
       final delta = _read('''
 <h2 id="intro">Intro</h2><a name="old"></a><p>
 <a href="https://example.com/a?b=1&amp;c=2">web</a>
@@ -302,9 +302,10 @@ p { color: #111111 } .note { color: #222222 } p.note { color: #333333 }
       expect(_run(delta, 'web')['link'], 'https://example.com/a?b=1&c=2');
       expect(_run(delta, 'mail')['link'], 'mailto:a@b.c');
       expect(_run(delta, 'back')['link'], '#intro');
-      for (final text in ['script', 'file', 'relative']) {
+      for (final text in ['script', 'file']) {
         expect(_run(delta, text)['link'], isNull);
       }
+      expect(_run(delta, 'relative')['link'], 'page.html');
       expect(_run(delta, 'upper')['link'], 'HTTP://EXAMPLE.COM');
       expect(
         _line(delta, 'Intro').attributes[HiddenAttributes.bookmarks],

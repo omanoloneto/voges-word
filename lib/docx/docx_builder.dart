@@ -267,6 +267,9 @@ enum NumberFormat {
   none,
 }
 
+/// What follows a list number or bullet.
+enum ListSuffix { tab, space, nothing }
+
 class ListLevelSpec {
   const ListLevelSpec({
     required this.format,
@@ -275,6 +278,7 @@ class ListLevelSpec {
     this.indentLeft,
     this.hanging = 18,
     this.font,
+    this.suffix = ListSuffix.tab,
   });
 
   final NumberFormat format;
@@ -289,6 +293,7 @@ class ListLevelSpec {
 
   /// Font of the bullet or number.
   final String? font;
+  final ListSuffix suffix;
 }
 
 class ListSpec {
@@ -354,8 +359,8 @@ class ImageSpec extends InlineSpec {
   final String description;
 }
 
-/// A link to a web address, e-mail or `#bookmark`; other targets keep only the
-/// text.
+/// A link to a web address, e-mail, a file next to the document or a
+/// `#bookmark`; other targets keep only the text.
 class LinkSpec extends InlineSpec {
   const LinkSpec(this.target, this.children, {this.hyperlinkStyle = true});
 
@@ -568,12 +573,20 @@ String bookmarkName(String name) {
 
 final _controlChars = RegExp(r'[\u0000-\u001F\uFFFE\uFFFF]');
 
-/// Web, e-mail and FTP addresses without control characters, which XML can't
-/// hold; null for anything else (`javascript:`, `file:`...).
+/// Web, e-mail and FTP addresses and addresses relative to the document
+/// (`notes.docx`, `docs/guide.md`), without control characters, which XML
+/// can't hold; null for anything else (`javascript:`, `file:`, `/etc/x`...).
 String? safeLinkTarget(String target) {
   final trimmed = target.replaceAll(_controlChars, '').trim();
   final uri = Uri.tryParse(trimmed);
-  if (uri == null) return null;
+  if (uri == null || trimmed.isEmpty) return null;
+  if (!uri.hasScheme) {
+    final absolute =
+        trimmed.startsWith('/') ||
+        trimmed.startsWith('#') ||
+        trimmed.contains('\\');
+    return absolute ? null : trimmed;
+  }
   return const {'http', 'https', 'mailto', 'ftp'}.contains(uri.scheme)
       ? trimmed
       : null;
@@ -642,6 +655,8 @@ class DocxBuilder {
   var _inNote = false;
   var _usesHyperlinkStyle = false;
   var _references = '';
+  var _laterReferences = '';
+  var _sections = 0;
   late final _document = _Part(this, 'word/document.xml');
 
   /// Call once.
@@ -654,12 +669,13 @@ class DocxBuilder {
     }
 
     final references = StringBuffer();
+    final laterReferences = StringBuffer();
     var number = 0;
     for (final (kind, stories) in [
       ('header', spec.headers),
       ('footer', spec.footers),
     ]) {
-      for (final MapEntry(key: variant, value: blocks) in stories.entries) {
+      String story(List<BlockSpec> blocks) {
         final part = _Part(this, 'word/$kind${++number}.xml');
         final root = kind == 'header' ? 'hdr' : 'ftr';
         _save(
@@ -667,16 +683,40 @@ class DocxBuilder {
           '<w:$root ${_namespaces()}>${_blocks(blocks, part)}</w:$root>',
           '$_main.$kind+xml',
         );
-        final id = _document.relate('$_relationshipBase/$kind', part.target);
+        return _document.relate('$_relationshipBase/$kind', part.target);
+      }
+
+      String reference(String type, String id) =>
+          '<w:${kind}Reference w:type="$type" r:id="$id"/>';
+
+      final ids = {
+        for (final MapEntry(key: variant, value: blocks) in stories.entries)
+          variant: story(blocks),
+      };
+      for (final MapEntry(key: variant, value: id) in ids.entries) {
         final type = switch (variant) {
           PageVariant.normal => 'default',
           PageVariant.first => 'first',
           PageVariant.even => 'even',
         };
-        references.write('<w:${kind}Reference w:type="$type" r:id="$id"/>');
+        references.write(reference(type, id));
+        if (variant != PageVariant.first) {
+          laterReferences.write(reference(type, id));
+        }
+      }
+      // Only the document's first page is different, as in the editor: later
+      // sections show their normal header on their first page too.
+      if (ids.containsKey(PageVariant.first)) {
+        var normal = ids[PageVariant.normal];
+        if (normal == null) {
+          normal = story(const []);
+          laterReferences.write(reference('default', normal));
+        }
+        laterReferences.write(reference('first', normal));
       }
     }
     _references = references.toString();
+    _laterReferences = laterReferences.toString();
 
     final body =
         _blocks(spec.body, _document, body: true) +
@@ -803,7 +843,8 @@ class DocxBuilder {
       if (page.firstNumber case final first?)
         ' w:start="${first.clamp(0, 32767)}"',
     ].join();
-    return '<w:sectPr>$_references$type'
+    final references = _sections++ == 0 ? _references : _laterReferences;
+    return '<w:sectPr>$references$type'
         '<w:pgSz w:w="${_twips(page.width)}" w:h="${_twips(page.height)}"'
         '${landscape ? ' w:orient="landscape"' : ''}/>'
         '<w:pgMar w:top="${_twips(margins.top)}" '
@@ -1519,6 +1560,7 @@ class DocxBuilder {
           '<w:lvl w:ilvl="$level">'
           '<w:start w:val="${definition.start.clamp(0, 32767)}"/>'
           '<w:numFmt w:val="${definition.format.name}"/>'
+          '${definition.suffix == ListSuffix.tab ? '' : '<w:suff w:val="${definition.suffix.name}"/>'}'
           '<w:lvlText w:val="${escapeXmlAttribute(stripInvalidXmlChars(definition.text))}"/>'
           '<w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${_twips(left)}" '
           'w:hanging="${_twips(definition.hanging)}"/></w:pPr>'

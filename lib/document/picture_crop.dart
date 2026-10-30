@@ -34,7 +34,7 @@ const _maxPixels = 40000000;
   if (size == null ||
       size.width <= 0 ||
       size.height <= 0 ||
-      size.width * size.height > _maxPixels) {
+      size.width.toDouble() * size.height > _maxPixels) {
     return null;
   }
   try {

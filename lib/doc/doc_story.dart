@@ -298,7 +298,7 @@ class StoryReader {
       case _FieldMode.instruction:
         _resultless(field, instruction);
       case _FieldMode.link when field.result.isNotEmpty:
-        _inline(LinkSpec(field.target, field.result));
+        _inline(LinkSpec(field.target, field.result, hyperlinkStyle: false));
       case _FieldMode.live:
         final first = field.result.whereType<TextSpec>().firstOrNull;
         _inline(
@@ -440,7 +440,7 @@ class StoryReader {
       final content = [...field.result];
       field.result.clear();
       if (field.mode == _FieldMode.link && content.isNotEmpty) {
-        _inline(LinkSpec(field.target, content), index);
+        _inline(LinkSpec(field.target, content, hyperlinkStyle: false), index);
       } else if (field.mode == _FieldMode.live) {
         field.mode = _FieldMode.passThrough;
         for (final inline in content) {

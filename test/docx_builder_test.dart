@@ -677,4 +677,110 @@ void main() {
     ).read();
     expect(_footnoteTexts(DocxBuilder(word.spec).build()), [' Texto da nota.']);
   });
+
+  test('only the first page of the document has the first-page header', () {
+    final spec = DocumentSpec()
+      ..differentFirstPage = true
+      ..headers[PageVariant.normal] = const [
+        ParagraphSpec([TextSpec('running head')]),
+      ]
+      ..headers[PageVariant.first] = const [
+        ParagraphSpec([TextSpec('cover')]),
+      ]
+      ..footers[PageVariant.first] = const [
+        ParagraphSpec([TextSpec('cover footer')]),
+      ]
+      ..body.addAll([
+        const ParagraphSpec([TextSpec('cover page')]),
+        const SectionBreakSpec(PageSpec()),
+        const ParagraphSpec([TextSpec('landscape')]),
+      ]);
+    final package = DocxBuilder(spec).build();
+    final sections = XmlDocument.parse(
+      package.text('word/document.xml')!,
+    ).findAllElements('w:sectPr').toList();
+    String? id(XmlElement section, String reference, String type) => section
+        .findElements('w:$reference')
+        .where((element) => element.getAttribute('w:type') == type)
+        .firstOrNull
+        ?.getAttribute('r:id');
+
+    expect(sections, hasLength(2));
+    expect(
+      id(sections.first, 'headerReference', 'first'),
+      isNot(id(sections.first, 'headerReference', 'default')),
+    );
+    expect(
+      id(sections.last, 'headerReference', 'first'),
+      id(sections.last, 'headerReference', 'default'),
+    );
+    expect(id(sections.last, 'footerReference', 'first'), isNotNull);
+    expect(
+      id(sections.last, 'footerReference', 'first'),
+      id(sections.last, 'footerReference', 'default'),
+    );
+
+    final loaded = DocxCodec(TableStore()).read(package);
+    String text(HeaderFooterStory? story) =>
+        story?.delta.toList().map((op) => op.data).whereType<String>().join() ??
+        '';
+    expect(loaded.headersFooters.differentFirstPage, isTrue);
+    expect(text(loaded.headersFooters.headerFor(0)), 'cover\n');
+    expect(text(loaded.headersFooters.headerFor(1)), 'running head\n');
+    expect(text(loaded.headersFooters.footerFor(0)), 'cover footer\n');
+  });
+
+  test('list numbers can be followed by a space or nothing', () {
+    final spec = DocumentSpec();
+    final list = spec.addList(
+      ListSpec([
+        const ListLevelSpec(
+          format: NumberFormat.decimal,
+          text: '%1.',
+          suffix: ListSuffix.space,
+        ),
+        const ListLevelSpec(
+          format: NumberFormat.none,
+          text: '',
+          suffix: ListSuffix.nothing,
+        ),
+      ]),
+    );
+    spec.body.add(
+      ParagraphSpec(const [
+        TextSpec('item'),
+      ], format: ParagraphFormat(list: ListRef(list))),
+    );
+    final numbering = DocxBuilder(spec).build().text('word/numbering.xml')!;
+
+    expect(
+      numbering,
+      contains('<w:numFmt w:val="decimal"/><w:suff w:val="space"/><w:lvlText'),
+    );
+    expect(numbering, contains('<w:suff w:val="nothing"/>'));
+    expect(XmlDocument.parse(numbering), isNotNull);
+  });
+
+  test('links may go to files next to the document, never to other places', () {
+    for (final kept in [
+      'docs/guide.md',
+      '../notes.docx',
+      'page.html#top',
+      'https://example.com/a\\b',
+    ]) {
+      expect(safeLinkTarget(kept), kept);
+    }
+    for (final dropped in [
+      '/etc/passwd',
+      '//example.com/x',
+      r'C:\Windows\notepad.exe',
+      r'..\notes.docx',
+      'file:///etc/passwd',
+      'javascript:alert(1)',
+      '#bookmark',
+      '',
+    ]) {
+      expect(safeLinkTarget(dropped), isNull, reason: dropped);
+    }
+  });
 }
