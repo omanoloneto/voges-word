@@ -537,11 +537,12 @@ const buildableImageTypes = {
   'image/x-wmf',
 };
 
-/// Word bookmark names: letters, digits and `_`, starting with a letter, at
-/// most 40 characters.
+/// Word bookmark names: letters, digits and `_`, at most 40 characters,
+/// starting with a letter, or with `_` for the hidden ones Word makes for
+/// tables of contents and cross-references (`_Toc…`, `_Ref…`).
 String bookmarkName(String name) {
   var clean = name.replaceAll(RegExp(r'[^\p{L}\p{N}_]', unicode: true), '_');
-  if (clean.isEmpty || !RegExp(r'^\p{L}', unicode: true).hasMatch(clean)) {
+  if (!RegExp(r'^(\p{L}|_[\p{L}\p{N}])', unicode: true).hasMatch(clean)) {
     clean = 'b$clean';
   }
   return clean.length > 40 ? clean.substring(0, 40) : clean;

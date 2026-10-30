@@ -292,7 +292,7 @@ void main() {
       ..bookmarks.add(('_Toc1', 0, 0));
     final delta = _decode(doc.build()).delta;
 
-    expect(_op(delta, 'Entry').attributes?['link'], '#b_Toc1');
+    expect(_op(delta, 'Entry').attributes?['link'], '#_Toc1');
     expect(_op(delta, 'two').attributes?['link'], 'https://example.com/');
     expect(_op(delta, 'lines').attributes?['link'], 'https://example.com/');
     final pageReference = _embeds(delta, EmbedTypes.opaqueInline).single;
