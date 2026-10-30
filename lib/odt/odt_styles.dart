@@ -216,10 +216,21 @@ class OdtStyles {
   String? fontFamily(String name) =>
       _fonts[name] ?? (name.length <= maxFontNameLength ? name : null);
 
+  /// Formats of the text properties read so far: every span of a style
+  /// asks for the same ones.
+  final _runs = <(XmlElement, double), RunFormat>{};
+
   /// Character formatting set by `style:text-properties`; percentages of
   /// the font size are taken from [inheritedSize].
   RunFormat runOf(XmlElement? properties, {required double inheritedSize}) {
     if (properties == null) return const RunFormat();
+    final key = (properties, inheritedSize);
+    if (_runs[key] case final known?) return known;
+    if (_runs.length >= 4096) _runs.clear();
+    return _runs[key] = _runOf(properties, inheritedSize);
+  }
+
+  RunFormat _runOf(XmlElement properties, double inheritedSize) {
     String? attribute(String namespace, String local) =>
         properties.odfAttribute(namespace, local);
 

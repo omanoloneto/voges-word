@@ -55,6 +55,9 @@ const _maxSelectorWork = 20000000;
 /// Declarations applied to elements in all; legitimate pages stay far below.
 const _maxStyleWork = 20000000;
 
+/// Parsed values kept at once; past this they are parsed again.
+const _maxValues = 4096;
+
 /// Elements left out with their content; the embedded ones are reported.
 const _skipped = {
   'head',
@@ -967,10 +970,14 @@ class _Reader {
       style.border = border.trim() != '0';
     }
 
-    final classes = {
-      for (final name in (attributes['class'] ?? '').split(_whitespace))
-        if (name.isNotEmpty) name.toLowerCase(),
-    };
+    final classNames = attributes['class'] ?? '';
+    final classes = _value(
+      (#classes, classNames),
+      () => {
+        for (final name in classNames.split(_whitespace))
+          if (name.isNotEmpty) name.toLowerCase(),
+      },
+    );
     if (classes.contains('msocomanchor') ||
         classes.contains('msocommentreference')) {
       style.comment = true;
@@ -980,9 +987,10 @@ class _Reader {
       classes,
       attributes['id']?.toLowerCase(),
     );
-    final inline = attributes['style'] == null
-        ? const <CssDeclaration>[]
-        : parseDeclarations(attributes['style']!);
+    final inline = switch (attributes['style']) {
+      null => const <CssDeclaration>[],
+      final text => _value((#style, text), () => parseDeclarations(text)),
+    };
     _styleWork += inline.length + rules.length;
     for (final rule in rules) {
       _styleWork += rule.declarations.length;
@@ -1058,21 +1066,27 @@ class _Reader {
   static double? _sum(double? a, double? b) =>
       a == null && b == null ? null : (a ?? 0) + (b ?? 0);
 
+  /// What values of declarations work out to, by the value and what it
+  /// refers to: pages give thousands of elements the same few values.
+  final _values = <Object, Object?>{};
+
+  T _value<T>(Object key, T Function() parse) {
+    final known = _values[key];
+    if (known != null || _values.containsKey(key)) return known as T;
+    if (_values.length >= _maxValues) _values.clear();
+    return _values[key] = parse();
+  }
+
   void _apply(_Style s, _Box box, CssDeclaration declaration, double parent) {
     final value = declaration.value;
     final lower = value.toLowerCase();
     final em = s.size ?? parent;
-    double? length(String text) => cssLength(
-      text,
-      fontSize: em,
-      percentOf: _textWidth,
-      rootFontSize: _rootSize,
-    );
+    double? length(String text) => _length(text, em);
     switch (declaration.property) {
       case 'font-family':
-        s.font = cssFontFamily(value) ?? s.font;
+        s.font = _value((#family, value), () => cssFontFamily(value)) ?? s.font;
       case 'font-size':
-        s.size = cssFontSize(value, parent, rootFontSize: _rootSize) ?? s.size;
+        s.size = _fontSize(value, parent) ?? s.size;
       case 'font-weight':
         s.bold = _bold(lower) ?? s.bold;
       case 'font-style':
@@ -1092,15 +1106,14 @@ class _Reader {
         if (lower.contains('underline')) s.underline = true;
         if (lower.contains('line-through')) s.strike = true;
       case 'color':
-        s.color = cssColor(value) ?? s.color;
+        s.color = _value((#color, value), () => cssColor(value)) ?? s.color;
       case 'background' || 'background-color' || 'mso-highlight':
-        for (final part in splitCss(value, 0x20)) {
-          final color = cssColor(part);
-          if (color != null) {
-            box.background = color;
-            break;
-          }
-        }
+        box.background =
+            _value(
+              (#background, value),
+              () => splitCss(value, 0x20).map(cssColor).nonNulls.firstOrNull,
+            ) ??
+            box.background;
       case 'vertical-align':
         switch (lower) {
           case 'super':
@@ -1201,9 +1214,10 @@ class _Reader {
       case 'list-style-type' || 'list-style':
         s.listStyle = lower;
       default:
-        if (declaration.property.startsWith('border') ||
-            declaration.property == 'mso-border-alt') {
-          final visible = _visibleBorder(declaration.property, lower);
+        final property = declaration.property;
+        if (property.startsWith('border') || property == 'mso-border-alt') {
+          final key = (#border, property, lower);
+          final visible = _value(key, () => _visibleBorder(property, lower));
           if (visible != null) s.border = visible;
         }
     }
@@ -1241,7 +1255,30 @@ class _Reader {
         _ => null,
       };
 
+  double? _length(String value, double em) => _value(
+    (#length, value, em, _textWidth, _rootSize),
+    () => cssLength(
+      value,
+      fontSize: em,
+      percentOf: _textWidth,
+      rootFontSize: _rootSize,
+    ),
+  );
+
+  double? _fontSize(String value, double parent) {
+    final key = (#size, value, parent, _rootSize);
+    return _value(
+      key,
+      () => cssFontSize(value, parent, rootFontSize: _rootSize),
+    );
+  }
+
   LineSpacing? _lineHeight(String value, double fontSize) {
+    final key = (#lineHeight, value, fontSize, _rootSize);
+    return _value(key, () => _parseLineHeight(value, fontSize));
+  }
+
+  LineSpacing? _parseLineHeight(String value, double fontSize) {
     if (value == 'normal') return null;
     final number = double.tryParse(value);
     if (number != null) {
@@ -1267,6 +1304,11 @@ class _Reader {
 
   /// Top, right, bottom and left of a `margin` or `padding` shorthand.
   List<double?> _sides(String value, double em, double width) {
+    final key = (#sides, value, em, width, _rootSize);
+    return _value(key, () => _parseSides(value, em, width));
+  }
+
+  List<double?> _parseSides(String value, double em, double width) {
     final parts = value.trim().split(_whitespace);
     final lengths = [
       for (final part in parts.take(4))

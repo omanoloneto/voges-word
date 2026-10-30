@@ -562,14 +562,15 @@ const buildableImageTypes = {
   'image/x-wmf',
 };
 
+final _bookmarkCharacter = RegExp(r'[^\p{L}\p{N}_]', unicode: true);
+final _bookmarkStart = RegExp(r'^(\p{L}|_[\p{L}\p{N}])', unicode: true);
+
 /// Word bookmark names: letters, digits and `_`, at most 40 characters,
 /// starting with a letter, or with `_` for the hidden ones Word makes for
 /// tables of contents and cross-references (`_Toc…`, `_Ref…`).
 String bookmarkName(String name) {
-  var clean = name.replaceAll(RegExp(r'[^\p{L}\p{N}_]', unicode: true), '_');
-  if (!RegExp(r'^(\p{L}|_[\p{L}\p{N}])', unicode: true).hasMatch(clean)) {
-    clean = 'b$clean';
-  }
+  var clean = name.replaceAll(_bookmarkCharacter, '_');
+  if (!_bookmarkStart.hasMatch(clean)) clean = 'b$clean';
   return clean.length > 40 ? clean.substring(0, 40) : clean;
 }
 
@@ -618,12 +619,14 @@ const _safeFields = {
   '=',
 };
 
+final _spaces = RegExp(r'\s+');
+
 /// Whether a field only shows the document's own data; the others (DDE,
 /// INCLUDEPICTURE, INCLUDETEXT...) fetch content or run something.
 bool isSafeField(String instruction) {
   final trimmed = instruction.trim();
   return trimmed.startsWith('=') ||
-      _safeFields.contains(trimmed.split(RegExp(r'\s+')).first.toUpperCase());
+      _safeFields.contains(trimmed.split(_spaces).first.toUpperCase());
 }
 
 const _declaration = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
@@ -766,7 +769,7 @@ class DocxBuilder {
     }
   }
 
-  static Uint8List _utf8(String text) => Uint8List.fromList(utf8.encode(text));
+  static Uint8List _utf8(String text) => utf8.encode(text);
 
   /// Counts [xml] toward [maxOutput].
   String _counted(String xml) {
@@ -1100,16 +1103,28 @@ class DocxBuilder {
     if (text.isEmpty) return '';
     final content = StringBuffer();
     final pending = StringBuffer();
+    var start = 0;
+    void skip(int index) {
+      if (index > start) pending.write(text.substring(start, index));
+      start = index + 1;
+    }
+
     void flush() {
       if (pending.isEmpty) return;
-      content.write(
-        '<w:t xml:space="preserve">${escapeXmlText(pending.toString())}</w:t>',
-      );
+      content.write('<w:t xml:space="preserve">$pending</w:t>');
       pending.clear();
     }
 
-    for (final rune in text.runes) {
-      final element = switch (rune) {
+    for (var index = 0; index < text.length; index++) {
+      final unit = text.codeUnitAt(index);
+      if (unit >= 0x20 &&
+          unit < 0xAD &&
+          unit != 0x26 &&
+          unit != 0x3C &&
+          unit != 0x3E) {
+        continue;
+      }
+      final element = switch (unit) {
         0x09 => '<w:tab/>',
         0x0A || 0x0B || 0x2028 => '<w:br/>',
         0x0C => '<w:br w:type="page"/>',
@@ -1117,24 +1132,66 @@ class DocxBuilder {
         0x1F || 0xAD => '<w:softHyphen/>',
         _ => null,
       };
+      final entity = switch (unit) {
+        0x26 => '&amp;',
+        0x3C => '&lt;',
+        0x3E => '&gt;',
+        _ => null,
+      };
       if (element != null) {
+        skip(index);
         flush();
         content.write(element);
-      } else if (rune >= 0x20 &&
-          rune != 0xFFFE &&
-          rune != 0xFFFF &&
-          (rune < 0xD800 || rune > 0xDFFF)) {
-        pending.writeCharCode(rune);
+      } else if (entity != null) {
+        skip(index);
+        pending.write(entity);
+      } else if (unit >= 0xD800 && unit <= 0xDBFF) {
+        final next = index + 1 < text.length ? text.codeUnitAt(index + 1) : 0;
+        if (next >= 0xDC00 && next <= 0xDFFF) {
+          index++;
+        } else {
+          skip(index);
+        }
+      } else if (unit < 0x20 ||
+          unit == 0xFFFE ||
+          unit == 0xFFFF ||
+          (unit >= 0xDC00 && unit <= 0xDFFF)) {
+        skip(index);
       }
     }
+    skip(text.length);
     flush();
     if (content.isEmpty) return '';
     return '<w:r>${_runPropertiesElement(format)}$content</w:r>';
   }
 
+  /// Run properties by format and whether its style exists: pages give
+  /// thousands of runs a few formats.
+  final _runPropertyElements = <Object, String>{};
+
   String _runPropertiesElement(RunFormat format) {
+    final styleId = format.styleId;
+    final key = (
+      styleId != null && _styleIds.contains(styleId) ? styleId : null,
+      format.font,
+      format.size,
+      format.bold,
+      format.italic,
+      format.underline,
+      format.strike,
+      format.allCaps,
+      format.smallCaps,
+      format.hidden,
+      format.color,
+      format.background,
+      format.position,
+    );
+    if (_runPropertyElements[key] case final known?) return known;
+    if (_runPropertyElements.length >= 4096) _runPropertyElements.clear();
     final properties = _runProperties(format);
-    return properties.isEmpty ? '' : '<w:rPr>$properties</w:rPr>';
+    return _runPropertyElements[key] = properties.isEmpty
+        ? ''
+        : '<w:rPr>$properties</w:rPr>';
   }
 
   /// In schema order.
@@ -1625,11 +1682,13 @@ class DocxBuilder {
   static int _twips(double points) =>
       points.isFinite ? (points * 20).round().clamp(-63360, 63360) : 0;
 
+  static final _hexColor = RegExp(r'^[0-9A-F]{6}$');
+
   static String? _hex(String? value) {
     if (value == null) return null;
     final clean = (value.startsWith('#') ? value.substring(1) : value)
         .toUpperCase();
-    return RegExp(r'^[0-9A-F]{6}$').hasMatch(clean) ? clean : null;
+    return _hexColor.hasMatch(clean) ? clean : null;
   }
 }
 

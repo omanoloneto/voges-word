@@ -320,6 +320,39 @@ class _ReadContext {
   final notices = <DocumentNotice>{};
   var footnotes = 0;
 
+  // Documents repeat a few formats on all their runs and paragraphs, so
+  // each one is worked out once.
+  final _runFormats = <_Markup, _RunFormat>{};
+  final _paragraphFormats = <_Markup, _ParagraphFormat>{};
+
+  _RunFormat runFormat(XmlElement? properties, String? paragraphStyleId) =>
+      _cached(
+        _runFormats,
+        properties,
+        paragraphStyleId,
+        () => _RunFormat(this, properties, paragraphStyleId),
+      );
+
+  _ParagraphFormat paragraphFormat(XmlElement? properties) => _cached(
+    _paragraphFormats,
+    properties,
+    null,
+    () => _ParagraphFormat(this, properties),
+  );
+
+  static T _cached<T>(
+    Map<_Markup, T> cache,
+    XmlElement? properties,
+    Object? context,
+    T Function() make,
+  ) {
+    final key = properties == null ? null : _Markup.of(properties, context);
+    if (key == null) return make();
+    if (cache[key] case final known?) return known;
+    if (cache.length >= _maxFormats) cache.clear();
+    return cache[key] = make();
+  }
+
   String textOf(XmlElement element) {
     final buffer = StringBuffer();
     void walk(XmlElement node) {
@@ -370,6 +403,199 @@ const _ignoredMarkers = {
   'lastRenderedPageBreak',
 };
 
+/// Formats kept at once; the cache starts over past this, so files that
+/// never repeat one don't fill memory.
+const _maxFormats = 4096;
+
+/// Formatting markup, like a w:rPr, compared by its content. Only elements
+/// and text a few levels deep count: other markup is worked out each time.
+class _Markup {
+  _Markup._(this.element, this.context, this.hashCode);
+
+  static _Markup? of(XmlElement element, Object? context) {
+    final hash = _hash(element, 0);
+    return hash == null
+        ? null
+        : _Markup._(element, context, Object.hash(hash, context));
+  }
+
+  static const _maxDepth = 3;
+
+  final XmlElement element;
+
+  /// What the value depends on besides the markup.
+  final Object? context;
+
+  @override
+  final int hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _Markup &&
+      other.hashCode == hashCode &&
+      other.context == context &&
+      _same(element, other.element);
+
+  static int? _hash(XmlElement element, int depth) {
+    if (depth > _maxDepth) return null;
+    var hash = element.name.qualified.hashCode;
+    for (final attribute in element.attributes) {
+      hash = Object.hash(hash, attribute.name.qualified, attribute.value);
+    }
+    for (final child in element.children) {
+      final part = switch (child) {
+        XmlElement() => _hash(child, depth + 1),
+        XmlText() => child.value.hashCode,
+        _ => null,
+      };
+      if (part == null) return null;
+      hash = Object.hash(hash, part);
+    }
+    return hash;
+  }
+
+  /// Equal names (with their namespaces), attributes and children: what
+  /// [WordXml] reads and what [XmlElement.toXmlString] writes.
+  static bool _same(XmlElement a, XmlElement b) {
+    if (a.name.qualified != b.name.qualified ||
+        a.name.namespaceUri != b.name.namespaceUri ||
+        a.isSelfClosing != b.isSelfClosing ||
+        a.attributes.length != b.attributes.length ||
+        a.children.length != b.children.length) {
+      return false;
+    }
+    for (var index = 0; index < a.attributes.length; index++) {
+      final first = a.attributes[index];
+      final second = b.attributes[index];
+      if (first.name.qualified != second.name.qualified ||
+          first.name.namespaceUri != second.name.namespaceUri ||
+          first.value != second.value ||
+          first.attributeType != second.attributeType) {
+        return false;
+      }
+    }
+    for (var index = 0; index < a.children.length; index++) {
+      final same = switch ((a.children[index], b.children[index])) {
+        (final XmlElement first, final XmlElement second) => _same(
+          first,
+          second,
+        ),
+        (final XmlText first, final XmlText second) =>
+          first.value == second.value,
+        _ => false,
+      };
+      if (!same) return false;
+    }
+    return true;
+  }
+}
+
+/// What a run's w:rPr makes of it in a paragraph of a style.
+class _RunFormat {
+  _RunFormat(this._c, this._properties, this._paragraphStyleId);
+
+  final _ReadContext _c;
+  final XmlElement? _properties;
+  final String? _paragraphStyleId;
+
+  WordXml get _x => _c.x;
+
+  late final bool hidden = _x.onOff(_x.child(_properties, 'vanish')) ?? false;
+
+  late final RunProps props = _c.styles
+      .runProps(_paragraphStyleId, _x.childVal(_properties, 'rStyle'))
+      .merge(_properties, _x, _c.styles.theme);
+
+  /// The properties the editor doesn't model, kept for saving.
+  late final String? preserved = _preserved();
+
+  late final String xml = _properties?.toXmlString() ?? '';
+
+  String? _preserved() {
+    final properties = _properties;
+    bool dropped(XmlNode node) =>
+        node is XmlElement &&
+        (_modeledRunProperties.contains(node.name.local) ||
+            _changeMarkers.contains(node.name.local));
+    if (properties == null || properties.childElements.every(dropped)) {
+      return null;
+    }
+    final copy = properties.copy();
+    copy.children.removeWhere(dropped);
+    return copy.toXmlString();
+  }
+}
+
+/// What a paragraph's w:pPr makes of it.
+class _ParagraphFormat {
+  _ParagraphFormat(this._c, this._properties);
+
+  final _ReadContext _c;
+  final XmlElement? _properties;
+  final _preserved = <(bool, bool, bool), String?>{};
+
+  WordXml get _x => _c.x;
+
+  /// The style the paragraph names.
+  late final String? ownStyleId = _x.childVal(_properties, 'pStyle');
+  late final String? styleId = ownStyleId ?? _c.styles.defaultParagraphStyleId;
+  late final ParagraphProps props = _c.styles
+      .paragraphProps(styleId)
+      .merge(_properties, _x);
+
+  /// The properties the editor doesn't model, kept for saving.
+  String? preserved({
+    required bool dropStyle,
+    required bool isList,
+    required bool exactSpacing,
+  }) => _preserved.putIfAbsent(
+    (dropStyle, isList, exactSpacing),
+    () => _preservedParagraphProperties(
+      _properties,
+      dropStyle: dropStyle,
+      isList: isList,
+      exactSpacing: exactSpacing,
+    ),
+  );
+}
+
+String? _preservedParagraphProperties(
+  XmlElement? pPr, {
+  required bool dropStyle,
+  required bool isList,
+  required bool exactSpacing,
+}) {
+  if (pPr == null) return null;
+  final copy = pPr.copy();
+  final removed = <XmlElement>[];
+  for (final element in copy.childElements) {
+    final name = element.name.local;
+    final drop = switch (name) {
+      'pStyle' => dropStyle,
+      'numPr' || 'ind' => isList,
+      'jc' || 'sectPr' => true,
+      _ => _changeMarkers.contains(name),
+    };
+    if (drop) {
+      removed.add(element);
+    } else if (name == 'spacing' && !exactSpacing) {
+      element.attributes.removeWhere(
+        (a) => a.name.local == 'line' || a.name.local == 'lineRule',
+      );
+      if (element.attributes.isEmpty) removed.add(element);
+    } else if (name == 'rPr') {
+      element.children.removeWhere(
+        (node) =>
+            node is XmlElement && _changeMarkers.contains(node.name.local),
+      );
+    }
+  }
+  for (final element in removed) {
+    element.remove();
+  }
+  return copy.childElements.isEmpty ? null : copy.toXmlString();
+}
+
 class _BlockReader {
   _BlockReader(this.c, this.delta);
 
@@ -412,11 +638,11 @@ class _BlockReader {
 
   void _paragraph(XmlElement paragraph) {
     final pPr = x.child(paragraph, 'pPr');
-    final styleId =
-        x.childVal(pPr, 'pStyle') ?? c.styles.defaultParagraphStyleId;
+    final format = c.paragraphFormat(pPr);
+    final styleId = format.styleId;
     final level = c.styles.headingLevel(styleId);
     final header = level != null && level <= 6 ? level : null;
-    final props = c.styles.paragraphProps(styleId).merge(pPr, x);
+    final props = format.props;
     final numId = props.numId;
     final list = numId == null || numId == 0
         ? null
@@ -462,11 +688,10 @@ class _BlockReader {
       if (bookmarks.isNotEmpty)
         HiddenAttributes.bookmarks: jsonEncode(bookmarks),
     };
-    final preserved = _preservedParagraphProperties(
-      pPr,
+    final preserved = format.preserved(
       dropStyle:
           header != null ||
-          (list != null && x.childVal(pPr, 'pStyle') == c.listParagraphStyleId),
+          (list != null && format.ownStyleId == c.listParagraphStyleId),
       isList: list != null,
       exactSpacing: props.exactLineSpacing,
     );
@@ -483,43 +708,6 @@ class _BlockReader {
         })
         ..insert('\n');
     }
-  }
-
-  String? _preservedParagraphProperties(
-    XmlElement? pPr, {
-    required bool dropStyle,
-    required bool isList,
-    required bool exactSpacing,
-  }) {
-    if (pPr == null) return null;
-    final copy = pPr.copy();
-    final removed = <XmlElement>[];
-    for (final element in copy.childElements) {
-      final name = element.name.local;
-      final drop = switch (name) {
-        'pStyle' => dropStyle,
-        'numPr' || 'ind' => isList,
-        'jc' || 'sectPr' => true,
-        _ => _changeMarkers.contains(name),
-      };
-      if (drop) {
-        removed.add(element);
-      } else if (name == 'spacing' && !exactSpacing) {
-        element.attributes.removeWhere(
-          (a) => a.name.local == 'line' || a.name.local == 'lineRule',
-        );
-        if (element.attributes.isEmpty) removed.add(element);
-      } else if (name == 'rPr') {
-        element.children.removeWhere(
-          (node) =>
-              node is XmlElement && _changeMarkers.contains(node.name.local),
-        );
-      }
-    }
-    for (final element in removed) {
-      element.remove();
-    }
-    return copy.childElements.isEmpty ? null : copy.toXmlString();
   }
 
   void _structuredBlock(XmlElement sdt) {
@@ -790,23 +978,21 @@ class _InlineReader {
   }
 
   void _run(XmlElement run, String? link) {
-    final rPr = x.child(run, 'rPr');
-    if (x.onOff(x.child(rPr, 'vanish')) ?? false) {
+    final format = c.runFormat(x.child(run, 'rPr'), paragraphStyleId);
+    if (format.hidden) {
       _opaque(run.toXmlString(), '', hidden: true);
       return;
     }
-    if (run.childElements.any(
-      (e) => x.isW(e, 'commentReference') || x.isW(e, 'annotationRef'),
-    )) {
+    if (run.childElements.any((e) {
+      final name = e.name.local;
+      return (name == 'commentReference' || name == 'annotationRef') &&
+          x.isIn(e, Namespaces.w);
+    })) {
       c.notices.add(DocumentNotice.commentsHidden);
       return;
     }
 
-    final props = c.styles
-        .runProps(paragraphStyleId, x.childVal(rPr, 'rStyle'))
-        .merge(rPr, x, c.styles.theme);
-    final attributes = _attributes(props, _preservedRunProperties(rPr), link);
-    final rPrXml = rPr?.toXmlString() ?? '';
+    final attributes = _attributes(format.props, format.preserved, link);
     final text = StringBuffer();
 
     void flush() {
@@ -817,61 +1003,62 @@ class _InlineReader {
 
     for (final child in run.childElements) {
       final name = child.name.local;
-      if (x.isW(child, 't')) {
-        text.write(child.innerText.replaceAll('\n', ' '));
-      } else if (x.isW(child, 'tab') || x.isW(child, 'ptab')) {
-        text.write('\t');
-      } else if (x.isW(child, 'br')) {
-        switch (x.attr(child, 'type')) {
-          case 'page':
-            flush();
-            ops.insert({EmbedTypes.pageBreak: 'page'});
-          case 'column':
-            // Kept as it is for Word; other formats get a line break.
-            flush();
+      switch (x.isIn(child, Namespaces.w) ? name : null) {
+        case 't':
+          text.write(_textOf(child).replaceAll('\n', ' '));
+        case 'tab' || 'ptab':
+          text.write('\t');
+        case 'br':
+          switch (x.attr(child, 'type')) {
+            case 'page':
+              flush();
+              ops.insert({EmbedTypes.pageBreak: 'page'});
+            case 'column':
+              // Kept as it is for Word; other formats get a line break.
+              flush();
+              _opaque(
+                '<${run.name.qualified}>${format.xml}${child.toXmlString()}'
+                    '</${run.name.qualified}>',
+                '\u2028',
+              );
+            default:
+              text.write('\u2028');
+          }
+        case 'cr':
+          text.write('\u2028');
+        case 'noBreakHyphen':
+          text.write('\u2011');
+        case 'softHyphen':
+          text.write('\u00AD');
+        case 'rPr' ||
+            'fldChar' ||
+            'instrText' ||
+            'delText' ||
+            'lastRenderedPageBreak':
+          break;
+        default:
+          flush();
+          final xml =
+              '<${run.name.qualified}>${format.xml}${child.toXmlString()}</${run.name.qualified}>';
+          final alternative = name == 'AlternateContent'
+              ? child.descendantElements
+                    .where((element) => x.isW(element, 'drawing'))
+                    .firstOrNull
+              : null;
+          if (x.isW(child, 'drawing')) {
+            _drawing(child, xml);
+          } else if (alternative != null) {
+            _drawing(alternative, xml);
+          } else if (x.isW(child, 'footnoteReference') ||
+              x.isW(child, 'endnoteReference')) {
+            _opaque(xml, '${++c.footnotes}', label: OpaqueLabels.note);
+          } else {
             _opaque(
-              '<${run.name.qualified}>$rPrXml${child.toXmlString()}'
-                  '</${run.name.qualified}>',
-              '\u2028',
+              xml,
+              c.textOf(child),
+              label: _labelFor(child, fallback: name),
             );
-          default:
-            text.write('\u2028');
-        }
-      } else if (x.isW(child, 'cr')) {
-        text.write('\u2028');
-      } else if (x.isW(child, 'noBreakHyphen')) {
-        text.write('\u2011');
-      } else if (x.isW(child, 'softHyphen')) {
-        text.write('\u00AD');
-      } else if (x.isW(child, 'rPr') ||
-          x.isW(child, 'fldChar') ||
-          x.isW(child, 'instrText') ||
-          x.isW(child, 'delText') ||
-          x.isW(child, 'lastRenderedPageBreak')) {
-        continue;
-      } else {
-        flush();
-        final xml =
-            '<${run.name.qualified}>$rPrXml${child.toXmlString()}</${run.name.qualified}>';
-        final alternative = name == 'AlternateContent'
-            ? child.descendantElements
-                  .where((element) => x.isW(element, 'drawing'))
-                  .firstOrNull
-            : null;
-        if (x.isW(child, 'drawing')) {
-          _drawing(child, xml);
-        } else if (alternative != null) {
-          _drawing(alternative, xml);
-        } else if (x.isW(child, 'footnoteReference') ||
-            x.isW(child, 'endnoteReference')) {
-          _opaque(xml, '${++c.footnotes}', label: OpaqueLabels.note);
-        } else {
-          _opaque(
-            xml,
-            c.textOf(child),
-            label: _labelFor(child, fallback: name),
-          );
-        }
+          }
       }
     }
     flush();
@@ -961,19 +1148,13 @@ class _InlineReader {
     };
     return attributes.isEmpty ? null : attributes;
   }
-
-  String? _preservedRunProperties(XmlElement? rPr) {
-    if (rPr == null) return null;
-    final copy = rPr.copy();
-    copy.children.removeWhere(
-      (node) =>
-          node is XmlElement &&
-          (_modeledRunProperties.contains(node.name.local) ||
-              _changeMarkers.contains(node.name.local)),
-    );
-    return copy.childElements.isEmpty ? null : copy.toXmlString();
-  }
 }
+
+/// A w:t's text, which Word writes as one text node.
+String _textOf(XmlElement element) => switch (element.children) {
+  [XmlText(:final value)] => value,
+  _ => element.innerText,
+};
 
 const _modeledRunProperties = {
   'rFonts',
