@@ -414,8 +414,12 @@ class OdtStyles {
     return (before: page('break-before'), after: page('break-after'));
   }
 
-  /// The levels of a `text:list-style`, or of the `text:outline-style`.
-  static ListSpec listSpecOf(XmlElement listStyle) {
+  /// The levels of a `text:list-style`, or of the `text:outline-style`;
+  /// [fontFamily] names the fonts of bullets.
+  static ListSpec listSpecOf(
+    XmlElement listStyle, {
+    String? Function(String name)? fontFamily,
+  }) {
     final outline = listStyle.isOdf(_text, 'outline-style');
     final byLevel = <int, XmlElement>{};
     for (final child in listStyle.childElements) {
@@ -429,8 +433,8 @@ class OdtStyles {
       final element = byLevel[level];
       levels.add(
         outline
-            ? _outlineLevel(element, level)
-            : _level(element, level, levels.isEmpty ? null : levels.last),
+            ? _outlineLevel(element, level, levels)
+            : _level(element, level, levels, fontFamily),
       );
     }
     return ListSpec(levels);
@@ -438,7 +442,11 @@ class OdtStyles {
 
   /// Headings sit at the margin unless the level says otherwise, and
   /// levels left out show no number.
-  static ListLevelSpec _outlineLevel(XmlElement? element, int level) {
+  static ListLevelSpec _outlineLevel(
+    XmlElement? element,
+    int level,
+    List<ListLevelSpec> above,
+  ) {
     if (element == null || element.odfAttribute(_style, 'num-format') == null) {
       return const ListLevelSpec(
         format: NumberFormat.none,
@@ -447,7 +455,7 @@ class OdtStyles {
         hanging: 0,
       );
     }
-    final numbered = _level(element, level, null);
+    final numbered = _level(element, level, above);
     return ListLevelSpec(
       format: numbered.format,
       text: numbered.text,
@@ -458,12 +466,15 @@ class OdtStyles {
     );
   }
 
+  /// [above] are the levels before it.
   static ListLevelSpec _level(
     XmlElement? element,
     int level,
-    ListLevelSpec? previous,
-  ) {
+    List<ListLevelSpec> above, [
+    String? Function(String name)? fontFamily,
+  ]) {
     if (element == null) {
+      final previous = above.lastOrNull;
       final bullet = previous == null || previous.format == NumberFormat.bullet;
       return ListLevelSpec(
         format: bullet ? NumberFormat.bullet : previous.format,
@@ -472,6 +483,7 @@ class OdtStyles {
             ? null
             : previous!.indentLeft! + 36,
         hanging: previous?.hanging ?? 18,
+        font: bullet ? previous?.font : null,
       );
     }
     final properties = element.odfChild(_style, 'list-level-properties');
@@ -486,13 +498,17 @@ class OdtStyles {
               .clamp(1, level);
       String affix(String local) =>
           (element.odfAttribute(_style, local) ?? '').replaceAll('%', '');
+      // Levels above that show no number take no dot either, as in
+      // LibreOffice.
       final numbers = [
         for (
           var shownLevel = level - shown + 1;
           shownLevel <= level;
           shownLevel++
         )
-          '%$shownLevel',
+          if (shownLevel == level ||
+              above[shownLevel - 1].format != NumberFormat.none)
+            '%$shownLevel',
       ].join('.');
       return ListLevelSpec(
         format: format,
@@ -513,14 +529,26 @@ class OdtStyles {
         ? element.odfAttribute(_text, 'bullet-char')
         : null;
     final rune = char == null || char.isEmpty ? null : char.runes.first;
+    // Private-use symbols come from fonts such as OpenSymbol.
+    final kept =
+        rune != null &&
+        rune >= 0x20 &&
+        !(rune >= 0xD800 && rune <= 0xDFFF) &&
+        !(rune >= 0xE000 && rune <= 0xF8FF) &&
+        rune != 0xFFFE &&
+        rune != 0xFFFF;
+    final text = element.odfChild(_style, 'text-properties');
+    final fontName = text?.odfAttribute(_style, 'font-name');
     return ListLevelSpec(
       format: NumberFormat.bullet,
-      // Private-use symbols come from fonts such as OpenSymbol.
-      text: rune == null || rune >= 0xE000 && rune <= 0xF8FF || rune < 0x20
-          ? '•'
-          : String.fromCharCode(rune),
+      text: kept ? String.fromCharCode(rune) : '•',
       indentLeft: indent.left,
       hanging: indent.hanging,
+      font: !kept
+          ? null
+          : fontName != null
+          ? fontFamily?.call(fontName)
+          : odfFontFamily(text?.odfAttribute(_fo, 'font-family')),
       suffix: suffix,
     );
   }

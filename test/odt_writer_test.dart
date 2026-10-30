@@ -7,6 +7,7 @@ import 'package:flutter/painting.dart' show Color, EdgeInsets;
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:voges_word/document/delta_blocks.dart';
 import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/document_look.dart';
 import 'package:voges_word/document/embeds.dart';
@@ -157,6 +158,159 @@ Uint8List _docxToOdt(Uint8List bytes) {
     headersFooters: loaded.headersFooters,
   );
 }
+
+/// The label Word shows for each list paragraph of [document], as (text,
+/// label): the lists of one abstract list count together and a
+/// w:startOverride restarts its level at the list's first paragraph there.
+List<(String, String)> _wordLabels(LoadedDocument document) {
+  final numbering = XmlDocument.parse(
+    (document.source! as DocxPackage).text('word/numbering.xml')!,
+  ).rootElement;
+  Iterable<XmlElement> children(XmlElement parent, String name) =>
+      parent.childElements.where((element) => element.name.local == name);
+  String? value(XmlElement parent, String name) =>
+      children(parent, name).firstOrNull?.getAttribute('w:val');
+  final abstracts = {
+    for (final abstract in children(numbering, 'abstractNum'))
+      abstract.getAttribute('w:abstractNumId')!: {
+        for (final level in children(abstract, 'lvl'))
+          int.parse(level.getAttribute('w:ilvl')!): (
+            format: value(level, 'numFmt') ?? 'decimal',
+            text: value(level, 'lvlText') ?? '',
+            start: int.parse(value(level, 'start') ?? '1'),
+          ),
+      },
+  };
+  final lists = {
+    for (final list in children(numbering, 'num'))
+      int.parse(list.getAttribute('w:numId')!): (
+        group: value(list, 'abstractNumId')!,
+        starts: {
+          for (final override in children(list, 'lvlOverride'))
+            if (value(override, 'startOverride') case final start?)
+              int.parse(override.getAttribute('w:ilvl')!): int.parse(start),
+        },
+      ),
+  };
+  String letters(int number) => number < 1
+      ? ''
+      : String.fromCharCode(97 + (number - 1) % 26) * ((number - 1) ~/ 26 + 1);
+  String roman(int number) {
+    final out = StringBuffer();
+    for (final (value, digits) in [
+      (1000, 'm'),
+      (900, 'cm'),
+      (500, 'd'),
+      (400, 'cd'),
+      (100, 'c'),
+      (90, 'xc'),
+      (50, 'l'),
+      (40, 'xl'),
+      (10, 'x'),
+      (9, 'ix'),
+      (5, 'v'),
+      (4, 'iv'),
+      (1, 'i'),
+    ]) {
+      for (; number >= value; number -= value) {
+        out.write(digits);
+      }
+    }
+    return out.toString();
+  }
+
+  String formatted(int number, String format) => switch (format) {
+    'lowerLetter' => letters(number),
+    'upperLetter' => letters(number).toUpperCase(),
+    'lowerRoman' => roman(number),
+    'upperRoman' => roman(number).toUpperCase(),
+    'decimalZero' => '$number'.padLeft(2, '0'),
+    'none' => '',
+    _ => '$number',
+  };
+
+  final counts = <String, List<int?>>{};
+  final restarted = <(int, int)>{};
+  return [
+    for (final line in documentBlocks(document.delta).whereType<LineBlock>())
+      if (line.list != null)
+        if (line.attributes[HiddenAttributes.numbering] case final num numId)
+          () {
+            final list = lists[numId.toInt()]!;
+            final levels = abstracts[list.group]!;
+            final level = line.indent;
+            final count = counts.putIfAbsent(
+              list.group,
+              () => List.filled(9, null),
+            );
+            final start = list.starts[level] ?? levels[level]!.start;
+            final restart =
+                list.starts.containsKey(level) &&
+                restarted.add((numId.toInt(), level));
+            count[level] = restart || count[level] == null
+                ? start
+                : count[level]! + 1;
+            count.fillRange(level + 1, 9, null);
+            final label = levels[level]!.text.replaceAllMapped(
+              RegExp('%([1-9])'),
+              (match) {
+                final shown = int.parse(match[1]!) - 1;
+                return formatted(
+                  count[shown] ?? levels[shown]!.start,
+                  levels[shown]!.format,
+                );
+              },
+            );
+            return (
+              line.pieces
+                  .whereType<TextPiece>()
+                  .map((piece) => piece.text)
+                  .join(),
+              label,
+            );
+          }(),
+  ];
+}
+
+/// A paragraph of Word heading style [level], 1 to 3, that list [numId]
+/// numbers at the heading's level.
+String _numberedHeading(int level, String text, int numId) => _wordParagraph(
+  '<w:pPr><w:pStyle w:val="Heading$level"/><w:numPr>'
+  '<w:ilvl w:val="${level - 1}"/><w:numId w:val="$numId"/></w:numPr></w:pPr>'
+  '${_wordRun(text)}',
+);
+
+const _headingStyles =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<w:styles $_wordNamespaces>'
+    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+    '<w:name w:val="Normal"/></w:style>'
+    '<w:style w:type="paragraph" w:styleId="Heading1">'
+    '<w:name w:val="heading 1"/><w:basedOn w:val="Normal"/>'
+    '<w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style>'
+    '<w:style w:type="paragraph" w:styleId="Heading2">'
+    '<w:name w:val="heading 2"/><w:basedOn w:val="Normal"/>'
+    '<w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style>'
+    '<w:style w:type="paragraph" w:styleId="Heading3">'
+    '<w:name w:val="heading 3"/><w:basedOn w:val="Normal"/>'
+    '<w:pPr><w:outlineLvl w:val="2"/></w:pPr></w:style></w:styles>';
+
+/// A Word numbering part with [abstracts] and [lists].
+String _wordNumbering(String abstracts, String lists) =>
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<w:numbering $_wordNamespaces>$abstracts$lists</w:numbering>';
+
+String _wordLevel(
+  int level,
+  String format,
+  String text, {
+  int start = 1,
+  String extra = '',
+}) =>
+    '<w:lvl w:ilvl="$level"><w:start w:val="$start"/>'
+    '<w:numFmt w:val="$format"/>$extra<w:lvlText w:val="$text"/>'
+    '<w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${720 * (level + 1)}" '
+    'w:hanging="360"/></w:pPr></w:lvl>';
 
 TableCellModel _cell(
   TableStore tables,
@@ -1600,5 +1754,371 @@ void main() {
       ).single.attributes.map((attribute) => attribute.value),
       ['listtab', '0pt', '0pt', '0pt'],
     );
+  });
+
+  test('headings of Word lists that share an abstract list count together', () {
+    final numbering = _wordNumbering(
+      '<w:abstractNum w:abstractNumId="1">'
+          '${_wordLevel(0, 'decimal', '%1.')}'
+          '${_wordLevel(1, 'decimal', '%1.%2.')}</w:abstractNum>',
+      '<w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>'
+          '<w:num w:numId="4"><w:abstractNumId w:val="1"/></w:num>'
+          '<w:num w:numId="5"><w:abstractNumId w:val="1"/>'
+          '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/>'
+          '</w:lvlOverride></w:num>',
+    );
+    final content = _xml(
+      _docxToOdt(
+        _docxFile(
+          '${_numberedHeading(1, 'Intro', 1)}'
+          '${_numberedHeading(1, 'Methods', 1)}'
+          '${_numberedHeading(1, 'Results', 4)}'
+          '${_numberedHeading(2, 'Detail', 4)}'
+          '${_numberedHeading(1, 'Again', 5)}'
+          '${_numberedHeading(1, 'Back', 1)}',
+          relationships: [('rIdNumbering', 'numbering', 'numbering.xml')],
+          parts: {
+            'word/styles.xml': _headingStyles,
+            'word/numbering.xml': numbering,
+          },
+        ),
+      ),
+      'content.xml',
+    );
+
+    // Word shows 1., 2., 3. and 3.1.; the list that restarts shows 1., and
+    // the first list then goes on with 2.
+    expect(_elements(content, 'text:list'), isEmpty);
+    for (final (text, start) in [
+      ('Intro', null),
+      ('Methods', null),
+      ('Results', null),
+      ('Detail', null),
+      ('Again', '1'),
+      ('Back', null),
+    ]) {
+      final heading = _paragraphWith(content, text);
+      expect(heading.parentElement?.name.qualified, 'office:text');
+      expect(heading.getAttribute('text:start-value'), start, reason: text);
+      expect(
+        heading.getAttribute('text:restart-numbering'),
+        start == null ? isNull : 'true',
+        reason: text,
+      );
+    }
+  });
+
+  test('Word legal numbering shows the numbers above it in decimals', () {
+    final numbering = _wordNumbering(
+      '<w:abstractNum w:abstractNumId="2">'
+          '${_wordLevel(0, 'upperRoman', 'Article %1.')}'
+          '${_wordLevel(1, 'decimalZero', 'Section %1.%2', extra: '<w:isLgl/>')}'
+          '${_wordLevel(2, 'lowerLetter', '(%3)')}</w:abstractNum>',
+      '<w:num w:numId="1"><w:abstractNumId w:val="2"/></w:num>',
+    );
+    final codec = OdtCodec(DocxCodec(TableStore()));
+    final bytes = _docxToOdt(
+      _docxFile(
+        '${_numberedHeading(1, 'Scope', 1)}${_numberedHeading(2, 'Terms', 1)}'
+        '${_numberedHeading(3, 'Detail', 1)}${_numberedHeading(2, 'Limits', 1)}'
+        '${_numberedHeading(1, 'Annex', 1)}',
+        relationships: [('rIdNumbering', 'numbering', 'numbering.xml')],
+        parts: {
+          'word/styles.xml': _headingStyles,
+          'word/numbering.xml': numbering,
+        },
+      ),
+    );
+    final content = _xml(bytes, 'content.xml');
+    final styles = _xml(bytes, 'styles.xml');
+
+    // The outline can't show "Section 1.01" under "Article I.", so the
+    // headings stay in their list.
+    expect(
+      _elements(
+        styles,
+        'text:outline-level-style',
+      ).map((level) => level.getAttribute('style:num-format')),
+      List.filled(10, ''),
+    );
+    XmlElement item(String text) =>
+        _paragraphWith(content, text).parentElement!;
+    for (final text in ['Scope', 'Terms', 'Detail', 'Limits', 'Annex']) {
+      expect(item(text).name.qualified, 'text:list-item', reason: text);
+    }
+    final list = _elements(content, 'text:list').first;
+    Map<String, String> level(String? style, int level) => {
+      for (final attribute
+          in _elements(content, 'text:list-style')
+              .firstWhere(
+                (element) => element.getAttribute('style:name') == style,
+              )
+              .childElements
+              .firstWhere(
+                (element) => element.getAttribute('text:level') == '$level',
+              )
+              .attributes)
+        attribute.name.qualified: attribute.value,
+    };
+    final own = list.getAttribute('text:style-name');
+    expect(level(own, 1), {
+      'text:level': '1',
+      'style:num-prefix': 'Article ',
+      'style:num-suffix': '.',
+      'style:num-format': 'I',
+    });
+    final section = {
+      'text:level': '2',
+      'style:num-prefix': 'Section ',
+      'style:num-format': '01, 02, 03, ...',
+      'text:display-levels': '2',
+    };
+    expect(level(own, 2), section);
+
+    // Sections take levels whose articles number in decimals.
+    final legal = item('Terms').getAttribute('text:style-override');
+    expect(legal, isNot(own));
+    expect(item('Limits').getAttribute('text:style-override'), legal);
+    expect(level(legal, 1)['style:num-format'], '1');
+    expect(level(legal, 2), section);
+    expect(item('Scope').getAttribute('text:style-override'), isNull);
+    expect(item('Detail').getAttribute('text:style-override'), own);
+    expect(item('Annex').getAttribute('text:style-override'), isNull);
+
+    final reopened = codec.decode(bytes);
+    expect(lineOf(reopened.delta, 'Terms')?['list'], 'ordered');
+    expect(lineOf(reopened.delta, 'Terms')?['header'], 2);
+    expect(lineOf(reopened.delta, 'Terms')?['indent'], 1);
+  });
+
+  test('Word lists keep their own numbering and go on counting where Word '
+      'does', () {
+    final numbering = _wordNumbering(
+      '<w:abstractNum w:abstractNumId="10">'
+          '${_wordLevel(0, 'lowerLetter', '%1)')}'
+          '${_wordLevel(1, 'lowerRoman', '(%2)')}</w:abstractNum>'
+          '<w:abstractNum w:abstractNumId="11">'
+          '${_wordLevel(0, 'decimal', '%1.')}'
+          '${_wordLevel(1, 'decimal', '%1.%2.')}'
+          '${_wordLevel(2, 'decimal', '%1.%2.%3.', extra: '<w:suff w:val="space"/>')}'
+          '</w:abstractNum>'
+          '<w:abstractNum w:abstractNumId="12">'
+          '${_wordLevel(0, 'upperRoman', '%1.')}</w:abstractNum>'
+          '<w:abstractNum w:abstractNumId="13">'
+          '${_wordLevel(0, 'decimal', '%1.')}</w:abstractNum>'
+          '<w:abstractNum w:abstractNumId="14">'
+          '${_wordLevel(0, 'decimal', '%1.', start: 5)}</w:abstractNum>',
+      '<w:num w:numId="1"><w:abstractNumId w:val="10"/></w:num>'
+          '<w:num w:numId="2"><w:abstractNumId w:val="11"/></w:num>'
+          '<w:num w:numId="3"><w:abstractNumId w:val="12"/></w:num>'
+          '<w:num w:numId="4"><w:abstractNumId w:val="13"/></w:num>'
+          '<w:num w:numId="5"><w:abstractNumId w:val="13"/>'
+          '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="5"/>'
+          '</w:lvlOverride></w:num>'
+          '<w:num w:numId="6"><w:abstractNumId w:val="14"/></w:num>',
+    );
+    String item(String text, int numId, [int level = 0]) => _wordParagraph(
+      '<w:pPr><w:numPr><w:ilvl w:val="$level"/><w:numId w:val="$numId"/>'
+      '</w:numPr></w:pPr>${_wordRun(text)}',
+    );
+    final docx = _docxFile(
+      '${item('alpha', 1)}${item('beta', 1)}${item('delta', 1, 1)}'
+      '${item('epsilon', 1, 1)}${item('gamma', 1)}'
+      '${item('chapter', 2)}${item('part', 2, 1)}${item('clause', 2, 2)}'
+      '${_wordParagraph(_wordRun('Interrupting text'))}'
+      '${item('annex', 2, 1)}${item('finale', 2)}'
+      '${item('king', 3)}${item('queen', 3)}'
+      '${item('first', 4)}${item('second', 4)}'
+      '${_wordParagraph(_wordRun('Something else'))}'
+      '${item('fifth', 5)}${item('sixth', 5)}'
+      '${item('quinto', 6)}${item('sexto', 6)}',
+      relationships: [('rIdNumbering', 'numbering', 'numbering.xml')],
+      parts: {'word/numbering.xml': numbering},
+    );
+    const labels = [
+      ('alpha', 'a)'),
+      ('beta', 'b)'),
+      ('delta', '(i)'),
+      ('epsilon', '(ii)'),
+      ('gamma', 'c)'),
+      ('chapter', '1.'),
+      ('part', '1.1.'),
+      ('clause', '1.1.1.'),
+      ('annex', '1.2.'),
+      ('finale', '2.'),
+      ('king', 'I.'),
+      ('queen', 'II.'),
+      ('first', '1.'),
+      ('second', '2.'),
+      ('fifth', '5.'),
+      ('sixth', '6.'),
+      ('quinto', '5.'),
+      ('sexto', '6.'),
+    ];
+    expect(_wordLabels(DocxCodec(TableStore()).decode(docx)), labels);
+
+    final bytes = _docxToOdt(docx);
+    final content = _xml(bytes, 'content.xml');
+    XmlElement listOf(String text) {
+      XmlElement list = _paragraphWith(content, text);
+      while (list.parentElement?.name.qualified != 'office:text') {
+        list = list.parentElement!;
+      }
+      return list;
+    }
+
+    XmlElement levelStyle(String text, int level) =>
+        _elements(content, 'text:list-style')
+            .firstWhere(
+              (style) =>
+                  style.getAttribute('style:name') ==
+                  listOf(text).getAttribute('text:style-name'),
+            )
+            .childElements
+            .firstWhere(
+              (element) => element.getAttribute('text:level') == '$level',
+            );
+    Map<String, String> level(String text, int level) => {
+      for (final attribute in levelStyle(text, level).attributes)
+        if (attribute.name.local != 'level')
+          attribute.name.qualified: attribute.value,
+    };
+    expect(level('alpha', 1), {
+      'style:num-suffix': ')',
+      'style:num-format': 'a',
+    });
+    expect(level('alpha', 2), {
+      'style:num-prefix': '(',
+      'style:num-suffix': ')',
+      'style:num-format': 'i',
+    });
+    expect(level('chapter', 3), {
+      'style:num-suffix': '.',
+      'style:num-format': '1',
+      'text:display-levels': '3',
+    });
+    expect(level('king', 1), {
+      'style:num-suffix': '.',
+      'style:num-format': 'I',
+    });
+    expect(level('quinto', 1), {
+      'style:num-suffix': '.',
+      'style:num-format': '1',
+      'text:start-value': '5',
+    });
+    // The lists Word continues after other paragraphs continue in
+    // OpenDocument, and the restarted list starts at 5.
+    expect(
+      listOf('annex').getAttribute('text:continue-list'),
+      listOf('chapter').getAttribute('xml:id'),
+    );
+    expect(
+      listOf('fifth').getAttribute('text:continue-list'),
+      listOf('first').getAttribute('xml:id'),
+    );
+    expect(
+      _paragraphWith(
+        content,
+        'fifth',
+      ).parentElement?.getAttribute('text:start-value'),
+      '5',
+    );
+    expect(listOf('king').getAttribute('text:continue-list'), isNull);
+    final clause = _elements(
+      levelStyle('clause', 3),
+      'style:list-level-label-alignment',
+    ).single;
+    expect(clause.getAttribute('text:label-followed-by'), 'space');
+    expect(clause.getAttribute('fo:margin-left'), '108pt');
+    expect(clause.getAttribute('fo:text-indent'), '-18pt');
+
+    final reopened = OdtCodec(DocxCodec(TableStore())).decode(bytes);
+    expect(_wordLabels(reopened), labels);
+
+    final textutil = File('/usr/bin/textutil');
+    if (!Platform.isMacOS || !textutil.existsSync()) return;
+    final folder = Directory.systemTemp.createTempSync('odt');
+    addTearDown(() => folder.deleteSync(recursive: true));
+    final file = File('${folder.path}/lists.odt')..writeAsBytesSync(bytes);
+    final text = Process.runSync(textutil.path, [
+      '-convert',
+      'txt',
+      file.path,
+      '-stdout',
+    ]);
+    expect(text.exitCode, 0, reason: '${text.stderr}');
+    expect(text.stdout, contains('a)\talpha'));
+    expect(text.stdout, contains('II.\tqueen'));
+  });
+
+  test('check boxes are bullets of ☑ and ☐ in Segoe UI Symbol', () {
+    final bytes = OdtCodec(DocxCodec(TableStore())).encode(
+      Delta()
+        ..insert('done')
+        ..insert('\n', {'list': 'checked'})
+        ..insert('to do')
+        ..insert('\n', {'list': 'unchecked'}),
+    );
+    final content = _xml(bytes, 'content.xml');
+    XmlElement firstLevel(String text) {
+      XmlElement list = _paragraphWith(content, text);
+      while (list.name.qualified != 'text:list') {
+        list = list.parentElement!;
+      }
+      return _elements(content, 'text:list-style')
+          .firstWhere(
+            (style) =>
+                style.getAttribute('style:name') ==
+                list.getAttribute('text:style-name'),
+          )
+          .childElements
+          .first;
+    }
+
+    for (final (text, box) in [('done', '☑'), ('to do', '☐')]) {
+      final level = firstLevel(text);
+      expect(level.name.qualified, 'text:list-level-style-bullet');
+      expect(level.getAttribute('text:bullet-char'), box);
+      expect(
+        level
+            .getElement('style:text-properties')
+            ?.getAttribute('style:font-name'),
+        'Segoe UI Symbol',
+      );
+    }
+    expect(
+      _elements(
+        content,
+        'style:font-face',
+      ).map((face) => face.getAttribute('style:name')),
+      contains('Segoe UI Symbol'),
+    );
+
+    // Read back, they are the bullets the .docx reader takes for check
+    // boxes.
+    final reopened = _decode(bytes);
+    final numbering = XmlDocument.parse(
+      (reopened.source! as DocxPackage).text('word/numbering.xml')!,
+    );
+    for (final (text, box) in [('done', '☑'), ('to do', '☐')]) {
+      final numId = lineOf(reopened.delta, text)?[HiddenAttributes.numbering];
+      final abstractId = _elements(numbering, 'w:num')
+          .firstWhere((list) => list.getAttribute('w:numId') == '$numId')
+          .getElement('w:abstractNumId')!
+          .getAttribute('w:val');
+      final level = _elements(numbering, 'w:abstractNum')
+          .firstWhere(
+            (list) => list.getAttribute('w:abstractNumId') == abstractId,
+          )
+          .getElement('w:lvl')!;
+      expect(level.getElement('w:lvlText')?.getAttribute('w:val'), box);
+      expect(
+        level
+            .getElement('w:rPr')
+            ?.getElement('w:rFonts')
+            ?.getAttribute('w:ascii'),
+        'Segoe UI Symbol',
+      );
+    }
   });
 }

@@ -842,7 +842,10 @@ class OdtReader {
 
   ListSpec _listSpec(StyleScope scope, String? name) =>
       _listSpecs[(scope, name)] ??= switch (_styles.listStyle(scope, name)) {
-        final XmlElement style => OdtStyles.listSpecOf(style),
+        final XmlElement style => OdtStyles.listSpecOf(
+          style,
+          fontFamily: _styles.fontFamily,
+        ),
         null => ListSpec.bullets(),
       };
 
@@ -887,14 +890,17 @@ class OdtReader {
       element.odfAttribute(_table, 'style-name'),
     );
     final properties = style?.properties('table');
+    final pageNumber = _pageNumber(
+      properties?.odfAttribute(_style, 'page-number'),
+    );
     if (context.place == _Place.body &&
         _beforeBodyBlock(
           out,
           _nonEmpty(style?.masterPageName),
           OdtStyles.breaksOf(properties),
-          pageNumber: _pageNumber(
-            properties?.odfAttribute(_style, 'page-number'),
-          ),
+          // OpenOffice.org before 3.3 wrote "auto" as 0 for tables, so
+          // LibreOffice never restarts a table's pages at 0.
+          pageNumber: pageNumber == 0 ? null : pageNumber,
         )) {
       // A page break, as in LibreOffice: a new section would show the first
       // page's header again.

@@ -838,6 +838,62 @@ void main() {
     );
   });
 
+  test('a level shows no dot for levels above without a number, and bullets '
+      'keep their font', () {
+    final loaded = _decode(
+      odtFile(
+        fonts:
+            '<style:font-face style:name="Segoe UI Symbol" '
+            'svg:font-family="&apos;Segoe UI Symbol&apos;"/>',
+        automatic:
+            '<text:list-style style:name="L1">'
+            '<text:list-level-style-number text:level="1" style:num-format=""/>'
+            '<text:list-level-style-number text:level="2" style:num-suffix="." '
+            'style:num-format="a" text:display-levels="2"/>'
+            '<text:list-level-style-number text:level="3" style:num-format="i" '
+            'text:display-levels="3"/></text:list-style>'
+            '<text:list-style style:name="L2">'
+            '<text:list-level-style-bullet text:level="1" text:bullet-char="☑">'
+            '<style:text-properties style:font-name="Segoe UI Symbol"/>'
+            '</text:list-level-style-bullet>'
+            '<text:list-level-style-bullet text:level="2" text:bullet-char="\uF0A7">'
+            '<style:text-properties style:font-name="Segoe UI Symbol"/>'
+            '</text:list-level-style-bullet>'
+            '<text:list-level-style-bullet text:level="3" text:bullet-char="\u{1F642}"/>'
+            '</text:list-style>',
+        body:
+            '<text:list text:style-name="L1"><text:list-item><text:list>'
+            '<text:list-item><text:p>letter</text:p></text:list-item>'
+            '</text:list></text:list-item></text:list>'
+            '<text:list text:style-name="L2"><text:list-item><text:p>done</text:p>'
+            '</text:list-item></text:list>',
+      ),
+    );
+    final numbering = _package(loaded).text('word/numbering.xml')!;
+
+    // LibreOffice shows "a." and "a.i", not ".a." and ".a.i".
+    expect(numbering, contains('<w:lvlText w:val="%2."/>'));
+    expect(numbering, contains('<w:lvlText w:val="%2.%3"/>'));
+    expect(
+      numbering,
+      contains(
+        '<w:lvlText w:val="☑"/><w:lvlJc w:val="left"/>'
+        '<w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr>'
+        '<w:rPr><w:rFonts w:ascii="Segoe UI Symbol" w:hAnsi="Segoe UI Symbol" '
+        'w:hint="default"/></w:rPr>',
+      ),
+    );
+    expect(numbering, contains('<w:lvlText w:val="\u{1F642}"/>'));
+    // A symbol of the font's own takes a bullet of every font instead.
+    expect(
+      numbering,
+      contains(
+        '<w:lvlText w:val="•"/><w:lvlJc w:val="left"/>'
+        '<w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl>',
+      ),
+    );
+  });
+
   test('a page break before a table starts no new section', () {
     final loaded = _decode(
       odtFile(
@@ -1051,6 +1107,48 @@ void main() {
     expect(
       _package(again).text('word/document.xml'),
       contains('<w:pgNumType w:start="20"/>'),
+    );
+  });
+
+  test('a table page number of 0 goes on counting, as OpenOffice.org wrote '
+      'it for "auto"', () {
+    String table(String style, String text) =>
+        '<table:table table:style-name="$style"><table:table-column/>'
+        '<table:table-row><table:table-cell><text:p>$text</text:p>'
+        '</table:table-cell></table:table-row></table:table>';
+    String tableStyle(String name, String master) =>
+        '<style:style style:name="$name" style:family="table" '
+        'style:master-page-name="$master"><style:table-properties '
+        'style:width="17cm" style:page-number="0"/></style:style>';
+    final loaded = _decode(
+      odtFile(
+        masters:
+            '<style:master-page style:name="Standard" style:page-layout-name="pm1"/>'
+            '<style:master-page style:name="Left_20_Page" style:display-name="Left Page" style:page-layout-name="pm1"/>',
+        automatic:
+            '${tableStyle('Table1', 'Standard')}'
+            '${tableStyle('Table2', 'Left_20_Page')}'
+            '<style:style style:name="P1" style:family="paragraph" '
+            'style:parent-style-name="Standard" style:master-page-name="Standard">'
+            '<style:paragraph-properties style:page-number="0"/></style:style>',
+        body:
+            '${table('Table1', 'first')}<text:p>text</text:p>'
+            '${table('Table2', 'second')}'
+            '<text:p text:style-name="P1">zero</text:p>',
+      ),
+    );
+    final sections = [
+      for (final section in embedsOf(loaded.delta, EmbedTypes.sectionBreak))
+        sectionXmlOf(section),
+    ];
+
+    // Only the paragraph starts its pages at 0, as in LibreOffice.
+    expect(sections, hasLength(1));
+    expect(sections.single, isNot(contains('pgNumType')));
+    expect(embedsOf(loaded.delta, EmbedTypes.pageBreak), hasLength(1));
+    expect(
+      _package(loaded).text('word/document.xml'),
+      contains('<w:pgNumType w:start="0"/>'),
     );
   });
 

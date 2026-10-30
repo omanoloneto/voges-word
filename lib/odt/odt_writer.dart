@@ -128,12 +128,12 @@ class OdtWriter {
     Object? source,
   }) {
     final document = _Document(look, source);
-    final contentStyles = _Styles('');
-    final masterStyles = _Styles('M');
+    final contentStyles = _Styles('', document.fonts);
+    final masterStyles = _Styles('M', document.fonts);
     final stories = headersFooters ?? const HeadersFooters();
 
     final blocks = documentBlocks(delta);
-    document.outline = _Outline.of(blocks, document);
+    document.outline = _Outline.of(blocks, document, tables);
     final sections = _sections(blocks, document.lastNumbering());
     final body = _StoryWriter(
       document,
@@ -296,6 +296,41 @@ class OdtWriter {
 
   static String _masterName(int index, List<_Section> sections) =>
       index == sections.length - 1 ? 'Standard' : 'Section${index + 1}';
+
+  /// The list paragraphs of [blocks] and of the tables in them, in order,
+  /// as far as the tables are written.
+  static List<LineBlock> _listLines(
+    List<DocumentBlock> blocks,
+    TableStore tables,
+  ) {
+    final lines = <LineBlock>[];
+    final open = <TableModel>{};
+    void walk(List<DocumentBlock> blocks) {
+      for (final block in blocks) {
+        if (block is LineBlock) {
+          if (block.list != null) lines.add(block);
+          continue;
+        }
+        if (block is! EmbedBlock || block.type != EmbedTypes.table) continue;
+        TableModel? table;
+        try {
+          table = tables[tableIdOf(block.value)];
+        } catch (_) {
+          continue;
+        }
+        if (table == null || open.length >= 32 || !open.add(table)) continue;
+        for (final row in table.rows) {
+          for (final cell in row.cells) {
+            walk(documentBlocks(cell.controller.document.toDelta()));
+          }
+        }
+        open.remove(table);
+      }
+    }
+
+    walk(blocks);
+    return lines;
+  }
 
   /// Splits the body at section breaks that start a page; the last section
   /// uses the document's page setup and [last] numbering, the others what
@@ -543,6 +578,7 @@ class OdtWriter {
       'upperLetter' => 'A',
       'lowerLetter' => 'a',
       'decimalZero' => '01, 02, 03, ...',
+      'none' => '',
       _ => '1',
     };
     return '${prefix.isEmpty ? '' : ' style:num-prefix="${_attribute(prefix)}"'}'
@@ -675,17 +711,34 @@ class _Document {
     return kept ? numId : null;
   }
 
-  /// What follows the number or bullet at each level of [line]'s Word
-  /// list; empty when it is a tab at every level.
-  List<String> followedBy(LineBlock line) {
-    final numId = wordList(line);
-    if (numId == null) return const [];
-    final levels = [
-      for (var level = 0; level < 9; level++)
-        wordLevel(numId, level)?.followedBy ?? 'listtab',
-    ];
-    return levels.every((value) => value == 'listtab') ? const [] : levels;
+  /// The levels of a Word list, from 0.
+  List<_WordLevel?> wordLevels(int numId) => [
+    for (var level = 0; level < 9; level++) wordLevel(numId, level),
+  ];
+
+  /// The abstract list of [line]'s Word list.
+  Object? groupOf(LineBlock line) => switch (wordList(line)) {
+    final numId? => wordLevel(numId, line.indent)!.group,
+    null => null,
+  };
+
+  /// Whether [level] of a Word list shows the numbers of levels above in
+  /// decimals (w:isLgl) where they number otherwise.
+  bool decimalAbove(int numId, int level) {
+    final word = wordLevel(numId, level);
+    if (word == null || !word.legal) return false;
+    return word
+        .levelsAbove(level)
+        .any((above) => wordLevel(numId, above)?.format != 'decimal');
   }
+
+  /// Word's numbers of the body's list paragraphs.
+  late final counts = _WordCounts(this);
+  final _chains = <Object?, _Chain>{};
+  var listCount = 0;
+
+  /// The OpenDocument lists of an abstract Word list in the body.
+  _Chain chain(Object? group) => _chains.putIfAbsent(group, _Chain.new);
 
   late final String? mainPart = () {
     try {
@@ -888,6 +941,10 @@ class _WordLevel {
     required this.followedBy,
     required this.left,
     required this.hanging,
+    this.legal = false,
+    this.font,
+    this.group,
+    this.restarts = false,
   });
 
   final int start;
@@ -906,11 +963,37 @@ class _WordLevel {
   final double left;
   final double hanging;
 
+  /// Word's w:isLgl: the numbers of the levels above show as decimals.
+  final bool legal;
+
+  /// The font of the number or bullet.
+  final String? font;
+
+  /// The abstract list (w:abstractNum) of the level's list: Word counts
+  /// the lists of one abstract list together.
+  final Object? group;
+
+  /// Whether [start] is the list's w:startOverride, which restarts the
+  /// level at the list's first paragraph there.
+  final bool restarts;
+
   bool get numbered => format != 'bullet' && format != 'none';
 
   /// The start OpenDocument's level styles take, from 1; a heading that
   /// starts at 0 restarts the numbering itself.
   int get firstNumber => start.clamp(1, 32767);
+
+  /// The levels, from 0, whose numbers the text shows before the level's
+  /// own, as OpenDocument shows them: every one from the first it names.
+  Iterable<int> levelsAbove(int level) sync* {
+    final named = RegExp(
+      '%([1-9])',
+    ).allMatches(text).map((match) => int.parse(match[1]!) - 1);
+    if (named.isEmpty) return;
+    for (var above = named.reduce(math.min); above < level; above++) {
+      yield above;
+    }
+  }
 
   /// Whether [other] numbers the same way, wherever it starts.
   bool looksLike(_WordLevel other) =>
@@ -918,7 +1001,26 @@ class _WordLevel {
       text == other.text &&
       followedBy == other.followedBy &&
       left == other.left &&
-      hanging == other.hanging;
+      hanging == other.hanging &&
+      legal == other.legal;
+
+  _WordLevel _with({
+    int? start,
+    String? format,
+    Object? group,
+    bool? restarts,
+  }) => _WordLevel(
+    start: start ?? this.start,
+    format: format ?? this.format,
+    text: text,
+    followedBy: followedBy,
+    left: left,
+    hanging: hanging,
+    legal: legal,
+    font: font,
+    group: group ?? this.group,
+    restarts: restarts ?? this.restarts,
+  );
 
   /// The levels of a Word numbering part by list (w:numId) and level, with
   /// the overrides of each list.
@@ -934,6 +1036,7 @@ class _WordLevel {
       }
 
       final firstLine = points('firstLine');
+      final fonts = x.child(x.child(lvl, 'rPr'), 'rFonts');
       return _WordLevel(
         start: number(x.childVal(lvl, 'start')) ?? base?.start ?? 1,
         format: x.childVal(lvl, 'numFmt') ?? base?.format ?? 'decimal',
@@ -950,6 +1053,11 @@ class _WordLevel {
             (firstLine == null ? null : -firstLine) ??
             base?.hanging ??
             0,
+        legal: x.onOff(x.child(lvl, 'isLgl')) ?? base?.legal ?? false,
+        font:
+            x.attr(fonts, 'ascii') ??
+            x.attr(fonts, 'hAnsi') ??
+            (fonts == null ? base?.font : null),
       );
     }
 
@@ -969,23 +1077,24 @@ class _WordLevel {
     for (final list in x.children(numbering, 'num')) {
       final numId = number(x.attr(list, 'numId'));
       if (numId == null) continue;
-      final own = {...?abstracts[number(x.childVal(list, 'abstractNumId'))]};
+      final abstractId = number(x.childVal(list, 'abstractNumId'));
+      final Object group = abstractId ?? (numId,);
+      final own = {
+        for (final MapEntry(key: level, value: definition)
+            in (abstracts[abstractId] ?? const <int, _WordLevel>{}).entries)
+          level: definition._with(group: group),
+      };
       for (final override in x.children(list, 'lvlOverride')) {
         final level = number(x.attr(override, 'ilvl'));
         if (level == null || level < 0 || level >= 9) continue;
         final redefined = x.child(override, 'lvl');
-        if (redefined != null) own[level] = levelOf(redefined, own[level]);
+        if (redefined != null) {
+          own[level] = levelOf(redefined, own[level])._with(group: group);
+        }
         final start = number(x.childVal(override, 'startOverride'));
         final base = own[level];
         if (start != null && base != null) {
-          own[level] = _WordLevel(
-            start: start,
-            format: base.format,
-            text: base.text,
-            followedBy: base.followedBy,
-            left: base.left,
-            hanging: base.hanging,
-          );
+          own[level] = base._with(start: start, restarts: true);
         }
       }
       own.forEach((level, value) => levels[(numId, level)] = value);
@@ -1001,8 +1110,13 @@ class _Outline {
   _Outline._(this._document, this.levels);
 
   /// The outline of the document's first heading a Word list numbers at the
-  /// heading's own level; null when there is none.
-  static _Outline? of(List<DocumentBlock> blocks, _Document document) {
+  /// heading's own level; null when there is none, or when that list also
+  /// numbers paragraphs the outline can't.
+  static _Outline? of(
+    List<DocumentBlock> blocks,
+    _Document document,
+    TableStore tables,
+  ) {
     for (final block in blocks) {
       if (block is! LineBlock || !_numberedHeading(block)) continue;
       final numId = document.wordList(block);
@@ -1011,7 +1125,9 @@ class _Outline {
         for (var level = 0; level < 9; level++)
           document.wordLevel(numId, level),
       ]);
-      if (outline.owns(block)) return outline;
+      if (!outline._fits(block)) continue;
+      outline._sort(OdtWriter._listLines(blocks, tables));
+      return outline.owns(block) ? outline : null;
     }
     return null;
   }
@@ -1026,15 +1142,22 @@ class _Outline {
   /// The levels of the outline, from the Word list of its first heading.
   final List<_WordLevel?> levels;
 
-  /// Word's counts of each list, by level.
-  final _counts = <int, List<int?>>{};
+  /// The abstract Word lists whose every paragraph is a heading the outline
+  /// numbers; the others stay in lists, where Word's numbers of their
+  /// paragraphs show.
+  var _groups = const <Object?>{};
 
   /// OpenDocument's count of the outline, by level.
   final _shown = List<int?>.filled(10, null);
 
-  /// Whether the outline numbers [line]: a numbered heading whose Word list
-  /// numbers the same way as the outline down to the heading's level.
-  bool owns(LineBlock line) {
+  /// Whether the outline numbers [line].
+  bool owns(LineBlock line) =>
+      _fits(line) && _groups.contains(_document.groupOf(line));
+
+  /// Whether [line] is a numbered heading whose Word list numbers the same
+  /// way as the outline down to the heading's level, in numbers the outline
+  /// can show.
+  bool _fits(LineBlock line) {
     if (!_numberedHeading(line)) return false;
     final numId = _document.wordList(line);
     if (numId == null) return false;
@@ -1045,23 +1168,18 @@ class _Outline {
         return false;
       }
     }
-    return true;
+    return !_document.decimalAbove(numId, line.indent);
   }
 
-  /// Counts a paragraph of a Word list as Word does, per list and level;
-  /// returns its number when the outline numbers it.
-  int? count(LineBlock line) {
-    final numId = _document.wordList(line);
-    if (numId == null) return null;
-    final level = line.indent;
-    final counts = _counts.putIfAbsent(numId, () => List<int?>.filled(9, null));
-    final number = switch (counts[level]) {
-      final current? => current + 1,
-      null => _document.wordLevel(numId, level)!.start,
-    };
-    counts[level] = number;
-    counts.fillRange(level + 1, 9, null);
-    return owns(line) ? number : null;
+  /// Keeps the Word lists of [lines] the outline can number whole.
+  void _sort(List<LineBlock> lines) {
+    final fitting = <Object?>{};
+    final others = <Object?>{};
+    for (final line in lines) {
+      if (_document.wordList(line) == null) continue;
+      (_fits(line) ? fitting : others).add(_document.groupOf(line));
+    }
+    _groups = fitting.difference(others);
   }
 
   /// Numbers a heading at [level], from 0, that Word numbers [number];
@@ -1077,15 +1195,83 @@ class _Outline {
   }
 }
 
+/// The numbers Word gives the paragraphs of its lists: the lists of one
+/// abstract list count together, and a list's w:startOverride restarts the
+/// level at the list's first paragraph there.
+class _WordCounts {
+  _WordCounts(this._document);
+
+  final _Document _document;
+  final _counts = <Object?, List<int?>>{};
+  final _restarted = <(int, int)>{};
+
+  /// Counts [line]; null when it is not in a Word list.
+  int? count(LineBlock line) {
+    final numId = _document.wordList(line);
+    if (numId == null) return null;
+    final level = line.indent;
+    final word = _document.wordLevel(numId, level)!;
+    final counts = _counts.putIfAbsent(
+      word.group,
+      () => List<int?>.filled(9, null),
+    );
+    final restart = word.restarts && _restarted.add((numId, level));
+    final current = counts[level];
+    final number = restart || current == null ? word.start : current + 1;
+    counts[level] = number;
+    counts.fillRange(level + 1, 9, null);
+    return number;
+  }
+}
+
+/// The OpenDocument lists that show one abstract Word list in the body:
+/// each continues the last one, and they count together.
+class _Chain {
+  String? lastId;
+  final _counts = List<int?>.filled(10, null);
+
+  /// Counts an item at [level] as LibreOffice does, where a level above
+  /// without an item of its own counts one, and returns the number the item
+  /// has to start at to show Word's [number]; null when it shows it anyway.
+  /// [startOf] gives the first number of a level.
+  int? count(
+    int level,
+    int? number, {
+    required bool numbered,
+    required int Function(int level) startOf,
+  }) {
+    for (var above = 0; above < level; above++) {
+      _counts[above] ??= startOf(above);
+    }
+    final counted = switch (_counts[level]) {
+      final current? => current + 1,
+      null => startOf(level),
+    };
+    // LibreOffice starts no higher than 32767 and counts on from there.
+    final wanted = number?.clamp(0, 32767);
+    final restart =
+        numbered && wanted != null && wanted != counted.clamp(0, 32767)
+        ? wanted
+        : null;
+    _counts[level] = restart ?? counted;
+    _counts.fillRange(level + 1, _counts.length, null);
+    return restart;
+  }
+}
+
 /// Automatic styles of one part: content.xml or styles.xml.
 class _Styles {
-  _Styles(this.prefix);
+  _Styles(this.prefix, this.fonts);
 
   final String prefix;
+
+  /// The fonts the file declares.
+  final Set<String> fonts;
   final _xml = StringBuffer();
   final _paragraphs = <String, String>{};
   final _texts = <String, String>{};
   final _lists = <String, String>{};
+  final _wordLists = <(int, int?), String>{};
   final _columns = <String, String>{};
   final _cells = <String, String>{};
   final _graphics = <String, String>{};
@@ -1179,19 +1365,22 @@ class _Styles {
     '<style:graphic-properties$properties/>',
   );
 
-  /// Bullets, numbers or check boxes, ten levels deep; [followedBy] says
-  /// what follows them at each level, a tab where it says nothing.
-  String list(
-    String kind, [
-    List<String> followedBy = const [],
-  ]) => _lists['$kind|${followedBy.join(',')}'] ??= () {
+  /// The bullets, numbers or check boxes of a list made in the editor, ten
+  /// levels deep; check boxes take the font the .docx writer gives them.
+  String list(String kind) => _lists[kind] ??= () {
     final name = '${prefix}L${_lists.length + 1}';
     const bullets = ['•', '◦', '▪'];
     const numbers = ['1', 'a', 'i'];
+    final box = switch (kind) {
+      'checked' => '☑',
+      'unchecked' => '☐',
+      _ => null,
+    };
+    if (box != null) fonts.add(_checkBoxFont);
     _xml.write('<text:list-style style:name="$name">');
     for (var level = 1; level <= 10; level++) {
       final properties = _labelAlignment(
-        level <= followedBy.length ? followedBy[level - 1] : 'listtab',
+        'listtab',
         left: 36.0 * level,
         hanging: 18,
       );
@@ -1202,14 +1391,10 @@ class _Styles {
           '$properties</text:list-level-style-number>',
         );
       } else {
-        final bullet = switch (kind) {
-          'checked' => '☑',
-          'unchecked' => '☐',
-          _ => bullets[(level - 1) % 3],
-        };
         _xml.write(
           '<text:list-level-style-bullet text:level="$level" '
-          'text:bullet-char="$bullet">$properties'
+          'text:bullet-char="${box ?? bullets[(level - 1) % 3]}">$properties'
+          '${box == null ? '' : '<style:text-properties${_fontNames(_checkBoxFont)}/>'}'
           '</text:list-level-style-bullet>',
         );
       }
@@ -1217,16 +1402,105 @@ class _Styles {
     _xml.write('</text:list-style>');
     return name;
   }();
+
+  /// The levels of Word list [numId] as they number in Word; at [legal],
+  /// the numbers of the levels above show in decimals, as w:isLgl shows
+  /// them.
+  String wordList(_Document document, int numId, {int? legal}) =>
+      _wordLists[(numId, legal)] ??= _wordList(
+        document.wordLevels(numId),
+        legal,
+      );
+
+  /// Lists that number the same way share a style.
+  String _wordList(List<_WordLevel?> levels, int? legal) {
+    final key = [
+      for (final level in levels)
+        level == null
+            ? ''
+            : [
+                level.format,
+                level.text,
+                level.firstNumber,
+                level.followedBy,
+                level.left,
+                level.hanging,
+                level.font ?? '',
+              ].join('\u0000'),
+      '$legal',
+    ].join('\u0001');
+    return _lists[key] ??= () {
+      final name = '${prefix}L${_lists.length + 1}';
+      _xml.write('<text:list-style style:name="$name">');
+      for (var level = 1; level <= 10; level++) {
+        final word = level <= levels.length ? levels[level - 1] : null;
+        _xml.write(
+          _wordLevel(
+            legal != null && level - 1 < legal
+                ? word?._with(format: 'decimal')
+                : word,
+            level,
+          ),
+        );
+      }
+      _xml.write('</text:list-style>');
+      return name;
+    }();
+  }
+
+  /// One level of a Word list; a level the list lacks shows nothing.
+  String _wordLevel(_WordLevel? word, int level) {
+    final properties = _labelAlignment(
+      word?.followedBy ?? 'listtab',
+      left: word?.left ?? 36.0 * level,
+      hanging: word?.hanging ?? 18,
+    );
+    final font = OdtWriter._font(word?.font);
+    if (font != null) fonts.add(font);
+    final text = font == null
+        ? ''
+        : '<style:text-properties${_fontNames(font)}/>';
+    if (word != null && word.format == 'bullet') {
+      return '<text:list-level-style-bullet text:level="$level" '
+          'text:bullet-char="${_attribute(_bullet(word.text))}">'
+          '$properties$text</text:list-level-style-bullet>';
+    }
+    return '<text:list-level-style-number text:level="$level"'
+        '${word == null ? ' style:num-format=""' : OdtWriter._numbers(word, level)}>'
+        '$properties$text</text:list-level-style-number>';
+  }
+
+  /// The first character of a bullet's text; an empty bullet shows nothing,
+  /// as in Word.
+  static String _bullet(String text) {
+    for (final rune in text.runes) {
+      if (rune >= 0x20 && rune <= 0xD7FF ||
+          rune >= 0xE000 && rune <= 0xFFFD ||
+          rune >= 0x10000 && rune <= 0x10FFFF) {
+        return String.fromCharCode(rune);
+      }
+    }
+    return '\u00A0';
+  }
 }
 
+/// The font the .docx writer and the other readers give check boxes.
+const _checkBoxFont = 'Segoe UI Symbol';
+
 class _OpenList {
-  _OpenList(this.level, this.style);
+  _OpenList(this.level, this.style, {this.group}) : itemStyle = style;
 
   final int level;
 
-  /// The list style its items take.
+  /// The list style its items take, unless one overrides it.
   final String style;
+
+  /// The abstract Word list it shows; null for lists made in the editor.
+  final Object? group;
   var itemOpen = false;
+
+  /// The list style of the open item, which its sub-lists take.
+  String itemStyle;
 }
 
 /// Spaces become `text:s` where OpenDocument would collapse or drop them.
@@ -1338,13 +1612,13 @@ class _StoryWriter {
       switch (block) {
         case LineBlock(list: final String _):
           final number = place == _Place.body
-              ? document.outline?.count(block)
+              ? document.counts.count(block)
               : null;
-          if (number == null) {
-            _listLine(block, following: next);
-          } else {
+          if (number != null && (document.outline?.owns(block) ?? false)) {
             _closeLists();
             _line(block, headingNumber: number);
+          } else {
+            _listLine(block, following: next, number: number);
           }
         case LineBlock():
           _closeLists();
@@ -1449,9 +1723,35 @@ class _StoryWriter {
     }
   }
 
-  void _listLine(LineBlock line, {DocumentBlock? following}) {
-    final style = styles.list(line.list!, document.followedBy(line));
+  /// [number] is Word's number of a paragraph of a Word list in the body.
+  void _listLine(LineBlock line, {DocumentBlock? following, int? number}) {
+    final numId = document.wordList(line);
+    if (numId == null) {
+      _editorItem(line);
+    } else {
+      _wordItem(numId, line.indent, number);
+    }
+    // Like the editor and Word's List Paragraph style, a list adds space
+    // after its last item only; numbered headings keep their own.
+    final spaced = line.heading != null;
+    _line(
+      line,
+      inList: true,
+      collapseBefore: !spaced,
+      collapseAfter:
+          !spaced &&
+          following is LineBlock &&
+          following.list != null &&
+          !_numbered(following),
+    );
+  }
+
+  /// Opens the item of a list made in the editor, numbered or bulleted by
+  /// its kind; a list starts again after anything else, as in a .docx.
+  void _editorItem(LineBlock line) {
+    final style = styles.list(line.list!);
     final level = line.indent.clamp(0, 9);
+    if (_lists.isNotEmpty && _lists.first.group != null) _closeLists();
     while (_lists.isNotEmpty && _lists.last.level > level) {
       _closeList();
     }
@@ -1468,10 +1768,7 @@ class _StoryWriter {
         next <= level;
         next++
       ) {
-        if (_lists.isNotEmpty && !_lists.last.itemOpen) {
-          _out.write('<text:list-item>');
-          _lists.last.itemOpen = true;
-        }
+        _openEmptyItem();
         final inherited = _lists.isNotEmpty && _lists.last.style == style;
         _out.write(
           inherited ? '<text:list>' : '<text:list text:style-name="$style">',
@@ -1481,19 +1778,73 @@ class _StoryWriter {
     }
     _out.write('<text:list-item>');
     _lists.last.itemOpen = true;
-    // Like the editor and Word's List Paragraph style, a list adds space
-    // after its last item only; numbered headings keep their own.
-    final spaced = line.heading != null;
-    _line(
-      line,
-      inList: true,
-      collapseBefore: !spaced,
-      collapseAfter:
-          !spaced &&
-          following is LineBlock &&
-          following.list != null &&
-          !_numbered(following),
+  }
+
+  /// Opens the item of a Word list, which takes the list's own levels. The
+  /// lists of one abstract Word list continue one another, as Word counts
+  /// them, and an item starts again where Word's [number] differs.
+  void _wordItem(int numId, int level, int? number) {
+    final word = document.wordLevel(numId, level)!;
+    final style = styles.wordList(
+      document,
+      numId,
+      legal: document.decimalAbove(numId, level) ? level : null,
     );
+    if (_lists.isNotEmpty && _lists.first.group != word.group) _closeLists();
+    while (_lists.isNotEmpty && _lists.last.level > level) {
+      _closeList();
+    }
+    final chain = place == _Place.body ? document.chain(word.group) : null;
+    if (_lists.isNotEmpty && _lists.last.level == level) {
+      _closeItem(_lists.last);
+    } else {
+      for (
+        var next = _lists.isEmpty ? 0 : _lists.last.level + 1;
+        next <= level;
+        next++
+      ) {
+        _openEmptyItem();
+        if (_lists.isNotEmpty) {
+          _out.write('<text:list>');
+          _lists.add(_OpenList(next, _lists.last.itemStyle, group: word.group));
+          continue;
+        }
+        final id = chain == null ? null : 'list${++document.listCount}';
+        _out.write(
+          '<text:list${id == null ? '' : ' xml:id="$id"'}'
+          '${chain?.lastId == null ? '' : ' text:continue-list="${chain!.lastId}"'}'
+          ' text:style-name="$style">',
+        );
+        chain?.lastId = id;
+        _lists.add(_OpenList(next, style, group: word.group));
+      }
+    }
+    final list = _lists.last;
+    // Items keep their own list's levels where the list shows another
+    // list of the same abstract list.
+    final override = style == list.style ? null : style;
+    final start = chain?.count(
+      level,
+      number,
+      numbered: word.numbered,
+      startOf: (level) => document.wordLevel(numId, level)?.firstNumber ?? 1,
+    );
+    _out.write(
+      '<text:list-item${start == null ? '' : ' text:start-value="$start"'}'
+      '${override == null ? '' : ' text:style-override="$override"'}>',
+    );
+    list
+      ..itemOpen = true
+      ..itemStyle = override ?? list.style;
+  }
+
+  /// An item without a paragraph, for a list that starts deeper.
+  void _openEmptyItem() {
+    if (_lists.isEmpty || _lists.last.itemOpen) return;
+    _out.write('<text:list-item>');
+    _lists.last
+      ..itemOpen = true
+      ..itemStyle = _lists.last.style;
   }
 
   /// Whether the outline numbers [line] instead of a list.
