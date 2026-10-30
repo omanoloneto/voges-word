@@ -25,15 +25,22 @@ class MarkdownCodec implements DocumentCodec {
   static const maxBytes = 64 * 1024 * 1024;
 
   @override
-  LoadedDocument decode(Uint8List bytes) {
+  LoadedDocument decode(Uint8List bytes) => load(prepare(bytes));
+
+  /// Builds the .docx package of the file, through HTML.
+  static PreparedPackage prepare(Uint8List bytes) {
     if (bytes.length > maxBytes) {
       throw DocumentProblemException(DocumentProblem.tooLarge);
     }
     return guardParse(() {
       final (:html, :notices) = markdownHtml(decodeText(bytes));
-      return openHtml(html, docx).withNotices(notices);
+      return prepareHtml(html, notices: notices);
     });
   }
+
+  @override
+  LoadedDocument load(covariant PreparedPackage prepared) =>
+      guardParse(() => docx.load(prepared));
 
   @override
   Uint8List encode(

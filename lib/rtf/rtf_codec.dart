@@ -18,12 +18,24 @@ class RtfCodec implements DocumentCodec {
   final DocxCodec docx;
 
   @override
-  LoadedDocument decode(Uint8List bytes) {
+  LoadedDocument decode(Uint8List bytes) => load(prepare(bytes));
+
+  /// Builds the .docx package of the file.
+  static PreparedPackage prepare(Uint8List bytes) => _readSafely(() {
+    final document = RtfReader(bytes).read();
+    return PreparedPackage(
+      DocxBuilder(document.spec).build().parts,
+      notices: [...document.notices],
+    );
+  });
+
+  @override
+  LoadedDocument load(covariant PreparedPackage prepared) =>
+      _readSafely(() => docx.load(prepared));
+
+  static T _readSafely<T>(T Function() read) {
     try {
-      final document = RtfReader(bytes).read();
-      return docx
-          .read(DocxBuilder(document.spec).build())
-          .withNotices(document.notices);
+      return read();
     } on FormatException {
       rethrow;
     } catch (_) {

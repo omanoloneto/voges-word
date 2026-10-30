@@ -113,10 +113,39 @@ class LoadedDocument {
   );
 }
 
+/// What a reader makes of a file before the editor's document is built: plain
+/// data, so it can be made on another isolate.
+sealed class PreparedDocument {
+  const PreparedDocument();
+}
+
+/// The .docx package the editor's document is read from.
+final class PreparedPackage extends PreparedDocument {
+  const PreparedPackage(this.parts, {this.notices = const []});
+
+  final Map<String, Uint8List> parts;
+
+  /// What the format's reader adjusted, before the package's reader adds its
+  /// own.
+  final List<DocumentNotice> notices;
+}
+
+/// The text of a plain text file.
+final class PreparedText extends PreparedDocument {
+  const PreparedText(this.text);
+
+  final String text;
+}
+
 abstract interface class DocumentDecoder {
   /// Throws [DocumentProblemException] or [FormatException] for files it
-  /// can't read.
+  /// can't read. It is [load] of what the codec's static `prepare` makes of
+  /// [bytes]; `prepare` runs on any isolate.
   LoadedDocument decode(Uint8List bytes);
+
+  /// The editor's document from what `prepare` made of a file, on the isolate
+  /// whose tables it fills.
+  LoadedDocument load(PreparedDocument prepared);
 }
 
 abstract interface class DocumentCodec implements DocumentDecoder {

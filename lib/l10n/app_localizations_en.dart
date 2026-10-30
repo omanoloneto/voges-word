@@ -433,6 +433,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String openingDocument(String name) {
+    return 'Opening “$name”…';
+  }
+
+  @override
   String get editLink => 'Edit link';
 
   @override
@@ -542,7 +547,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'The file is protected with a password. Remove the password in the app that created it and try again.';
 
   @override
-  String get problemTooLarge => 'The file is too large to open.';
+  String get problemTooLarge => 'The file is too large or too complex to open.';
 
   @override
   String problemDamaged(String name) {

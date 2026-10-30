@@ -20,7 +20,16 @@ class DocxCodec implements DocumentCodec {
   final DocxFlavor flavor;
 
   @override
-  LoadedDocument decode(Uint8List bytes) => read(DocxPackage.decode(bytes));
+  LoadedDocument decode(Uint8List bytes) => load(prepare(bytes));
+
+  /// Unzips the package and checks that it is a Word document.
+  static PreparedPackage prepare(Uint8List bytes) =>
+      PreparedPackage(DocxPackage.decode(bytes).parts);
+
+  /// Reads a package prepared by this codec or built from another format.
+  @override
+  LoadedDocument load(covariant PreparedPackage prepared) =>
+      read(DocxPackage(prepared.parts)).withNotices(prepared.notices);
 
   /// Opens a package built in memory, like the ones made from other formats.
   LoadedDocument read(DocxPackage package) =>

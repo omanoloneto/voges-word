@@ -14,11 +14,22 @@ class DocCodec implements DocumentDecoder {
   final DocxCodec docx;
 
   @override
-  LoadedDocument decode(Uint8List bytes) {
+  LoadedDocument decode(Uint8List bytes) => load(prepare(bytes));
+
+  /// Builds the .docx package of the file.
+  static PreparedPackage prepare(Uint8List bytes) => _readSafely(() {
+    final reader = DocReader(DocFile.open(bytes));
+    final package = DocxBuilder(reader.read()).build();
+    return PreparedPackage(package.parts, notices: [...reader.notices]);
+  });
+
+  @override
+  LoadedDocument load(covariant PreparedPackage prepared) =>
+      _readSafely(() => docx.load(prepared));
+
+  static T _readSafely<T>(T Function() read) {
     try {
-      final reader = DocReader(DocFile.open(bytes));
-      final package = DocxBuilder(reader.read()).build();
-      return docx.read(package).withNotices(reader.notices);
+      return read();
     } on DocumentProblemException {
       rethrow;
     } on FormatException {

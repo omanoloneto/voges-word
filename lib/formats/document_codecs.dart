@@ -37,6 +37,20 @@ class DocumentCodecs {
     _ => encoder(format),
   };
 
+  /// What the decoder of [format] makes of [bytes] before it builds the
+  /// editor's document with [DocumentDecoder.load]. It touches nothing of the
+  /// UI, so it runs on any isolate.
+  static PreparedDocument prepare(DocumentFormat format, Uint8List bytes) =>
+      switch (format) {
+        DocumentFormat.docx || DocumentFormat.docm => DocxCodec.prepare(bytes),
+        DocumentFormat.doc => DocCodec.prepare(bytes),
+        DocumentFormat.odt => OdtCodec.prepare(bytes),
+        DocumentFormat.rtf => RtfCodec.prepare(bytes),
+        DocumentFormat.html => HtmlCodec.prepare(bytes),
+        DocumentFormat.markdown => MarkdownCodec.prepare(bytes),
+        DocumentFormat.plainText => PlainTextCodec.prepare(bytes),
+      };
+
   /// Only for [DocumentFormat.writable] formats.
   DocumentCodec encoder(DocumentFormat format) => switch (format) {
     DocumentFormat.docx => docx,

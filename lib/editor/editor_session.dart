@@ -20,6 +20,7 @@ import '../document/plain_text_codec.dart';
 import '../document/tables.dart';
 import '../files/document_files.dart';
 import '../files/recovery.dart';
+import '../formats/background_open.dart';
 import '../formats/document_codecs.dart';
 import '../l10n/app_language.dart';
 import '../l10n/l10n.dart';
@@ -156,24 +157,66 @@ class EditorSession extends ChangeNotifier {
         format: DocumentFormat.docx,
       );
 
+  /// How long [openInBackground] and [restoreInBackground] may take to
+  /// prepare a file before refusing it as too large or too complex.
+  @visibleForTesting
+  Duration openTimeLimit = const Duration(seconds: 60);
+
   /// Templates open as new documents; formats that aren't saved will be
   /// saved as .docx. A file named in one of them, like a .doc that is really
-  /// RTF, is never written either.
+  /// RTF, is never written either. The whole file is read on this isolate:
+  /// the app uses [openInBackground].
+  @visibleForTesting
   void open(OpenedFile file) {
     final detected = detectFormat(file.name, file.bytes);
     if (detected == null) {
       throw DocumentProblemException(DocumentProblem.unsupportedFormat);
     }
-    final format = detected.format;
-    final LoadedDocument loaded;
+    final decoder = codecs.decoder(detected.format);
+    _openAs(
+      file,
+      _damagedOnFormatError(() => decoder.decode(file.bytes)),
+      format: detected.format,
+      template: detected.template,
+    );
+  }
+
+  /// [open] with the format's work on another isolate, so the window stays
+  /// responsive; only reading the prepared package into the editor happens
+  /// here. A file that takes longer than [openTimeLimit] to prepare is
+  /// refused as [DocumentProblem.tooLarge].
+  Future<void> openInBackground(OpenedFile file) async {
+    final prepared = await prepareFileInBackground(
+      file.name,
+      file.bytes,
+      timeLimit: openTimeLimit,
+    );
+    final decoder = codecs.decoder(prepared.format);
+    _openAs(
+      file,
+      _damagedOnFormatError(() => decoder.load(prepared.document)),
+      format: prepared.format,
+      template: prepared.template,
+    );
+  }
+
+  static LoadedDocument _damagedOnFormatError(LoadedDocument Function() read) {
     try {
-      loaded = codecs.decoder(format).decode(file.bytes);
+      return read();
     } on DocumentProblemException {
       rethrow;
     } on FormatException {
       throw DocumentProblemException(DocumentProblem.damaged);
     }
-    if (detected.template) {
+  }
+
+  void _openAs(
+    OpenedFile file,
+    LoadedDocument loaded, {
+    required DocumentFormat format,
+    required bool template,
+  }) {
+    if (template) {
       _load(
         loaded,
         name: null,
@@ -210,9 +253,38 @@ class EditorSession extends ChangeNotifier {
     );
   }
 
-  /// Reopens the recovery copy as a document that is not saved yet.
-  void restore(RecoverySnapshot snapshot, {required bool keepPath}) {
-    final loaded = codecs.decoder(snapshot.content).decode(snapshot.bytes);
+  /// Reopens the recovery copy as a document that is not saved yet, reading
+  /// it on this isolate: the app uses [restoreInBackground].
+  @visibleForTesting
+  void restore(RecoverySnapshot snapshot, {required bool keepPath}) => _restore(
+    snapshot,
+    codecs.decoder(snapshot.content).decode(snapshot.bytes),
+    keepPath: keepPath,
+  );
+
+  /// [restore] with the format's work on another isolate, as in
+  /// [openInBackground].
+  Future<void> restoreInBackground(
+    RecoverySnapshot snapshot, {
+    required bool keepPath,
+  }) async {
+    final prepared = await prepareInBackground(
+      snapshot.content,
+      snapshot.bytes,
+      timeLimit: openTimeLimit,
+    );
+    _restore(
+      snapshot,
+      codecs.decoder(snapshot.content).load(prepared),
+      keepPath: keepPath,
+    );
+  }
+
+  void _restore(
+    RecoverySnapshot snapshot,
+    LoadedDocument loaded, {
+    required bool keepPath,
+  }) {
     _load(
       loaded,
       name: snapshot.name.isEmpty ? null : snapshot.name,

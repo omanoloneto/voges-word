@@ -904,6 +904,12 @@ abstract class AppLocalizations {
   /// **'Building the PDF: page {page} of {total}'**
   String buildingPdfPage(int page, int total);
 
+  /// No description provided for @openingDocument.
+  ///
+  /// In en, this message translates to:
+  /// **'Opening “{name}”…'**
+  String openingDocument(String name);
+
   /// No description provided for @editLink.
   ///
   /// In en, this message translates to:
@@ -1105,7 +1111,7 @@ abstract class AppLocalizations {
   /// No description provided for @problemTooLarge.
   ///
   /// In en, this message translates to:
-  /// **'The file is too large to open.'**
+  /// **'The file is too large or too complex to open.'**
   String get problemTooLarge;
 
   /// No description provided for @problemDamaged.

@@ -17,10 +17,16 @@ class PlainTextCodec implements DocumentCodec {
   final TableStore tables;
 
   @override
-  LoadedDocument decode(Uint8List bytes) {
-    final text = decodeText(
-      bytes,
-    ).replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  LoadedDocument decode(Uint8List bytes) => load(prepare(bytes));
+
+  /// The text of the file, with its line breaks as `\n`.
+  static PreparedText prepare(Uint8List bytes) => PreparedText(
+    decodeText(bytes).replaceAll('\r\n', '\n').replaceAll('\r', '\n'),
+  );
+
+  @override
+  LoadedDocument load(covariant PreparedText prepared) {
+    final text = prepared.text;
     final delta = Delta();
     if (text.isNotEmpty) delta.insert(text);
     if (!text.endsWith('\n')) delta.insert('\n');

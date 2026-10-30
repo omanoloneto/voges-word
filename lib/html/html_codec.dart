@@ -26,18 +26,25 @@ class HtmlCodec implements DocumentCodec {
   static const maxBytes = 64 * 1024 * 1024;
 
   @override
-  LoadedDocument decode(Uint8List bytes) {
+  LoadedDocument decode(Uint8List bytes) => load(prepare(bytes));
+
+  /// Builds the .docx package of the page.
+  static PreparedPackage prepare(Uint8List bytes) {
     if (bytes.length > maxBytes) {
       throw DocumentProblemException(DocumentProblem.tooLarge);
     }
     return guardParse(() {
       final (:text, :lossy) = decodeHtml(bytes);
-      final loaded = openHtml(text, docx);
-      return lossy
-          ? loaded.withNotices(const [DocumentNotice.contentNotImported])
-          : loaded;
+      return prepareHtml(
+        text,
+        notices: [if (lossy) DocumentNotice.contentNotImported],
+      );
     });
   }
+
+  @override
+  LoadedDocument load(covariant PreparedPackage prepared) =>
+      guardParse(() => docx.load(prepared));
 
   @override
   Uint8List encode(
@@ -58,13 +65,17 @@ class HtmlCodec implements DocumentCodec {
   );
 }
 
-/// Opens [html] through the .docx reader, so saving as .docx keeps styles,
-/// lists and page setup.
-LoadedDocument openHtml(String html, DocxCodec docx) {
+/// Builds the .docx package of [html], so saving as .docx keeps styles, lists
+/// and page setup; [notices] come after the page's own.
+PreparedPackage prepareHtml(
+  String html, {
+  Iterable<DocumentNotice> notices = const [],
+}) {
   final content = readHtml(html);
-  return docx
-      .read(DocxBuilder(content.spec).build())
-      .withNotices(content.notices);
+  return PreparedPackage(
+    DocxBuilder(content.spec).build().parts,
+    notices: [...content.notices, ...notices],
+  );
 }
 
 /// Runs [parse], turning any failure on hostile input into a

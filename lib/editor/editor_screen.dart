@@ -86,6 +86,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   var _fullScreen = false;
   var _pageInfoScheduled = false;
   String? _title;
+  Future<void> _opening = Future.value();
 
   EditorSession get session => widget.session;
 
@@ -169,16 +170,21 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       return;
     }
     try {
-      // On macOS the sandbox only allows writing to the file the user picked.
-      session.restore(
-        snapshot,
-        keepPath: defaultTargetPlatform != TargetPlatform.macOS,
+      await _openInTurn(
+        name,
+        () => session.restoreInBackground(
+          snapshot,
+          // On macOS the sandbox only allows writing to the file the user
+          // picked.
+          keepPath: defaultTargetPlatform != TargetPlatform.macOS,
+        ),
       );
     } catch (_) {
       _showError((l10n) => l10n.recoverFailed);
       await store.clear();
       return;
     }
+    if (!mounted) return;
     _recoveryRevision = session.revision;
     _recoverySaved = true;
     _afterLoad();
@@ -352,9 +358,9 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     if (await _confirmDiscard()) _load(file);
   }
 
-  void _load(OpenedFile file) {
+  Future<void> _load(OpenedFile file) async {
     try {
-      session.open(file);
+      await _openInTurn(file.name, () => session.openInBackground(file));
     } on DocumentProblemException catch (error) {
       _showError((l10n) => _problemMessage(l10n, error.problem, file.name));
       return;
@@ -362,6 +368,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       _showError((l10n) => l10n.problemDamaged(file.name));
       return;
     }
+    if (!mounted) return;
     final path = file.path;
     if (path != null) widget.recents.remember(path);
     _afterLoad();
@@ -385,6 +392,49 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
           duration: const Duration(seconds: 6),
         ),
       );
+    }
+  }
+
+  /// Runs [open] once the opens asked before it are done, so the document
+  /// shown is the one asked for last.
+  Future<void> _openInTurn(String name, Future<void> Function() open) {
+    final turn = _opening.then((_) => _withProgress(name, open));
+    _opening = turn.then((_) {}, onError: (Object _) {});
+    return turn;
+  }
+
+  /// The format's work runs on another isolate, so the window stays
+  /// responsive under the progress meanwhile.
+  Future<void> _withProgress(String name, Future<void> Function() open) async {
+    if (!mounted) return open();
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final progress = _ProgressRoute(
+      context: context,
+      themes: InheritedTheme.capture(from: context, to: navigator.context),
+      barrierColor: DialogTheme.of(context).barrierColor ?? Colors.black54,
+      builder: (context) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Row(
+            children: [
+              const SizedBox.square(
+                dimension: 24,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
+              const SizedBox(width: 18),
+              Expanded(child: Text(context.l10n.openingDocument(name))),
+            ],
+          ),
+        ),
+      ),
+    );
+    navigator.push(progress);
+    try {
+      await open();
+    } finally {
+      if (navigator.mounted && progress.isActive) {
+        navigator.removeRoute(progress);
+      }
     }
   }
 
@@ -831,4 +881,27 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       child: child,
     );
   }
+}
+
+/// The progress of an open. It covers the window at once, so nothing goes
+/// into the document being replaced, but shows only after a moment, so
+/// quick opens don't flash.
+class _ProgressRoute extends DialogRoute<void> {
+  _ProgressRoute({
+    required super.context,
+    required super.builder,
+    super.themes,
+    super.barrierColor,
+  }) : super(
+         barrierDismissible: false,
+         animationStyle: const AnimationStyle(
+           duration: Duration(milliseconds: 450),
+           curve: _appear,
+         ),
+       );
+
+  static const _appear = Interval(2 / 3, 1, curve: Curves.easeOut);
+
+  @override
+  Curve get barrierCurve => _appear;
 }

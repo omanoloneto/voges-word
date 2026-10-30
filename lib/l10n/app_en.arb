@@ -231,6 +231,14 @@
       }
     }
   },
+  "openingDocument": "Opening “{name}”…",
+  "@openingDocument": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "editLink": "Edit link",
   "linkText": "Text to display",
   "linkAddress": "Address (website or email)",
@@ -278,7 +286,7 @@
   "problemUnsupportedFormat": "Voges Word opens .docx, .doc, .odt, .rtf, .html, .md and .txt files.",
   "problemNotWordDocument": "The file isn’t a valid document.",
   "problemPasswordProtected": "The file is protected with a password. Remove the password in the app that created it and try again.",
-  "problemTooLarge": "The file is too large to open.",
+  "problemTooLarge": "The file is too large or too complex to open.",
   "problemDamaged": "Couldn’t open “{name}”. The file may be damaged.",
   "@problemDamaged": {
     "placeholders": {
