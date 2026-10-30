@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:voges_word/doc/doc_codec.dart';
 import 'package:voges_word/doc/doc_file.dart';
 import 'package:voges_word/doc/doc_reader.dart';
@@ -12,8 +13,11 @@ import 'package:voges_word/document/plain_text_codec.dart';
 import 'package:voges_word/document/embeds.dart';
 import 'package:voges_word/document/headers_footers.dart';
 import 'package:voges_word/document/tables.dart';
+import 'package:voges_word/docx/docx_builder.dart'
+    show ImageSpec, ParagraphSpec;
 import 'package:voges_word/docx/docx_codec.dart';
 import 'package:voges_word/docx/docx_package.dart';
+import 'package:voges_word/docx/image_formats.dart';
 import 'package:voges_word/editor/editor_session.dart';
 import 'package:voges_word/files/document_files.dart';
 
@@ -139,6 +143,56 @@ void main() {
     expect(loaded.notices, isEmpty);
   });
 
+  test('a paragraph clears the tab stops it drops from its style', () {
+    List<int> tabs(List<int> deleted, List<(int, int)> added) =>
+        sprm(Sprm.pChgTabsPapx, [
+          deleted.length,
+          for (final position in deleted) ...u16(position),
+          added.length,
+          for (final (position, _) in added) ...u16(position),
+          for (final (_, align) in added) align,
+        ]);
+    final doc = DocWriter()
+      ..styles[1] = StyleFixture.paragraph(
+        'footer',
+        base: 0,
+        paragraph: tabs([], [(4320, 1), (8640, 2)]),
+      )
+      ..styles[2] = StyleFixture.paragraph(
+        'short footer',
+        base: 1,
+        paragraph: tabs([8640], []),
+      )
+      ..line('\tPage', style: 1, sprms: tabs([4320, 8640], [(9356, 2)]))
+      ..line('kept', style: 1);
+    final package = _decode(doc.build()).source! as DocxPackage;
+    final document = package.text('word/document.xml')!;
+    final styles = package.text('word/styles.xml')!;
+    final shortFooter = styles.substring(
+      styles.indexOf('w:styleId="ShortFooter"'),
+    );
+
+    expect(
+      '<w:tabs>'
+          .allMatches(document)
+          .map(
+            (match) => document.substring(
+              match.start,
+              document.indexOf('</w:tabs>', match.start),
+            ),
+          ),
+      [
+        '<w:tabs><w:tab w:val="right" w:pos="9356"/>'
+            '<w:tab w:val="clear" w:pos="4320"/>'
+            '<w:tab w:val="clear" w:pos="8640"/>',
+      ],
+    );
+    expect(
+      shortFooter.substring(0, shortFooter.indexOf('</w:style>')),
+      contains('<w:tab w:val="clear" w:pos="8640"/>'),
+    );
+  });
+
   test('the document keeps its language and source defaults', () {
     final doc = DocWriter()
       ..styles[0] = StyleFixture.paragraph(
@@ -197,6 +251,28 @@ void main() {
     expect(numbering, contains('<w:start w:val="5"/>'));
     expect(numbering, contains('w:val="%1.%2)"'));
     expect(numbering, contains('w:val="lowerLetter"'));
+  });
+
+  test('a paragraph can leave the list its style numbers', () {
+    final doc = DocWriter();
+    final list = doc.addList([
+      (format: 0, text: '%1.', start: 1, left: 720, hanging: 360, font: null),
+    ]);
+    doc
+      ..styles[1] = StyleFixture.paragraph(
+        'heading 1',
+        builtIn: 1,
+        base: 0,
+        paragraph: DocWriter.listParagraph(list),
+      )
+      ..line('Numbered', style: 1)
+      ..line('1.1\tTyped', style: 1, sprms: sprm(Sprm.pIlfo, u16(0)));
+    final loaded = _decode(doc.build());
+    final document = (loaded.source! as DocxPackage).text('word/document.xml')!;
+
+    expect(_line(loaded.delta, 'Numbered')?['list'], 'ordered');
+    expect(_line(loaded.delta, 'Typed')?['list'], isNull);
+    expect(document, contains('<w:numId w:val="0"/>'));
   });
 
   test('links, bookmarks and fields', () {
@@ -261,6 +337,127 @@ void main() {
         ),
       ),
       ['NUMPAGES'],
+    );
+  });
+
+  test('cross-references name their bookmarks as the package has them', () {
+    final doc = DocWriter()
+      ..bookmarks.add(('__RefHeading__12_345', 0, 5))
+      ..bookmarks.add(('_Ref123', 0, 5))
+      ..line('Title')
+      ..text('See page ')
+      ..text('\x13', special)
+      ..text(r' PAGEREF __RefHeading__12_345 \h ')
+      ..text('\x14', special)
+      ..text('1')
+      ..text('\x15', special)
+      ..text(' and ')
+      ..text('\x13', special)
+      ..text(r' REF _Ref123 \h ')
+      ..text('\x14', special)
+      ..text('Title')
+      ..text('\x15', special)
+      ..paragraph();
+    final document = (_decode(doc.build()).source! as DocxPackage).text(
+      'word/document.xml',
+    )!;
+    final names = {
+      for (final match in RegExp(
+        r'<w:bookmarkStart [^>]*w:name="([^"]+)"',
+      ).allMatches(document))
+        match[1],
+    };
+    final targets = [
+      for (final match in RegExp(
+        r'<w:instrText[^>]*> (?:PAGEREF|REF) (\S+)',
+      ).allMatches(document))
+        match[1],
+    ];
+
+    expect(targets, hasLength(2));
+    expect(names, containsAll(targets));
+  });
+
+  test('fields saved without a result show what Word shows for them', () {
+    final doc = DocWriter()..fonts.add('Wingdings');
+    final checked = doc.addFormField(type: 1, state: 1);
+    final unchecked = doc.addFormField(type: 1, state: 25);
+    final choice = doc.addFormField(
+      type: 2,
+      state: 25,
+      defaultState: 1,
+      entries: ['Red', 'Green'],
+    );
+    void field(String instruction, [int? data]) {
+      doc
+        ..text('\x13', special)
+        ..text(' $instruction ');
+      if (data != null) {
+        doc.text('\x01', [
+          ...special,
+          ...sprm(Sprm.cFData, [1]),
+          ...sprm(Sprm.cPicLocation, u32(data)),
+        ]);
+      }
+      doc.text('\x15', special);
+    }
+
+    doc.text('Name: ');
+    field('MACROBUTTON NoMacro [Click here and type name]');
+    doc
+      ..paragraph()
+      ..text('Agree ');
+    field('FORMCHECKBOX', checked);
+    doc.text(' Refuse ');
+    field('FORMCHECKBOX', unchecked);
+    doc
+      ..paragraph()
+      ..text('Color: ');
+    field('FORMDROPDOWN', choice);
+    doc
+      ..paragraph()
+      ..text('Mark ');
+    field(r'SYMBOL 252 \f "Wingdings" \s 10');
+    doc.text(' and ');
+    field('SYMBOL 169');
+    doc
+      ..paragraph()
+      ..text('Go ');
+    field('GOTOBUTTON Summary to the summary');
+    doc.paragraph();
+    field(r'XE "Index entry"');
+    doc.line('end');
+    final loaded = _decode(doc.build());
+
+    expect(
+      _text(loaded.delta),
+      'Name: [Click here and type name]\nAgree ☒ Refuse ☐\nColor: Green\n'
+      'Mark ✔ and ©\nGo to the summary\nend\n',
+    );
+    expect(_op(loaded.delta, '✔').attributes?['font'], isNull);
+    expect(loaded.notices, isEmpty);
+  });
+
+  test('fields without a result that can\'t be shown leave a notice', () {
+    final doc = DocWriter()
+      ..text('\x13', special)
+      ..text(r' EQ \* jc2 \* hps10 \o\ad(\s\up 9(かん),漢) ')
+      ..text('\x15', special)
+      ..text('字')
+      ..paragraph();
+    final ruby = _decode(doc.build());
+    expect(_text(ruby.delta), '漢字\n');
+    expect(ruby.notices, contains(DocumentNotice.contentNotImported));
+
+    final numbered = DocWriter()
+      ..text('\x13', special)
+      ..text(' AUTONUM ')
+      ..text('\x15', special)
+      ..text(' Clause')
+      ..paragraph();
+    expect(
+      _decode(numbered.build()).notices,
+      contains(DocumentNotice.contentNotImported),
     );
   });
 
@@ -358,7 +555,7 @@ void main() {
     doc.mainLength = doc.position;
     // PlcfHdd bounds: six empty note separators, then each section's even
     // header, odd header, even footer, odd footer, first page header and
-    // first page footer.
+    // first page footer. Word ends each story with an extra paragraph mark.
     final stories = [for (var index = 0; index < 7; index++) 0];
     void story(String? text) {
       if (text != null) {
@@ -369,6 +566,7 @@ void main() {
           ..text('1')
           ..text('\x15', special)
           ..text(' $text')
+          ..paragraph()
           ..paragraph();
       }
       stories.add(doc.position - doc.mainLength);
@@ -423,6 +621,70 @@ void main() {
       fieldNameOf(OpaqueContent.decode(field[EmbedTypes.opaqueInline]).xml),
       'PAGE',
     );
+    final package = loaded.source! as DocxPackage;
+    for (final part in package.parts.keys.where(
+      (name) =>
+          name.startsWith('word/header') || name.startsWith('word/footer'),
+    )) {
+      expect('<w:p>'.allMatches(package.text(part)!), hasLength(1));
+    }
+    // The first section's own footer can't be kept.
+    expect(loaded.notices, contains(DocumentNotice.contentNotImported));
+  });
+
+  test('earlier sections with the same headers leave no notice', () {
+    final doc = DocWriter()..line('first');
+    final firstSection = doc.position;
+    doc.line('second');
+    doc.mainLength = doc.position;
+    final stories = [for (var index = 0; index < 7; index++) 0];
+    void story(String? text, [String page = '1']) {
+      if (text != null) {
+        doc
+          ..text(text)
+          ..text('\x13', special)
+          ..text(' PAGE ')
+          ..text('\x14', special)
+          ..text(page)
+          ..text('\x15', special)
+          ..paragraph()
+          ..paragraph();
+      }
+      stories.add(doc.position - doc.mainLength);
+    }
+
+    // The first section's first page header shows only with a title page.
+    for (final (text, page) in [
+      (null, '1'),
+      ('Page ', '1'),
+      (null, '1'),
+      (null, '1'),
+      ('Cover', '1'),
+      (null, '1'),
+      (null, '1'),
+      ('Page ', '2'),
+      (null, '1'),
+      (null, '1'),
+      (null, '1'),
+      (null, '1'),
+    ]) {
+      story(text, page);
+    }
+    doc
+      ..headerLength = doc.position - doc.mainLength
+      ..headerStories = stories
+      ..sections.add((firstSection, sprm(Sprm.sBkc, [2])))
+      ..sections.add((doc.mainLength, sprm(Sprm.sBkc, [2])));
+    final loaded = _decode(doc.build());
+
+    expect(
+      loaded.headersFooters.headers[PageVariant.normal]!.delta
+          .toList()
+          .first
+          .data,
+      'Page ',
+    );
+    expect(loaded.notices, isEmpty);
   });
 
   test('tables keep cells, spans, merges, fills, header rows and nesting', () {
@@ -496,6 +758,35 @@ void main() {
     expect(_cellText(inner.rows.single.cells.single), 'inner');
   });
 
+  test('centered and right-aligned tables are placed between the margins', () {
+    List<int> row(int justification, List<int> edges) => [
+      ...inTable(),
+      ...sprm(Sprm.pFTtp, [1]),
+      ...rowDefinition(edges),
+      ...sprm(Sprm.tJc90, u16(justification)),
+    ];
+    final doc = DocWriter()
+      ..text('centered')
+      ..paragraph(sprms: inTable(), mark: '\x07')
+      ..paragraph(sprms: row(1, [-2941, 4951]), mark: '\x07')
+      ..line('between')
+      ..text('right')
+      ..paragraph(sprms: inTable(), mark: '\x07')
+      ..paragraph(sprms: row(2, [0, 2000]), mark: '\x07')
+      ..line('after');
+    final document = (_decode(doc.build()).source! as DocxPackage).text(
+      'word/document.xml',
+    )!;
+
+    // Word 97's default page has 8640 twips between its margins.
+    expect(
+      RegExp(
+        r'<w:tblInd w:w="(-?\d+)"',
+      ).allMatches(document).map((match) => match[1]),
+      ['374', '6640'],
+    );
+  });
+
   test('inline and floating pictures, and the ones left out', () {
     final doc = DocWriter();
     final inline = doc.addPicture(png, width: 2880, height: 1440);
@@ -540,6 +831,57 @@ void main() {
     expect(images.last.attributes?['width'], '72');
     expect(images.last.attributes?['height'], '144');
     expect(loaded.notices, contains(DocumentNotice.contentNotImported));
+  });
+
+  test('cropped pictures show their part and are never stretched', () {
+    // 100 by 50 pixels are 1500 by 750 twips; a quarter of the width is cut
+    // off each side, so the frame is half as wide.
+    const crop = {0x0102: 0x4000, 0x0103: 0x4000};
+    final metafile = [
+      ...u32(18),
+      ...u32(0),
+      ...u32(0),
+      ...u32(1000),
+      ...u32(500),
+      ...u32(12700),
+      ...u32(6350),
+      ...u32(18),
+      0xFE,
+      0xFE,
+      ...List.filled(18, 3),
+    ];
+    final doc = DocWriter();
+    for (final offset in [
+      doc.addPicture(
+        img.encodePng(img.Image(width: 100, height: 50)),
+        width: 1500,
+        height: 750,
+        scaleX: 500,
+        properties: crop,
+      ),
+      // Metafiles can't be cropped: they show whole at the same scale.
+      doc.addPicture(
+        metafile,
+        blipType: 0xF01B,
+        instance: 0x216,
+        width: 1500,
+        height: 750,
+        scaleX: 500,
+        properties: crop,
+      ),
+    ]) {
+      doc.text('\x01', [...special, ...sprm(Sprm.cPicLocation, u32(offset))]);
+    }
+    doc.paragraph();
+    final spec = DocReader(DocFile.open(doc.build())).read();
+    final [cropped, whole] = (spec.body.first as ParagraphSpec).inlines
+        .whereType<ImageSpec>()
+        .toList();
+
+    expect(imagePixelSize(cropped.bytes), (width: 50, height: 50));
+    expect((cropped.width, cropped.height), (37.5, 37.5));
+    expect(whole.mime, 'image/x-wmf');
+    expect((whole.width, whole.height), (75.0, 37.5));
   });
 
   test('tracked changes are accepted', () {
@@ -650,6 +992,7 @@ void main() {
     doc.mainLength = doc.position;
     doc
       ..text('header')
+      ..paragraph()
       ..paragraph();
     doc
       ..headerLength = doc.position - doc.mainLength
@@ -746,6 +1089,34 @@ void main() {
       isNull,
     );
   });
+
+  test(
+    'Word 6 and 95 files with other identifiers are too old, not damaged',
+    () {
+      DocumentProblem? problem(int ident, int version) {
+        final doc = DocWriter()
+          ..version = version
+          ..line('Dear');
+        try {
+          _decode(
+            doc.build(
+              mutate: (name, stream) {
+                if (name == 'WordDocument') stream.setRange(0, 2, u16(ident));
+              },
+            ),
+          );
+          return null;
+        } on DocumentProblemException catch (error) {
+          return error.problem;
+        }
+      }
+
+      expect(problem(0xA699, 0x68), DocumentProblem.legacyDoc);
+      expect(problem(0xA5DC, 0x65), DocumentProblem.legacyDoc);
+      expect(problem(0x1234, 0xC1), DocumentProblem.damaged);
+      expect(problem(0x1234, 0x00), DocumentProblem.damaged);
+    },
+  );
 
   test('the editor opens .doc to save as .docx, and .dot as a new one', () {
     final tables = TableStore();

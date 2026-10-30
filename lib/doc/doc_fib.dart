@@ -43,15 +43,14 @@ class Fib {
     final view = ByteView(wordDocument);
     final ident = view.u16(0);
     final version = view.u16(2);
-    if (ident != 0xA5EC && ident != 0xA5DC) {
-      throw const FormatException('Not a Word FIB');
-    }
     // Word's empty "new document" and the BiDi build of Word 97 save 0xC0
-    // and 0xC2 for 0xC1 (MS-DOC 2.5.2); Word 6 and 95 are below, and some of
-    // their templates use the other identifier.
-    if (version < 0xC0 || ident == 0xA5DC) {
+    // and 0xC2 for 0xC1 (MS-DOC 2.5.2). Word 6 and 95 save from 0x65, and
+    // some of their templates and Asian versions use other identifiers.
+    final legacy = version < 0xC0 && (ident == 0xA5EC || version >= 0x65);
+    if (legacy || ident == 0xA5DC) {
       throw DocumentProblemException(DocumentProblem.legacyDoc);
     }
+    if (ident != 0xA5EC) throw const FormatException('Not a Word FIB');
     final flags = view.u16(10);
     if (flags & 0x0100 != 0 || flags & 0x8000 != 0) {
       throw DocumentProblemException(DocumentProblem.passwordProtected);

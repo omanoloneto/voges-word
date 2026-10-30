@@ -4,15 +4,18 @@ import 'dart:typed_data';
 
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:voges_word/doc/doc_codec.dart';
 import 'package:voges_word/doc/doc_context.dart';
 import 'package:voges_word/doc/doc_file.dart';
+import 'package:voges_word/doc/doc_pictures.dart';
 import 'package:voges_word/doc/doc_sprms.dart';
 import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/embeds.dart';
 import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/docx/docx_builder.dart';
 import 'package:voges_word/docx/docx_codec.dart';
+import 'package:voges_word/docx/image_formats.dart';
 
 import 'doc_fixtures.dart';
 
@@ -63,7 +66,9 @@ DocWriter _rich() {
     ..footnotes.add((noteReference, 0, doc.position - doc.mainLength));
   doc.footnoteLength = doc.position - doc.mainLength;
   final headerStart = doc.position;
-  doc.line('header');
+  doc
+    ..line('header')
+    ..paragraph();
   doc
     ..headerLength = doc.position - headerStart
     ..headerStories = [
@@ -257,6 +262,21 @@ void main() {
       expect(_problem(bytes), DocumentProblem.tooLarge);
     });
 
+    test('pieces that read the same bytes over and over are damaged', () {
+      final repeated = DocWriter()
+        ..compressed = true
+        ..pieceCopies = 20
+        ..line('x' * 2000);
+      expect(_problem(repeated.build()), DocumentProblem.damaged);
+      // Pieces may share a little, as long as they hold no more than the
+      // stream does.
+      final shared = DocWriter()
+        ..compressed = true
+        ..pieceCopies = 2
+        ..line('x' * 20);
+      expect(_problem(shared.build()), isNull);
+    });
+
     test('fields nested past any limit', () {
       final doc = DocWriter()..text('\x13' * 5000, special);
       doc
@@ -429,6 +449,59 @@ void main() {
         isEmpty,
       );
       expect(loaded.notices, contains(DocumentNotice.contentNotImported));
+    });
+
+    test('compressed pictures inflate no more than the document allows', () {
+      // Each says it holds 4 MB and inflates past that, so each attempt
+      // fails at its limit; a thousand of them would inflate 4 GB.
+      const declared = 4 * 1024 * 1024;
+      final zlib = ZLibCodec(level: 9).encode(Uint8List(declared + 1));
+      final metafile = [
+        ...u32(declared),
+        ...u32(0),
+        ...u32(0),
+        ...u32(100),
+        ...u32(100),
+        ...u32(12700),
+        ...u32(12700),
+        ...u32(zlib.length),
+        0,
+        0xFE,
+        ...zlib,
+      ];
+      final doc = DocWriter();
+      for (var index = 0; index < 1000; index++) {
+        final offset = doc.addPicture(
+          metafile,
+          blipType: 0xF01B,
+          instance: 0x216,
+        );
+        doc.text('\x01', [...special, ...sprm(Sprm.cPicLocation, u32(offset))]);
+      }
+      doc.paragraph();
+      final bytes = doc.build();
+      final watch = Stopwatch()..start();
+      final loaded = DocCodec(DocxCodec(TableStore())).decode(bytes);
+      expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+      expect(loaded.notices, contains(DocumentNotice.contentNotImported));
+    });
+
+    test('cropping stops past its budget and shows pictures whole', () {
+      final picture = (
+        bytes: img.encodePng(img.Image(width: 4, height: 2)),
+        mime: 'image/png',
+      );
+      const crop = (left: 0.5, top: 0.0, right: 0.0, bottom: 0.0);
+      final budget = PictureBudget()..cropped = 10;
+      DocPicture cut() =>
+          croppedPicture(picture, crop, width: 30, height: 30, budget: budget);
+      final first = cut();
+      final second = cut();
+
+      expect(imagePixelSize(first.bytes), (width: 2, height: 2));
+      expect((first.width, first.height), (30.0, 30.0));
+      expect(imagePixelSize(second.bytes), (width: 4, height: 2));
+      expect((second.width, second.height), (60.0, 30.0));
     });
 
     test('documents with more elements than any real one are too large', () {

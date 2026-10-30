@@ -335,6 +335,9 @@ class RowProps {
   int height = 0;
   int gapHalf = 0;
 
+  /// 0 left, 1 centered, 2 right.
+  int justification = 0;
+
   /// Whether the row says anything about borders, and whether any shows.
   bool bordersKnown = false;
   bool bordered = false;
@@ -358,6 +361,8 @@ class RowProps {
         height = data.i16(at);
       case Sprm.tDxaGapHalf:
         gapHalf = data.i16(at);
+      case Sprm.tJc90 || Sprm.tJc:
+        justification = data.u16(at);
       case Sprm.tDxaLeft when boundaries.isNotEmpty:
         final shift = data.i16(at) - (boundaries.first + gapHalf);
         boundaries = [for (final value in boundaries) value + shift];

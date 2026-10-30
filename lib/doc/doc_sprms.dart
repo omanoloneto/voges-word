@@ -64,6 +64,8 @@ abstract final class Sprm {
   static const pFContextualSpacing = 0x246D;
 
   // Table
+  static const tJc90 = 0x5400;
+  static const tJc = 0x548A;
   static const tDxaLeft = 0x9601;
   static const tDxaGapHalf = 0x9602;
   static const tTableHeader = 0x3404;

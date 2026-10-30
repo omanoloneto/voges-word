@@ -77,12 +77,12 @@ class DocReader {
     return false;
   }
 
-  /// The last section's stories; an empty one is the previous section's.
+  /// The document has one set of headers and footers: the last section's,
+  /// where an absent story is the previous section's. Earlier sections that
+  /// show other ones leave a notice.
   void _headersFooters() {
-    final bounds = file.headerStories;
-    final start = file.fib.headersStart;
-    final length = file.fib.lengths.headers;
-    final sectionCount = math.max(1, file.sections.length);
+    final sections = file.sections;
+    final sectionCount = math.max(1, sections.length);
     // Each section has six stories after the six note separators: even and
     // odd headers, even and odd footers, first page header and footer.
     const places = [
@@ -93,21 +93,81 @@ class DocReader {
       (true, PageVariant.first),
       (false, PageVariant.first),
     ];
-    for (final (kind, (header, variant)) in places.indexed) {
-      for (var section = sectionCount - 1; section >= 0; section--) {
-        final story = 6 + section * 6 + kind;
-        if (story + 1 >= bounds.length) continue;
-        final from = bounds[story];
-        final to = bounds[story + 1];
-        if (from < 0 || to <= from || to > length) continue;
-        final blocks = StoryReader(
-          context,
-          header: true,
-        ).read(start + from, start + to);
-        (header ? spec.headers : spec.footers)[variant] = blocks;
+    final kept = List<int?>.filled(places.length, null);
+    final shownBefore = <(int, int)>{};
+    for (var section = 0; section < sectionCount; section++) {
+      for (var place = 0; place < places.length; place++) {
+        final story = 6 + section * 6 + place;
+        if (_headerStory(story) != null) kept[place] = story;
+      }
+      if (section == sectionCount - 1) break;
+      final titlePage = sections[section].props.titlePage;
+      for (final (place, (_, variant)) in places.indexed) {
+        final shown = switch (variant) {
+          PageVariant.normal => true,
+          PageVariant.first => titlePage,
+          PageVariant.even => file.settings.facingPages,
+        };
+        if (kept[place] case final story? when shown) {
+          shownBefore.add((place, story));
+        }
+      }
+    }
+    for (final (place, (header, variant)) in places.indexed) {
+      final range = kept[place] == null ? null : _headerStory(kept[place]!);
+      if (range == null) continue;
+      (header ? spec.headers : spec.footers)[variant] = StoryReader(
+        context,
+        header: true,
+      ).read(range.start, range.end);
+    }
+    final texts = <int, String>{};
+    String textOf(int story) =>
+        texts[story] ??= _storyText(_headerStory(story)!);
+    for (final (place, story) in shownBefore) {
+      final last = kept[place]!;
+      if (story != last && textOf(story) != textOf(last)) {
+        notices.add(DocumentNotice.contentNotImported);
         break;
       }
     }
+  }
+
+  /// Header story [index] without the extra paragraph mark Word ends each
+  /// one with; null when the story is absent, which one of less than two
+  /// characters is too.
+  ({int start, int end})? _headerStory(int index) {
+    final bounds = file.headerStories;
+    if (index + 1 >= bounds.length) return null;
+    final from = bounds[index];
+    final to = bounds[index + 1];
+    if (from < 0 || to - from < 2 || to > file.fib.lengths.headers) {
+      return null;
+    }
+    final start = file.fib.headersStart;
+    return (start: start + from, end: start + to - 1);
+  }
+
+  /// The characters of a story without field results, which differ from
+  /// page to page.
+  String _storyText(({int start, int end}) range) {
+    final text = file.pieces.text;
+    final out = StringBuffer();
+    var depth = 0;
+    var resultDepth = -1;
+    for (var at = range.start; at < math.min(range.end, text.length); at++) {
+      final unit = text[at];
+      if (unit == 0x13) {
+        depth++;
+      } else if (unit == 0x14 && depth > 0 && resultDepth < 0) {
+        resultDepth = depth;
+      } else if (unit == 0x15 && depth > 0) {
+        if (resultDepth == depth) resultDepth = -1;
+        depth--;
+      }
+      if (resultDepth < 0) out.writeCharCode(unit);
+    }
+    return out.toString();
   }
 
   List<BlockSpec> _note(DocNote note) {

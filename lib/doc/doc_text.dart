@@ -63,6 +63,9 @@ class PieceTable {
     final count = (plc.length - 4) ~/ 12;
     final pieces = <Piece>[];
     var previous = 0;
+    // Pieces that share their bytes would repeat the same text many times;
+    // without sharing, they can't hold more than the stream does.
+    var stored = 0;
     for (var index = 0; index < count; index++) {
       final start = plc.i32(index * 4);
       final end = plc.i32(index * 4 + 4);
@@ -86,6 +89,10 @@ class PieceTable {
       );
       if (!wordDocument.has(offset, (end - start) * piece.width)) {
         throw const FormatException('Piece outside the stream');
+      }
+      stored += (end - start) * piece.width;
+      if (stored > wordDocument.length) {
+        throw const FormatException('Pieces overlap');
       }
       if (end > start) pieces.add(piece);
     }

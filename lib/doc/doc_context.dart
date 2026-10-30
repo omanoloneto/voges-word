@@ -1,11 +1,11 @@
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/painting.dart' show EdgeInsets;
 
 import '../document/document_codec.dart';
 import '../docx/docx_builder.dart';
 import 'doc_file.dart';
+import 'doc_form_fields.dart';
 import 'doc_lists.dart';
 import 'doc_pictures.dart';
 import 'doc_properties.dart';
@@ -28,11 +28,11 @@ class DocContext {
   final _paragraphFormats = <(ParaProps, ParaProps), ParagraphFormat>{};
   final _listIds = <Object, int>{};
   final _pictures = <int, DocPicture?>{};
-  final _floating = <(bool, int), ({Uint8List bytes, String mime})?>{};
+  final _floating = <(bool, int), DocPicture?>{};
 
   /// Pictures share this budget, so a picture repeated many times can't
   /// exhaust memory.
-  var _pictureBudget = 256 * 1024 * 1024;
+  final _pictureBudget = PictureBudget();
 
   /// Paragraphs, runs and other elements made so far.
   var _elements = 0;
@@ -206,28 +206,40 @@ class DocContext {
       pageBreakBefore: changed(from.pageBreakBefore, to.pageBreakBefore),
       contextualSpacing: changed(from.contextualSpacing, to.contextualSpacing),
       rightToLeft: changed(from.rightToLeft, to.rightToLeft),
-      list: sameList ? null : _listRef(to),
-      tabs: sameTabs
-          ? const []
-          : [
-              for (final tab in to.tabs)
-                TabStop(
-                  tab.position / 20,
-                  align: switch (tab.align) {
-                    1 => TabAlign.center,
-                    2 => TabAlign.right,
-                    3 => TabAlign.decimal,
-                    _ => TabAlign.left,
-                  },
-                  leader: switch (tab.leader) {
-                    1 || 5 => TabLeader.dot,
-                    2 => TabLeader.hyphen,
-                    3 || 4 => TabLeader.underscore,
-                    _ => TabLeader.none,
-                  },
-                ),
-            ],
+      // Without a list of its own, the paragraph is out of its style's.
+      list: sameList
+          ? null
+          : _listRef(to) ??
+                (file.lists[from.listOverride] == null ? null : ListRef.none),
+      tabs: sameTabs ? const [] : _tabChanges(from.tabs, to.tabs),
     );
+  }
+
+  /// The stops of [to], then clear stops for those of [from] it drops, since
+  /// a style's stops apply to its paragraphs unless cleared.
+  static List<TabStop> _tabChanges(List<DocTab> from, List<DocTab> to) {
+    final kept = {for (final tab in to) tab.position};
+    return [
+      for (final tab in to)
+        TabStop(
+          tab.position / 20,
+          align: switch (tab.align) {
+            1 => TabAlign.center,
+            2 => TabAlign.right,
+            3 => TabAlign.decimal,
+            _ => TabAlign.left,
+          },
+          leader: switch (tab.leader) {
+            1 || 5 => TabLeader.dot,
+            2 => TabLeader.hyphen,
+            3 || 4 => TabLeader.underscore,
+            _ => TabLeader.none,
+          },
+        ),
+      for (final tab in from)
+        if (!kept.contains(tab.position))
+          TabStop(tab.position / 20, align: TabAlign.clear),
+    ];
   }
 
   static LineSpacing _lineSpacing(ParaProps props) {
@@ -313,12 +325,15 @@ class DocContext {
         ? null
         : _pictures.containsKey(offset)
         ? _pictures[offset]
-        : _pictures[offset] = _guarded(() => inlinePicture(data, offset));
-    if (picture == null || picture.bytes.length > _pictureBudget) {
+        : _pictures[offset] = _guarded(
+            () => inlinePicture(data, offset, _pictureBudget),
+          );
+    if (picture == null || picture.bytes.length > _pictureBudget.kept) {
+      if (picture != null) _pictures[offset] = null;
       if (!quiet) notices.add(DocumentNotice.contentNotImported);
       return null;
     }
-    _pictureBudget -= picture.bytes.length;
+    _pictureBudget.kept -= picture.bytes.length;
     return ImageSpec(
       picture.bytes,
       picture.mime,
@@ -332,28 +347,44 @@ class DocContext {
   ImageSpec? floatingPicture(int position, {required bool header}) {
     final anchor = (header ? file.headerShapes : file.mainShapes)[position];
     final pictures = header ? file.headerPictures : file.mainPictures;
+    final key = (header, anchor?.shape ?? -1);
     final picture = anchor == null || pictures == null
         ? null
-        : _floating.putIfAbsent((
-            header,
-            anchor.shape,
-          ), () => _guarded(() => pictures[anchor.shape]));
-    if (anchor == null ||
-        picture == null ||
-        picture.bytes.length > _pictureBudget) {
+        : _floating.putIfAbsent(
+            key,
+            () => _guarded(
+              () => pictures.picture(
+                anchor.shape,
+                width: anchor.width > 0 ? anchor.width / 20 : null,
+                height: anchor.height > 0 ? anchor.height / 20 : null,
+                budget: _pictureBudget,
+              ),
+            ),
+          );
+    if (picture == null || picture.bytes.length > _pictureBudget.kept) {
+      if (picture != null) _floating[key] = null;
       notices.add(DocumentNotice.contentNotImported);
       return null;
     }
-    _pictureBudget -= picture.bytes.length;
+    _pictureBudget.kept -= picture.bytes.length;
     return ImageSpec(
       picture.bytes,
       picture.mime,
-      width: anchor.width > 0 ? anchor.width / 20 : null,
-      height: anchor.height > 0 ? anchor.height / 20 : null,
+      width: picture.width,
+      height: picture.height,
     );
   }
 
-  /// A damaged picture is left out; the rest of the document still opens.
+  /// What the check box or drop-down form field with its data at [offset] of
+  /// the Data stream shows; null when that can't be read.
+  String? formField(int offset) {
+    final data = file.data;
+    if (data == null || offset < 0) return null;
+    return _guarded(() => formFieldText(data, offset));
+  }
+
+  /// A damaged picture or form field is left out; the rest of the document
+  /// still opens.
   static T? _guarded<T>(T? Function() read) {
     try {
       return read();

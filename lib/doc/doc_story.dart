@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import '../document/document_codec.dart';
+import '../document/text_encodings.dart';
 import '../docx/docx_builder.dart';
 import 'doc_context.dart';
 import 'doc_file.dart';
@@ -16,6 +17,24 @@ const _maxTableDepth = 16;
 /// Fields that hold an embedded or linked object; only its picture stays.
 const _objectFields = {'EMBED', 'LINK'};
 
+/// Fields that show nothing when saved without a result.
+const _invisibleFields = {
+  '',
+  'ADVANCE',
+  'ASK',
+  'DATA',
+  'HYPERLINK',
+  'NEXT',
+  'NEXTIF',
+  'PRIVATE',
+  'RD',
+  'SET',
+  'SKIPIF',
+  'TA',
+  'TC',
+  'XE',
+};
+
 enum _FieldMode { instruction, link, live, passThrough }
 
 /// A field being read: its instruction until the separator, then its result.
@@ -27,6 +46,9 @@ class _Field {
   final result = <InlineSpec>[];
   var mode = _FieldMode.instruction;
   var target = '';
+
+  /// Offset of a form field's data in the Data stream.
+  var formData = -1;
 }
 
 /// Reads a story (the main text, a header, a note...) into paragraphs and
@@ -158,7 +180,11 @@ class StoryReader {
       // Word marks symbols as special; other writers only give sprmCSymbol.
       if (unit == 0x28 && props.symbolFont >= 0) {
         flush();
-        _symbol(props.symbolCharacter, props.symbolFont, format);
+        _symbol(
+          props.symbolCharacter,
+          context.fontName(props.symbolFont),
+          format,
+        );
       } else if (mapped != null) {
         flush();
         _text(mapped, context.withFont(format, null));
@@ -187,7 +213,12 @@ class StoryReader {
         _inline(const BreakSpec(BreakKind.page));
       case 0x0E:
         _inline(const BreakSpec(BreakKind.column));
-      case 0x01 when props.special && !props.formData:
+      case 0x01 when props.formData:
+        if (_fields.lastOrNull case final field?
+            when _skippedFields == 0 && field.mode == _FieldMode.instruction) {
+          field.formData = props.pictureOffset;
+        }
+      case 0x01 when props.special:
         // An embedded object keeps only the picture of its content.
         if (props.ole) context.notices.add(DocumentNotice.contentNotImported);
         if (context.picture(props.pictureOffset, quiet: props.ole)
@@ -202,10 +233,9 @@ class StoryReader {
     }
   }
 
-  /// A symbol inserted from a font (sprmCSymbol): Unicode when there is an
-  /// equivalent, otherwise the character in its font.
-  void _symbol(int code, int fontIndex, RunFormat format) {
-    final font = context.fontName(fontIndex);
+  /// A symbol inserted from a font: Unicode when there is an equivalent,
+  /// otherwise the character in its font.
+  void _symbol(int code, String? font, RunFormat format) {
     final mapped = symbolText(font, code);
     if (mapped != null) {
       _text(mapped, context.withFont(format, null));
@@ -265,15 +295,15 @@ class StoryReader {
     final field = _fields.removeLast();
     final instruction = field.instruction.toString().trim();
     switch (field.mode) {
-      case _FieldMode.instruction when isSafeField(instruction):
-        _inline(FieldSpec(instruction, format: field.format));
+      case _FieldMode.instruction:
+        _resultless(field, instruction);
       case _FieldMode.link when field.result.isNotEmpty:
         _inline(LinkSpec(field.target, field.result));
       case _FieldMode.live:
         final first = field.result.whereType<TextSpec>().firstOrNull;
         _inline(
           FieldSpec(
-            instruction,
+            _withBookmarkNames(instruction),
             result: field.result.map(_plainText).join(),
             format: first?.format ?? field.format,
           ),
@@ -281,6 +311,124 @@ class StoryReader {
       default:
         break;
     }
+  }
+
+  /// A field saved without a result shows what its instruction describes;
+  /// one that shows something this reader can't leaves a notice.
+  void _resultless(_Field field, String instruction) {
+    // Inside another field's instruction it only adds to that instruction.
+    if (_target().instruction != null) return;
+    final format = field.format;
+    switch (_fieldName(instruction)) {
+      case _ when isSafeField(instruction):
+        _inline(FieldSpec(_withBookmarkNames(instruction), format: format));
+      case 'MACROBUTTON' || 'GOTOBUTTON':
+        final name = RegExp(r'^\S+\s+\S+\s*').firstMatch(instruction);
+        if (name != null && name.end < instruction.length) {
+          _text(instruction.substring(name.end), format);
+        }
+      case 'SYMBOL':
+        _symbolField(instruction, format);
+      case 'FORMCHECKBOX' || 'FORMDROPDOWN':
+        final shown = context.formField(field.formData);
+        if (shown == null) {
+          context.notices.add(DocumentNotice.contentNotImported);
+        } else if (shown.isNotEmpty) {
+          _text(shown, format);
+        }
+      case 'EQ':
+        // Only the base of a ruby or an enclosed character stays.
+        context.notices.add(DocumentNotice.contentNotImported);
+        final base = _equationBase(instruction);
+        if (base.isNotEmpty) _text(base, format);
+      case final name when !_invisibleFields.contains(name):
+        context.notices.add(DocumentNotice.contentNotImported);
+    }
+  }
+
+  /// The character of a field like `SYMBOL 252 \f "Wingdings"`.
+  void _symbolField(String instruction, RunFormat format) {
+    final tokens = _tokens(instruction);
+    final number = tokens.length < 2 ? '' : tokens[1].$1.toLowerCase();
+    final code = number.startsWith('0x')
+        ? int.tryParse(number.substring(2), radix: 16)
+        : int.tryParse(number);
+    String? font;
+    var unicode = false;
+    var shiftJis = false;
+    for (var index = 2; index < tokens.length; index++) {
+      switch (tokens[index].$1.toLowerCase()) {
+        case r'\f' when index + 1 < tokens.length:
+          font = tokens[++index].$1;
+        case r'\u':
+          unicode = true;
+        case r'\j':
+          shiftJis = true;
+      }
+    }
+    if (code == null ||
+        code < 0x20 ||
+        code > 0xFFFF ||
+        (code >= 0xD800 && code <= 0xDFFF) ||
+        shiftJis) {
+      context.notices.add(DocumentNotice.contentNotImported);
+    } else if (font != null) {
+      _symbol(code, font, format);
+    } else {
+      _text(
+        !unicode && code >= 0x80 && code <= 0xFF
+            ? decodeCodePage([code], 1252)
+            : String.fromCharCode(code),
+        format,
+      );
+    }
+  }
+
+  /// What stays of an overstrike such as a ruby or an enclosed character:
+  /// its last argument, the base, like 漢 in `EQ \o\ad(\s\up 9(かん),漢)`.
+  static String _equationBase(String instruction) {
+    final overstrike = RegExp(
+      r'\\o\s*(\\a[lcdr]\s*)?\(',
+      caseSensitive: false,
+    ).firstMatch(instruction);
+    if (overstrike == null) return '';
+    var depth = 0;
+    var argument = overstrike.end;
+    for (var at = overstrike.end; at < instruction.length; at++) {
+      switch (instruction[at]) {
+        case r'\':
+          at++;
+        case '(':
+          depth++;
+        case ')' when depth > 0:
+          depth--;
+        case ')':
+          return instruction
+              .substring(argument, at)
+              .replaceAllMapped(
+                RegExp(
+                  r'\\([,;()\\])|\\[a-z]+(\s*-?\d+)?|[()]',
+                  caseSensitive: false,
+                ),
+                (match) => match[1] ?? '',
+              )
+              .trim();
+        case ',' || ';' when depth == 0:
+          argument = at + 1;
+      }
+    }
+    return '';
+  }
+
+  /// Cross-references name their bookmark as the builder writes it.
+  static String _withBookmarkNames(String instruction) {
+    final reference = RegExp(
+      r'^(REF|PAGEREF|NOTEREF)(\s+)([^\s"\\]+)',
+      caseSensitive: false,
+    ).firstMatch(instruction);
+    if (reference == null) return instruction;
+    return '${reference[1]}${reference[2]}${bookmarkName(reference[3]!)}'
+        '${instruction.substring(reference.end)}';
   }
 
   /// At a paragraph end, open links close in this paragraph and reopen in
@@ -492,9 +640,19 @@ class StoryReader {
   List<BlockSpec> _container(int depth) =>
       depth == 0 ? _blocks : _tables[depth - 1].blocks;
 
+  /// Points between the margins of a column of the section being read.
+  double get _columnWidth {
+    final all = file.sections;
+    if (!sections || _section >= all.length) return context.spec.page.textWidth;
+    final page = context.page(all[_section].props);
+    return (page.textWidth - (page.columns - 1) * page.columnSpacing) /
+        page.columns;
+  }
+
   void _setDepth(int depth) {
     while (_tables.length > depth) {
-      final table = _tables.removeLast().build();
+      final builder = _tables.removeLast();
+      final table = builder.build(_tables.isEmpty ? _columnWidth : null);
       if (table != null) _container(_tables.length).add(table);
     }
     while (_tables.length < depth) {
@@ -523,8 +681,9 @@ class _TableBuilder {
   }
 
   /// Rows with different cell edges share one grid: each cell spans the grid
-  /// columns between its edges.
-  TableSpec? build() {
+  /// columns between its edges. A centered or right-aligned table is placed
+  /// within [textWidth] points, when known.
+  TableSpec? build(double? textWidth) {
     endRow(null);
     if (_rows.isEmpty) return null;
     final rows = <({List<_Cell> cells, RowProps? props})>[];
@@ -578,9 +737,17 @@ class _TableBuilder {
 
     final known = rows.where((row) => row.props?.bordersKnown ?? false);
     final first = rows.first.props;
-    final indent = first == null || first.boundaries.isEmpty
+    // A centered or right-aligned table ignores its cells' left positions.
+    final free = textWidth == null || grid.length < 2
         ? 0
-        : first.boundaries.first + first.gapHalf;
+        : textWidth * 20 - (grid.last - grid.first);
+    final indent = switch (first) {
+      RowProps(justification: 1) => free / 2,
+      RowProps(justification: 2) => free,
+      RowProps(:final boundaries, :final gapHalf) when boundaries.isNotEmpty =>
+        boundaries.first + gapHalf,
+      _ => 0,
+    };
     return TableSpec(
       [
         for (final row in rows)

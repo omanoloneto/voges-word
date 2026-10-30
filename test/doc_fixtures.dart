@@ -132,6 +132,10 @@ class DocWriter {
   var encrypted = false;
   var version = 0x00C1;
 
+  /// Pieces that all read the main text from the same bytes, as a hostile
+  /// piece table does.
+  var pieceCopies = 1;
+
   /// Extra streams, such as `EncryptedPackage` or `Macros`.
   final streams = <String, List<int>>{};
 
@@ -174,23 +178,32 @@ class DocWriter {
     ...sprm(Sprm.pIlvl, [level]),
   ];
 
-  /// An inline picture's PICF with an OfficeArt BLIP in the Data stream;
-  /// returns its offset for sprmCPicLocation.
+  /// An inline picture's PICF with an OfficeArt BLIP in the Data stream:
+  /// [width] and [height] in twips before the [scaleX] and [scaleY] tenths
+  /// of a percent, and the shape's [properties] by id. Returns its offset for
+  /// sprmCPicLocation.
   int addPicture(
     List<int> bytes, {
     int blipType = 0xF01E,
     int instance = 0x6E0,
     int width = 1440,
     int height = 720,
+    int scaleX = 1000,
+    int scaleY = 1000,
+    Map<int, int> properties = const {},
     int mode = 0x64,
   }) {
     final offset = _data.length;
+    // Metafiles have no tag byte before their header.
+    final tag = blipType == 0xF01A || blipType == 0xF01B || blipType == 0xF01C
+        ? const <int>[]
+        : const [0xFF];
     final blip = [
       ...u16(instance << 4),
       ...u16(blipType),
-      ...u32(16 + 1 + bytes.length),
+      ...u32(16 + tag.length + bytes.length),
       ...List.filled(16, 7),
-      0xFF,
+      ...tag,
       ...bytes,
     ];
     final store = [
@@ -210,7 +223,15 @@ class DocWriter {
       0,
       ...blip,
     ];
-    final shape = [...u16(0x000F), ...u16(0xF004), ...u32(0)];
+    final shape = officeArtRecord(0x0F, 0, 0xF004, [
+      if (properties.isNotEmpty)
+        ...officeArtRecord(3, properties.length, 0xF00B, [
+          for (final MapEntry(key: id, value: value) in properties.entries) ...[
+            ...u16(id),
+            ...u32(value),
+          ],
+        ]),
+    ]);
     final size = 68 + shape.length + store.length;
     _data.add([
       ...u32(size),
@@ -219,13 +240,50 @@ class DocWriter {
       ...List.filled(20, 0),
       ...u16(width),
       ...u16(height),
-      ...u16(1000),
-      ...u16(1000),
+      ...u16(scaleX),
+      ...u16(scaleY),
       ...List.filled(68 - 36, 0),
       ...shape,
       ...store,
     ]);
     return offset;
+  }
+
+  /// A check box ([type] 1) or drop-down ([type] 2) form field's FFData,
+  /// after its NilPICFAndBinData header, in the Data stream; [state] 25
+  /// takes [defaultState]. Returns its offset for sprmCPicLocation.
+  int addFormField({
+    required int type,
+    required int state,
+    int defaultState = 0,
+    List<String> entries = const [],
+  }) {
+    List<int> text(String value) => [
+      ...u16(value.length),
+      ...utf16(value),
+      ...u16(0),
+    ];
+    final data = [
+      ...u32(0xFFFFFFFF),
+      ...u16(type | state << 2),
+      ...u16(0),
+      ...u16(20),
+      ...text('Field'),
+      ...u16(defaultState),
+      for (var index = 0; index < 5; index++) ...text(''),
+      if (type == 2) ...[
+        ...u16(0xFFFF),
+        ...u16(entries.length),
+        ...u16(0),
+        for (final entry in entries) ...[...u16(entry.length), ...utf16(entry)],
+      ],
+    ];
+    return addData([
+      ...u32(68 + data.length),
+      ...u16(68),
+      ...List.filled(62, 0),
+      ...data,
+    ]);
   }
 
   /// Bytes appended to the Data stream; returns their offset.
@@ -249,7 +307,7 @@ class DocWriter {
   /// [mutate] changes the streams before they are packed, to damage them.
   Uint8List build({void Function(String name, Uint8List bytes)? mutate}) {
     if (_paragraphStart != position) paragraph();
-    final textLength = mainLength >= 0 ? mainLength : position;
+    final textLength = (mainLength >= 0 ? mainLength : position) * pieceCopies;
     final total = position;
     final textBytes = compressed
         ? latin1.encode(_text.toString())
@@ -295,12 +353,13 @@ class DocWriter {
     final piece = compressed ? (textOffset * 2) | 0x40000000 : textOffset;
     part(33, [
       0x02,
-      ...u32(16),
-      ...u32(0),
-      ...u32(total),
-      ...u16(0),
-      ...u32(piece),
-      ...u16(0),
+      ...u32(4 + pieceCopies * 12),
+      for (var copy = 0; copy <= pieceCopies; copy++) ...u32(copy * total),
+      for (var copy = 0; copy < pieceCopies; copy++) ...[
+        ...u16(0),
+        ...u32(piece),
+        ...u16(0),
+      ],
     ]);
     if (sections.isNotEmpty) {
       final sepx = <int>[];
