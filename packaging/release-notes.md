@@ -9,6 +9,8 @@ Voges Word: a lightweight document editor with .docx support, for macOS, Windows
 - A file opens by its content, so one with the wrong extension still opens.
 - Share can also send the document in the format of its file.
 - Voges Word shows up in "Open with" for all these formats, without becoming the default app.
+- Files open in the background, with a progress window you can cancel, so a slow file never freezes the app.
+- Fixes to editing: Enter or a paste over a selection in a centered or numbered heading, and Copy, Cut and Indent after splitting or joining paragraphs, now act on the right text.
 
 ## Install
 
