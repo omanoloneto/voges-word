@@ -84,6 +84,9 @@ class RtfReader {
   final _lists = <int, _ListEntry>{};
   final _overrides = <int, _Override>{};
   final _listIds = <int, int>{};
+
+  /// The first list made of each list of the list table.
+  final _firstLists = <_ListEntry, int>{};
   int? _pnBullets;
 
   RtfDocument read() {
@@ -1400,7 +1403,7 @@ class RtfReader {
         override > 0 &&
         (pn == null || _hasList(override))) {
       story?.numbering = null;
-      final id = _listIds[override] ??= _addList(() => _listSpec(override));
+      final id = _listIds[override] ??= _wordList(override);
       return ListRef(id, para.listLevel);
     }
     // \pnlvlcont shows no number but keeps the list going.
@@ -1448,33 +1451,54 @@ class RtfReader {
   bool _hasList(int override) =>
       _lists[_overrides[override]?.listId]?.levels.isNotEmpty ?? false;
 
-  ListSpec _listSpec(int number) {
+  /// The list of `\ls` [number]. As in Word, the `\ls` of one list of the
+  /// list table count as one list, each starting again the levels it
+  /// overrides.
+  int _wordList(int number) {
     final override = _overrides[number];
     final list = _lists[override?.listId];
-    if (list == null || list.levels.isEmpty) return ListSpec.bullets();
-    final bullets = list.levels.first.format == NumberFormat.bullet;
-    final fallback = bullets ? ListSpec.bullets() : ListSpec.numbered();
-    return ListSpec([
-      for (var index = 0; index < 9; index++)
-        if (index < list.levels.length)
-          _levelSpec(list.levels[index], override?.starts[index])
-        else
-          fallback.levels[index],
-    ]);
+    if (override == null || list == null || list.levels.isEmpty) {
+      return _addList(ListSpec.bullets);
+    }
+    final id = _addList(() => _listSpec(list, override, _firstLists[list]));
+    _firstLists.putIfAbsent(list, () => id);
+    return id;
   }
 
-  ListLevelSpec _levelSpec(_LevelDef level, int? start) {
+  ListSpec _listSpec(_ListEntry list, _Override override, int? continues) {
+    final bullets = list.levels.first.format == NumberFormat.bullet;
+    final fallback = bullets ? ListSpec.bullets() : ListSpec.numbered();
+    return ListSpec(
+      [
+        for (var index = 0; index < 9; index++)
+          if (index < list.levels.length)
+            _levelSpec(list.levels[index])
+          else
+            fallback.levels[index],
+      ],
+      continues: continues,
+      restarts: override.starts,
+    );
+  }
+
+  ListLevelSpec _levelSpec(_LevelDef level) {
     final firstLine = level.firstLine;
     return ListLevelSpec(
       format: level.format,
       text: level.format == NumberFormat.bullet && level.text.isEmpty
           ? '\u{2022}'
           : level.text,
-      start: (start ?? level.start).clamp(0, 32767),
+      start: level.start.clamp(0, 32767),
       indentLeft: _points(level.left),
       hanging: firstLine == null ? 18 : math.max(-firstLine, 0) / 20,
       font: level.font,
       suffix: level.suffix,
+      align: switch (level.directionalAlignment ?? level.alignment) {
+        1 => NumberAlign.center,
+        2 => NumberAlign.right,
+        _ => NumberAlign.left,
+      },
+      legal: level.legal,
     );
   }
 
@@ -2471,6 +2495,12 @@ class _LevelDef {
   int? firstLine;
   String? font;
   var suffix = ListSuffix.tab;
+  var legal = false;
+
+  /// `\leveljc`; `\leveljcn`, which follows the paragraph's direction as
+  /// w:lvlJc does, wins over it.
+  int? alignment;
+  int? directionalAlignment;
 }
 
 class _ListEntry extends _Destination {
@@ -2529,6 +2559,12 @@ class _ListLevel extends _Destination {
           2 => ListSuffix.nothing,
           _ => ListSuffix.tab,
         };
+      case 'levellegal':
+        _level.legal = (parameter ?? 1) != 0;
+      case 'leveljc':
+        _level.alignment = parameter;
+      case 'leveljcn':
+        _level.directionalAlignment = parameter;
       case 'leveltext':
         reader._begin(_LevelText(_level));
       case 'levelnumbers':

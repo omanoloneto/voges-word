@@ -838,6 +838,44 @@ void main() {
     );
   });
 
+  test('list levels keep how their number lines up', () {
+    String properties(String align) =>
+        '<style:list-level-properties fo:text-align="$align" '
+        'text:list-level-position-and-space-mode="label-alignment">'
+        '<style:list-level-label-alignment text:label-followed-by="listtab" '
+        'fo:text-indent="-0.635cm" fo:margin-left="1.27cm"/>'
+        '</style:list-level-properties>';
+    final loaded = _decode(
+      odtFile(
+        automatic:
+            '<text:list-style style:name="L1">'
+            '<text:list-level-style-number text:level="1" style:num-suffix="." style:num-format="I">${properties('end')}</text:list-level-style-number>'
+            '<text:list-level-style-number text:level="2" style:num-suffix="." style:num-format="1">${properties('center')}</text:list-level-style-number>'
+            '<text:list-level-style-bullet text:level="3" text:bullet-char="•">${properties('right')}</text:list-level-style-bullet>'
+            '<text:list-level-style-number text:level="4" style:num-format="a">${properties('start')}</text:list-level-style-number>'
+            '</text:list-style>',
+        body:
+            '<text:list text:style-name="L1"><text:list-item><text:p>one</text:p>'
+            '<text:list><text:list-item text:start-value="2"><text:p>two</text:p>'
+            '</text:list-item></text:list></text:list-item></text:list>',
+      ),
+    );
+    final numbering = _package(loaded).text('word/numbering.xml')!;
+    List<String> levels(int index) => [
+      for (final match in RegExp(
+        '<w:lvl w:ilvl="$index">(.*?)</w:lvl>',
+      ).allMatches(numbering))
+        match[1]!,
+    ];
+
+    // The item that starts again at 2 makes a second list of the levels.
+    expect(levels(1), hasLength(2));
+    expect(levels(0), everyElement(contains('<w:lvlJc w:val="right"/>')));
+    expect(levels(1), everyElement(contains('<w:lvlJc w:val="center"/>')));
+    expect(levels(2), everyElement(contains('<w:lvlJc w:val="right"/>')));
+    expect(levels(3), everyElement(contains('<w:lvlJc w:val="left"/>')));
+  });
+
   test('a level shows no dot for levels above without a number, and bullets '
       'keep their font', () {
     final loaded = _decode(

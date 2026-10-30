@@ -830,6 +830,8 @@ class OdtReader {
           hanging: definition.hanging,
           font: definition.font,
           suffix: definition.suffix,
+          align: definition.align,
+          legal: definition.legal,
         ),
         _ => definition,
       },

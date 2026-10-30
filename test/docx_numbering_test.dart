@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voges_word/document/delta_blocks.dart';
@@ -131,7 +133,7 @@ void main() {
       expect(article.kind, ListKind.ordered);
 
       final legal = numbering.level(1, 1)!;
-      expect(legal.start, 1);
+      expect(legal.start, 0, reason: 'it has no w:start');
       expect(legal.legal, isTrue);
       expect(legal.suffix, ListSuffix.nothing);
       expect(legal.left, 72);
@@ -185,6 +187,62 @@ void main() {
       expect(numbering.restarts(4, 0), isFalse);
       expect(numbering.level(7, 0), isNull);
       expect(numbering.groupOf(7), isNull);
+    });
+
+    test("lists made with a Word list style take the style's levels", () {
+      final numbering = DocxNumbering.parse(
+        _numbering(
+          '<w:abstractNum w:abstractNumId="0"><w:multiLevelType '
+          'w:val="hybridMultilevel"/><w:numStyleLink w:val="Numbered"/>'
+          '</w:abstractNum>'
+          '<w:abstractNum w:abstractNumId="1"><w:styleLink w:val="Numbered"/>'
+          '${_level(0, 'decimal', '%1.')}${_level(1, 'bullet', '☐')}'
+          '</w:abstractNum>'
+          '<w:abstractNum w:abstractNumId="2"><w:numStyleLink '
+          'w:val="Missing"/></w:abstractNum>'
+          '${_list(1, 1)}${_list(2, 0)}'
+          '${_list(3, 0, '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="4"/></w:lvlOverride>')}'
+          '${_list(4, 0, '<w:lvlOverride w:ilvl="1">${_level(1, 'lowerLetter', '%2)')}</w:lvlOverride>')}'
+          '${_list(5, 2)}',
+        ),
+      );
+
+      expect(numbering.level(2, 0)!.text, '%1.');
+      expect(numbering.level(2, 0)!.kind, ListKind.ordered);
+      expect(numbering.level(2, 1)!.kind, ListKind.unchecked);
+      expect(numbering.level(3, 0)!.start, 4);
+      expect(numbering.restarts(3, 0), isTrue);
+      expect(numbering.level(4, 1)!.text, '%2)');
+      expect(numbering.level(4, 0)!.text, '%1.');
+      // Word counts every list of a list style as one.
+      expect(numbering.groupOf(2), numbering.groupOf(1));
+      expect(numbering.groupOf(3), numbering.groupOf(1));
+      expect(numbering.sameNumbering(2), numbering.sameNumbering(1));
+      expect(numbering.level(5, 0), isNull);
+      expect(numbering.maxAbstractId, 2);
+    });
+
+    test('a level without w:start counts from 0, as in Word', () {
+      final numbering = DocxNumbering.parse(
+        _numbering(
+          '<w:abstractNum w:abstractNumId="0">${_level(0, 'decimal', '%1')}'
+          '<w:lvl w:ilvl="1"><w:numFmt w:val="decimal"/><w:lvlText w:val=""/>'
+          '</w:lvl>${_level(2, 'decimal', '%1.%2.%3')}</w:abstractNum>'
+          '${_list(1, 0)}',
+        ),
+      );
+      final counter = WordListCounter(numbering);
+      final texts = <String?>[];
+      for (final level in [0, 1, 1, 1, 2, 0, 2]) {
+        final line = _item(1, level: level);
+        counter.count(line);
+        texts.add(counter.textOf(line));
+      }
+
+      expect(numbering.level(1, 1)!.start, 0);
+      // A level yet to count shows one before its start, but never less
+      // than 0.
+      expect(texts, ['1', '', '', '', '1.2.1', '2', '2.0.1']);
     });
 
     test('the numbering of an opened document comes from its package', () {
@@ -286,6 +344,33 @@ void main() {
       expect(next(4), isNull);
     });
 
+    test('legal numbers keep zero-padded decimals, and levels without a '
+        'number stay empty', () {
+      final numbering = DocxNumbering.parse(
+        _numbering(
+          '<w:abstractNum w:abstractNumId="0">'
+          '${_level(0, 'upperRoman', 'Article %1.')}'
+          '${_level(1, 'decimalZero', 'Section %1.%2', extra: '<w:isLgl/>')}'
+          '${_level(2, 'none', '')}'
+          '${_level(3, 'lowerLetter', '%1.%3%4', extra: '<w:isLgl/>')}'
+          '</w:abstractNum>${_list(1, 0)}',
+        ),
+      );
+      final counter = WordListCounter(numbering);
+      String? next(int level) {
+        final line = _item(1, level: level);
+        counter.count(line);
+        return counter.textOf(line);
+      }
+
+      expect(next(0), 'Article I.');
+      expect(next(1), 'Section 1.01');
+      expect(next(1), 'Section 1.02');
+      expect(next(0), 'Article II.');
+      expect(next(1), 'Section 2.01');
+      expect(next(3), '2.1', reason: 'the level without a number shows none');
+    });
+
     test('the editor\'s items count in runs; items of another kind than '
         'their level leave the Word list', () {
       final numbering = DocxNumbering.parse(
@@ -324,6 +409,99 @@ void main() {
       expect(counter.count(unchecked), isNull, reason: 'its box is ☐');
       expect(counter.count(_item(1, level: 1)), 2);
     });
+  });
+
+  test('lists made with a Word list style open as lists and save with '
+      "Word's numbers", () {
+    String paragraph(String text, [int? numId]) =>
+        '<w:p><w:pPr>${numId == null ? '' : '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="$numId"/></w:numPr>'}'
+        '</w:pPr><w:r><w:t>$text</w:t></w:r></w:p>';
+    final docx = DocxCodec(TableStore());
+    final loaded = docx.read(
+      _package(
+        [
+          paragraph('first', 2),
+          paragraph('second', 2),
+          paragraph('third', 2),
+          paragraph(''),
+          paragraph('again', 3),
+          paragraph('then', 2),
+          paragraph('on', 2),
+        ].join(),
+        _numbering(
+          '<w:abstractNum w:abstractNumId="0"><w:numStyleLink '
+          'w:val="Numbered"/></w:abstractNum>'
+          '<w:abstractNum w:abstractNumId="1"><w:styleLink w:val="Numbered"/>'
+          '${_level(0, 'decimal', '%1.')}</w:abstractNum>'
+          '${_list(1, 1)}${_list(2, 0)}'
+          '${_list(3, 0, '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride>')}',
+        ).toXmlString(),
+      ),
+    );
+    List<LineBlock> items(Delta delta) => [
+      for (final line in documentBlocks(delta).whereType<LineBlock>())
+        if (line.plainText.isNotEmpty) line,
+    ];
+
+    expect(
+      [for (final line in items(loaded.delta)) line.list],
+      [for (var index = 0; index < 6; index++) 'ordered'],
+    );
+    final counter = WordListCounter(DocxNumbering.of(loaded.source));
+    expect(
+      [for (final line in items(loaded.delta)) counter.count(line)],
+      [1, 2, 3, 1, 2, 3],
+    );
+    final markdown = utf8.decode(
+      MarkdownCodec(
+        docx,
+      ).encode(loaded.delta, source: loaded.source, look: loaded.look),
+    );
+    expect(markdown, matches(RegExp(r'^3[.)] third$', multiLine: true)));
+    expect(markdown, matches(RegExp(r'^3[.)] on$', multiLine: true)));
+
+    final saved = docx.decode(docx.encode(loaded.delta, source: loaded.source));
+    expect(
+      [
+        for (final line in items(saved.delta))
+          line.attributes[HiddenAttributes.numbering],
+      ],
+      [2, 2, 2, 3, 2, 2],
+    );
+  });
+
+  test('a paragraph at a level its Word list leaves out leaves the list in '
+      '.docx too, as in the other formats', () {
+    final docx = DocxCodec(TableStore());
+    final loaded = docx.read(
+      _package(
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/>'
+        '</w:numPr></w:pPr><w:r><w:t>one</w:t></w:r></w:p>'
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="1"/>'
+        '</w:numPr></w:pPr><w:r><w:t>deeper</w:t></w:r></w:p>',
+        _numbering(
+          '<w:abstractNum w:abstractNumId="0">${_level(0, 'decimal', '%1.')}'
+          '</w:abstractNum>${_list(1, 0)}',
+        ).toXmlString(),
+      ),
+    );
+    LineBlock line(Delta delta, String text) => documentBlocks(
+      delta,
+    ).whereType<LineBlock>().firstWhere((line) => line.plainText == text);
+    final deeper = line(loaded.delta, 'deeper');
+    expect(deeper.list, 'ordered');
+    expect(
+      WordListCounter(DocxNumbering.of(loaded.source)).wordList(deeper),
+      isNull,
+    );
+
+    final saved = docx.decode(docx.encode(loaded.delta, source: loaded.source));
+    expect(line(saved.delta, 'one').attributes[HiddenAttributes.numbering], 1);
+    expect(
+      line(saved.delta, 'deeper').attributes[HiddenAttributes.numbering],
+      isNot(1),
+    );
+    expect(line(saved.delta, 'deeper').list, 'ordered');
   });
 
   test('a numbering part of 20k lists sharing an abstract list of 20k levels '

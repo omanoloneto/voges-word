@@ -284,6 +284,12 @@ class DocContext {
       2 => ListSuffix.nothing,
       _ => ListSuffix.tab,
     },
+    align: switch (level.alignment) {
+      1 => NumberAlign.center,
+      2 => NumberAlign.right,
+      _ => NumberAlign.left,
+    },
+    legal: level.legal,
   );
 
   /// Page size, margins, columns and page numbers of a section, with Word's

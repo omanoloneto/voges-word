@@ -12,6 +12,7 @@ import 'package:voges_word/docx/docx_package.dart';
 import 'package:voges_word/docx/docx_template.dart';
 import 'package:voges_word/docx/word_xml.dart';
 import 'package:voges_word/document/embeds.dart';
+import 'package:voges_word/document/headers_footers.dart';
 import 'package:voges_word/document/plain_text_codec.dart';
 import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/editor/template_content.dart';
@@ -264,6 +265,49 @@ void main() {
     expect(
       Document.fromDelta(resume.delta).toPlainText(),
       contains('Experiencia'),
+    );
+  });
+
+  test('headings set in headers and footers get their styles too', () {
+    final document = codec.createEmpty();
+    Delta heading(String text, int level) => Delta()
+      ..insert(text)
+      ..insert('\n', {'header': level});
+    final bytes = codec.encode(
+      heading('Body', 5),
+      source: document.source,
+      headersFooters: HeadersFooters(
+        headers: {
+          PageVariant.normal: HeaderFooterStory(
+            delta: heading('Report title', 4),
+            edited: true,
+          ),
+        },
+        footers: {
+          PageVariant.normal: HeaderFooterStory(
+            delta: heading('Closing', 5),
+            edited: true,
+          ),
+        },
+      ),
+    );
+    final styles = DocxPackage.decode(bytes).text('word/styles.xml')!;
+    expect(RegExp('w:styleId="Heading4"').allMatches(styles), hasLength(1));
+    expect(RegExp('w:styleId="Heading5"').allMatches(styles), hasLength(1));
+
+    final reopened = codec.decode(bytes);
+    List<Object?> headings(Delta delta) => [
+      for (final operation in delta.toList())
+        if (operation.data == '\n') operation.attributes?['header'],
+    ];
+    expect(headings(reopened.delta), [5]);
+    expect(
+      headings(reopened.headersFooters.headers[PageVariant.normal]!.delta),
+      [4],
+    );
+    expect(
+      headings(reopened.headersFooters.footers[PageVariant.normal]!.delta),
+      [5],
     );
   });
 

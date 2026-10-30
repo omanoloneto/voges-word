@@ -110,16 +110,33 @@ class DocxNumbering {
 
     var maxAbstract = 0;
     final abstracts = <int, Map<int, WordLevel>>{};
+    // The abstract list of a list made with a Word list style only names the
+    // style (w:numStyleLink); the levels are in the one that defines the
+    // style (w:styleLink).
+    final styleLinks = <int, String>{};
+    final styleLevels = <String, int>{};
     for (final element in x.children(root, 'abstractNum')) {
       final id = int.tryParse(x.attr(element, 'abstractNumId') ?? '');
       if (id == null) continue;
       if (id > maxAbstract) maxAbstract = id;
       final levels = abstracts[id] = {};
-      for (final level in x.children(element, 'lvl')) {
-        final index = _levelIndex(x.attr(level, 'ilvl'));
-        if (index != null) levels[index] = _level(x, level);
+      for (final child in element.childElements) {
+        if (x.namespaceOf(child.name) != Namespaces.w) continue;
+        switch (child.name.local) {
+          case 'lvl':
+            final index = _levelIndex(x.attr(child, 'ilvl'));
+            if (index != null) levels[index] = _level(x, child);
+          case 'numStyleLink':
+            if (x.val(child) case final style?) styleLinks[id] = style;
+          case 'styleLink':
+            if (x.val(child) case final style?) {
+              styleLevels.putIfAbsent(style, () => id);
+            }
+        }
       }
     }
+    int? definition(int? abstractId) =>
+        styleLevels[styleLinks[abstractId]] ?? abstractId;
 
     var maxNum = 0;
     final lists = <int, _List>{};
@@ -140,7 +157,9 @@ class DocxNumbering {
         if (start != null) (starts ??= {})[index] = start;
       }
       lists[id] = (
-        abstractId: int.tryParse(x.childVal(element, 'abstractNumId') ?? ''),
+        abstractId: definition(
+          int.tryParse(x.childVal(element, 'abstractNumId') ?? ''),
+        ),
         redefined: redefined ?? const {},
         starts: starts ?? const {},
       );
@@ -219,7 +238,8 @@ class DocxNumbering {
     final firstLine = indents['firstLine'];
     final fonts = x.child(run, 'rFonts');
     return WordLevel(
-      start: int.tryParse(x.val(start) ?? '') ?? 1,
+      // Word counts a level without w:start from 0.
+      start: start == null ? 0 : int.tryParse(x.val(start) ?? '') ?? 1,
       format: x.val(format) ?? 'decimal',
       text: x.val(text) ?? '',
       suffix: switch (x.val(suffix)) {

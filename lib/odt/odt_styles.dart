@@ -474,6 +474,7 @@ class OdtStyles {
       indentLeft: numbered.indentLeft ?? 0,
       hanging: numbered.indentLeft == null ? 0 : numbered.hanging,
       suffix: numbered.suffix,
+      align: numbered.align,
     );
   }
 
@@ -500,6 +501,11 @@ class OdtStyles {
     final properties = element.odfChild(_style, 'list-level-properties');
     final indent = _indent(properties);
     final suffix = _suffix(properties);
+    final align = switch (properties?.odfAttribute(_fo, 'text-align')) {
+      'end' || 'right' => NumberAlign.right,
+      'center' => NumberAlign.center,
+      _ => NumberAlign.left,
+    };
     if (element.isOdf(_text, 'list-level-style-number') ||
         element.isOdf(_text, 'outline-level-style')) {
       final format = _numberFormat(element.odfAttribute(_style, 'num-format'));
@@ -534,6 +540,7 @@ class OdtStyles {
         indentLeft: indent.left,
         hanging: indent.hanging,
         suffix: suffix,
+        align: align,
       );
     }
     final char = element.isOdf(_text, 'list-level-style-bullet')
@@ -561,6 +568,7 @@ class OdtStyles {
           ? fontFamily?.call(fontName)
           : odfFontFamily(text?.odfAttribute(_fo, 'font-family')),
       suffix: suffix,
+      align: align,
     );
   }
 

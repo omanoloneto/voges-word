@@ -64,8 +64,10 @@ class DocxWriter {
     final marginRight = double.tryParse(x.attr(margins, 'right') ?? '') ?? 1701;
 
     final takenMedia = {...package.parts.keys};
-    // Headers and footers add their lists to the body's numbering part.
+    // Headers and footers add their lists to the body's numbering part, and
+    // their headings' styles to its styles part.
     final numberingPlan = NumberingPlan(numbering);
+    final addedHeadingStyles = <int, String>{};
     _WriteContext contextFor(
       List<Relationship> relationships, {
       int bookmarkStart = 100000,
@@ -74,6 +76,7 @@ class DocxWriter {
       styles: styles,
       numbering: numbering,
       numberingPlan: numberingPlan,
+      addedHeadingStyles: addedHeadingStyles,
       usedRelationshipIds: {for (final r in relationships) r.id},
       existingHyperlinks: {
         for (final r in relationships)
@@ -395,6 +398,7 @@ class _WriteContext {
     required this.styles,
     required this.numbering,
     required this.numberingPlan,
+    required this.addedHeadingStyles,
     required this.usedRelationshipIds,
     required this.existingHyperlinks,
     required this.tables,
@@ -411,6 +415,10 @@ class _WriteContext {
   final DocxStyles styles;
   final DocxNumbering numbering;
   final NumberingPlan numberingPlan;
+
+  /// Heading styles the styles part lacks, by level, which the package's
+  /// stories share.
+  final Map<int, String> addedHeadingStyles;
   final Set<String> usedRelationshipIds;
   final Map<String, String> existingHyperlinks;
   final TableStore tables;
@@ -426,7 +434,6 @@ class _WriteContext {
   final newRelationships = <Relationship>[];
   final media = <String, Uint8List>{};
   final mediaTypes = <String, String>{};
-  final addedHeadingStyles = <int, String>{};
   final usedBookmarks = <String>{};
   var _relationshipCounter = 0;
   var _mediaCounter = 0;
@@ -756,9 +763,14 @@ class _BlockWriter {
     );
   }
 
+  /// The line keeps its Word list while it is still the kind of list its
+  /// level is, as the other formats' writers keep it.
   int _numIdFor(ListKind kind, int level, Object? original) {
-    final originalId = (original as num?)?.toInt();
-    if (originalId != null && c.numbering.kind(originalId, level) == kind) {
+    final originalId = original is num && original.isFinite
+        ? original.toInt()
+        : null;
+    if (originalId != null &&
+        c.numbering.level(originalId, level)?.kind == kind) {
       if (kind == ListKind.ordered) _orderedListNum = null;
       return originalId;
     }

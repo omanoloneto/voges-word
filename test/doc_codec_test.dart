@@ -8,6 +8,7 @@ import 'package:voges_word/doc/doc_codec.dart';
 import 'package:voges_word/doc/doc_file.dart';
 import 'package:voges_word/doc/doc_reader.dart';
 import 'package:voges_word/doc/doc_sprms.dart';
+import 'package:voges_word/document/delta_blocks.dart';
 import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/plain_text_codec.dart';
 import 'package:voges_word/document/embeds.dart';
@@ -16,8 +17,10 @@ import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/docx/docx_builder.dart'
     show ImageSpec, ParagraphSpec;
 import 'package:voges_word/docx/docx_codec.dart';
+import 'package:voges_word/docx/docx_numbering.dart';
 import 'package:voges_word/docx/docx_package.dart';
 import 'package:voges_word/docx/image_formats.dart';
+import 'package:voges_word/docx/word_list_counter.dart';
 import 'package:voges_word/editor/editor_session.dart';
 import 'package:voges_word/files/document_files.dart';
 
@@ -71,10 +74,11 @@ TableModel _table(Delta delta, TableStore tables, [int index = 0]) =>
 String _cellText(TableCellModel cell) =>
     cell.controller.document.toPlainText().trim();
 
-/// Sets what follows the number of the first list's levels (LVLF
-/// ixchFollow: 0 a tab, 1 a space, 2 nothing), which the fixtures leave at
-/// a tab.
-void Function(String, Uint8List) _followedBy(List<int> values) {
+/// Sets byte [offset] of the first list's levels (LVLF), which the fixtures
+/// leave at 0: byte 5 holds jc (0 left, 1 centered, 2 right) and fLegal
+/// (4), byte 15 what follows the number (ixchFollow: 0 a tab, 1 a space, 2
+/// nothing).
+void Function(String, Uint8List) _levelBytes(int offset, List<int> values) {
   var levels = 0;
   return (name, bytes) {
     final data = ByteData.sublistView(bytes);
@@ -87,7 +91,7 @@ void Function(String, Uint8List) _followedBy(List<int> values) {
     } else if (name == '1Table') {
       var at = levels;
       for (final value in values) {
-        bytes[at + 15] = value;
+        bytes[at + offset] = value;
         final text = at + 28 + bytes[at + 24] + bytes[at + 25];
         at = text + 2 + data.getUint16(text, Endian.little) * 2;
       }
@@ -314,7 +318,7 @@ void main() {
       ..line('spaced', sprms: DocWriter.listParagraph(list))
       ..line('joined', sprms: DocWriter.listParagraph(list, 1))
       ..line('tabbed', sprms: DocWriter.listParagraph(list, 2));
-    final loaded = _decode(doc.build(mutate: _followedBy([1, 2, 0])));
+    final loaded = _decode(doc.build(mutate: _levelBytes(15, [1, 2, 0])));
     final numbering = (loaded.source! as DocxPackage).text(
       'word/numbering.xml',
     )!;
@@ -333,6 +337,59 @@ void main() {
       contains('<w:suff w:val="nothing"/>'),
     );
     expect(_numberingLevel(numbering, 2), isNot(contains('<w:suff')));
+  });
+
+  test('list levels keep legal numbering and how their number lines up', () {
+    final doc = DocWriter();
+    final list = doc.addList([
+      (format: 1, text: 'CH %1', start: 1, left: 0, hanging: 0, font: null),
+      (
+        format: 22,
+        text: 'Sect %1.%2',
+        start: 1,
+        left: 0,
+        hanging: 0,
+        font: null,
+      ),
+      (format: 4, text: '%3)', start: 1, left: 1440, hanging: 360, font: null),
+    ], startOverride: 2);
+    doc
+      ..line('Chapter', sprms: DocWriter.listParagraph(list))
+      ..line('Foo', sprms: DocWriter.listParagraph(list, 1))
+      ..line('Item', sprms: DocWriter.listParagraph(list, 2));
+    // Centered; right and legal; legal.
+    final loaded = _decode(doc.build(mutate: _levelBytes(5, [1, 6, 4])));
+    final numbering = (loaded.source! as DocxPackage).text(
+      'word/numbering.xml',
+    )!;
+
+    expect(
+      _numberingLevel(numbering, 0),
+      allOf(
+        contains('<w:start w:val="2"/>'),
+        contains('<w:lvlJc w:val="center"/>'),
+        isNot(contains('isLgl')),
+      ),
+    );
+    expect(
+      _numberingLevel(numbering, 1),
+      contains(
+        '<w:numFmt w:val="decimalZero"/><w:isLgl/>'
+        '<w:lvlText w:val="Sect %1.%2"/><w:lvlJc w:val="right"/>',
+      ),
+    );
+    expect(
+      _numberingLevel(numbering, 2),
+      allOf(contains('<w:isLgl/>'), contains('<w:lvlJc w:val="left"/>')),
+    );
+    final counter = WordListCounter(DocxNumbering.of(loaded.source));
+    final texts = <String?>[];
+    for (final line in documentBlocks(loaded.delta).whereType<LineBlock>()) {
+      if (line.list == null) continue;
+      counter.count(line);
+      texts.add(counter.textOf(line));
+    }
+    expect(texts, ['CH II', 'Sect 2.01', '1)']);
   });
 
   test('links, bookmarks and fields', () {

@@ -761,6 +761,86 @@ void main() {
     expect(XmlDocument.parse(numbering), isNotNull);
   });
 
+  test('list levels keep legal numbering and how their number lines up', () {
+    final spec = DocumentSpec();
+    final list = spec.addList(
+      ListSpec([
+        const ListLevelSpec(
+          format: NumberFormat.upperRoman,
+          text: 'Article %1.',
+          align: NumberAlign.center,
+        ),
+        const ListLevelSpec(
+          format: NumberFormat.decimalZero,
+          text: 'Section %1.%2',
+          suffix: ListSuffix.space,
+          align: NumberAlign.right,
+          legal: true,
+        ),
+        const ListLevelSpec(format: NumberFormat.decimal, text: '%3.'),
+      ]),
+    );
+    spec.body.add(
+      ParagraphSpec(const [
+        TextSpec('item'),
+      ], format: ParagraphFormat(list: ListRef(list, 1))),
+    );
+    final numbering = DocxBuilder(spec).build().text('word/numbering.xml')!;
+    String level(int index) => RegExp(
+      '<w:lvl w:ilvl="$index">(.*?)</w:lvl>',
+    ).firstMatch(numbering)![1]!;
+
+    expect(
+      level(0),
+      contains(
+        '<w:numFmt w:val="upperRoman"/><w:lvlText w:val="Article %1."/>'
+        '<w:lvlJc w:val="center"/>',
+      ),
+    );
+    // In the order of Word's schema: isLgl before suff, lvlJc after lvlText.
+    expect(
+      level(1),
+      contains(
+        '<w:numFmt w:val="decimalZero"/><w:isLgl/><w:suff w:val="space"/>'
+        '<w:lvlText w:val="Section %1.%2"/><w:lvlJc w:val="right"/>',
+      ),
+    );
+    expect(level(2), contains('<w:lvlJc w:val="left"/>'));
+    expect(level(2), isNot(contains('isLgl')));
+  });
+
+  test('a list can count on with an earlier one and start levels again', () {
+    final spec = DocumentSpec();
+    final levels = ListSpec.numbered().levels;
+    final first = spec.addList(ListSpec(levels));
+    final restarted = spec.addList(
+      ListSpec(levels, continues: first, restarts: const {1: -5, 0: 3, 9: 1}),
+    );
+    spec
+      ..addList(ListSpec(levels, continues: restarted))
+      ..addList(ListSpec(ListSpec.bullets().levels, continues: 9));
+    final numbering = DocxBuilder(spec).build().text('word/numbering.xml')!;
+
+    expect(
+      RegExp(
+        '<w:abstractNum w:abstractNumId="(\\d+)"',
+      ).allMatches(numbering).map((match) => match[1]),
+      ['0', '3'],
+    );
+    expect(
+      numbering,
+      contains(
+        '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'
+        '<w:num w:numId="2"><w:abstractNumId w:val="0"/>'
+        '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="3"/>'
+        '</w:lvlOverride><w:lvlOverride w:ilvl="1"><w:startOverride '
+        'w:val="0"/></w:lvlOverride></w:num>'
+        '<w:num w:numId="3"><w:abstractNumId w:val="0"/></w:num>'
+        '<w:num w:numId="4"><w:abstractNumId w:val="3"/></w:num>',
+      ),
+    );
+  });
+
   test('links may go to files next to the document, never to other places', () {
     for (final kept in [
       'docs/guide.md',

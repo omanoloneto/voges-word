@@ -287,6 +287,82 @@ void main() {
     ]);
   });
 
+  test('checklists made with a Word list style open as checklists', () {
+    final spec = DocumentSpec();
+    final numId = spec.addList(
+      ListSpec([
+        for (var level = 0; level < 9; level++)
+          ListLevelSpec(
+            format: NumberFormat.bullet,
+            text: level == 0 ? '☐' : '☑',
+            font: 'Segoe UI Symbol',
+          ),
+      ]),
+    );
+    for (final (text, level) in [('Buy milk', 0), ('Call mom', 1)]) {
+      spec.body.add(
+        ParagraphSpec([
+          TextSpec(text),
+        ], format: ParagraphFormat(list: ListRef(numId, level))),
+      );
+    }
+    final package = DocxBuilder(spec).build();
+    // As Word saves it: the list's abstract list names the list style, whose
+    // own abstract list holds the levels.
+    final numbering = package.text('word/numbering.xml')!;
+    final levels = RegExp(
+      '<w:abstractNum w:abstractNumId="0">(.*?)</w:abstractNum>',
+    ).firstMatch(numbering)![1]!;
+    package
+      ..setText(
+        'word/numbering.xml',
+        numbering
+            .replaceFirst(
+              levels,
+              '<w:multiLevelType w:val="hybridMultilevel"/>'
+              '<w:numStyleLink w:val="Checklist"/>',
+            )
+            .replaceFirst(
+              '<w:num ',
+              '<w:abstractNum w:abstractNumId="90"><w:styleLink '
+                  'w:val="Checklist"/>${levels.replaceFirst(RegExp('<w:multiLevelType [^>]*/>'), '')}'
+                  '</w:abstractNum><w:num w:numId="90"><w:abstractNumId '
+                  'w:val="90"/></w:num><w:num ',
+            ),
+      )
+      ..setText(
+        'word/styles.xml',
+        package
+            .text('word/styles.xml')!
+            .replaceFirst(
+              '</w:styles>',
+              '<w:style w:type="numbering" w:styleId="Checklist"><w:name '
+                  'w:val="Checklist"/><w:pPr><w:numPr><w:numId w:val="90"/>'
+                  '</w:numPr></w:pPr></w:style></w:styles>',
+            ),
+      );
+    expect(package.text('word/numbering.xml'), contains('numStyleLink'));
+
+    final loaded = _docx.read(package);
+    expect(_lines(loaded.delta), [
+      [
+        'Buy milk',
+        {'list': 'unchecked'},
+      ],
+      [
+        'Call mom',
+        {'list': 'checked', 'indent': 1},
+      ],
+    ]);
+    final markdown = utf8.decode(
+      MarkdownCodec(
+        _docx,
+      ).encode(loaded.delta, source: loaded.source, look: loaded.look),
+    );
+    expect(markdown, contains('- [ ] Buy milk'));
+    expect(markdown, contains('- [x] Call mom'));
+  });
+
   test('HTML task items open as checklists and save back as boxes', () {
     final html = HtmlCodec(_docx);
     const page =

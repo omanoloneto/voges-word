@@ -5,13 +5,16 @@ import 'dart:typed_data';
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:voges_word/document/delta_blocks.dart';
 import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/embeds.dart';
 import 'package:voges_word/document/headers_footers.dart';
 import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/document/text_encodings.dart';
 import 'package:voges_word/docx/docx_codec.dart';
+import 'package:voges_word/docx/docx_numbering.dart';
 import 'package:voges_word/docx/docx_package.dart';
+import 'package:voges_word/docx/word_list_counter.dart';
 import 'package:voges_word/editor/page_numbers.dart';
 import 'package:voges_word/rtf/rtf_codec.dart';
 
@@ -65,6 +68,18 @@ String _cellText(TableCellModel cell) => cell.controller.document.toPlainText();
 
 DocxPackage _package(LoadedDocument document) =>
     document.source! as DocxPackage;
+
+/// The numbers Word shows on the document's list paragraphs.
+List<String?> _shownNumbers(LoadedDocument document) {
+  final counter = WordListCounter(DocxNumbering.of(document.source));
+  final numbers = <String?>[];
+  for (final line in documentBlocks(document.delta).whereType<LineBlock>()) {
+    if (line.list == null) continue;
+    counter.count(line);
+    numbers.add(counter.textOf(line));
+  }
+  return numbers;
+}
 
 String _hex(List<int> bytes) =>
     bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
@@ -194,7 +209,7 @@ void main() {
         isNot(one[HiddenAttributes.numbering]),
       );
       final numbering = _package(document).text('word/numbering.xml')!;
-      expect(numbering, contains('<w:start w:val="5"/>'));
+      expect(numbering, contains('<w:startOverride w:val="5"/>'));
       expect(numbering, contains('<w:numFmt w:val="lowerLetter"/>'));
     });
 
@@ -704,6 +719,67 @@ void main() {
       expect(level(0), contains('<w:suff w:val="space"/>'));
       expect(level(1), contains('<w:suff w:val="nothing"/>'));
       expect(level(2), isNot(contains('<w:suff')));
+    });
+
+    test(r'list levels keep \levellegal and \leveljc', () {
+      final document = _read(
+        r'{\rtf1{\*\listtable{\list\listtemplateid1'
+        r'{\listlevel\levelnfc1\leveljc1\leveljcn1\levelstartat1'
+        r"{\leveltext\'04CH \'00;}{\levelnumbers\'04;}\fi0\li0}"
+        r'{\listlevel\levelnfc22\leveljc0\leveljcn2\levelstartat1\levellegal'
+        r"{\leveltext\'08Sect \'00.\'01;}{\levelnumbers\'06\'08;}\fi720\li0}"
+        r'{\listlevel\levelnfc4\leveljc2\levelstartat1\levellegal0'
+        r"{\leveltext\'02\'02);}{\levelnumbers\'01;}\fi-360\li1440}"
+        r'\listid1297755732}}'
+        r'{\*\listoverridetable{\listoverride\listid1297755732'
+        r'\listoverridecount0\ls1}}'
+        r'\pard\ls1 Chapter\par\pard\ls1\ilvl1 Foo\par\pard\ls1\ilvl1 Bar\par'
+        r'\pard\ls1\ilvl2 Item\par}',
+      );
+      final numbering = _package(document).text('word/numbering.xml')!;
+      String level(int index) => RegExp(
+        '<w:lvl w:ilvl="$index">(.*?)</w:lvl>',
+      ).firstMatch(numbering)![1]!;
+
+      expect(level(0), isNot(contains('isLgl')));
+      expect(level(0), contains('<w:lvlJc w:val="center"/>'));
+      // \leveljcn, which follows the paragraph's direction, wins.
+      expect(
+        level(1),
+        contains(
+          '<w:numFmt w:val="decimalZero"/><w:isLgl/>'
+          '<w:lvlText w:val="Sect %1.%2"/><w:lvlJc w:val="right"/>',
+        ),
+      );
+      expect(level(2), isNot(contains('isLgl')));
+      expect(level(2), contains('<w:lvlJc w:val="right"/>'));
+      expect(_shownNumbers(document), ['CH I', 'Sect 1.01', 'Sect 1.02', 'a)']);
+    });
+
+    test(r'the \ls of one list count as one list, as in Word', () {
+      final document = _read(
+        r'{\rtf1{\*\listtable{\list\listtemplateid1{\listlevel\levelnfc0'
+        r"\levelstartat1{\leveltext\'02\'00.;}{\levelnumbers\'01;}\fi-360"
+        r'\li720}\listid7}}{\*\listoverridetable'
+        r'{\listoverride\listid7\listoverridecount0\ls1}'
+        r'{\listoverride\listid7\listoverridecount0\ls2}'
+        r'{\listoverride\listid7\listoverridecount1{\lfolevel'
+        r'\listoverridestartat\levelstartat1}\ls3}}'
+        r'\pard\ls1 one\par\pard\ls1 two\par\pard between\par'
+        r'\pard\ls2 three\par\pard\ls3 again\par\pard\ls1 on\par}',
+      );
+      final numbering = _package(document).text('word/numbering.xml')!;
+
+      expect(RegExp('<w:abstractNum ').allMatches(numbering), hasLength(1));
+      expect(
+        numbering,
+        contains(
+          '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/>'
+          '</w:lvlOverride>',
+        ),
+      );
+      // \ls3 starts again at 1 where it starts; \ls1 then counts on from it.
+      expect(_shownNumbers(document), ['1.', '2.', '3.', '1.', '2.']);
     });
 
     test('headers for left and right pages', () {

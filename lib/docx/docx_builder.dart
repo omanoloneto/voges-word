@@ -271,6 +271,9 @@ enum NumberFormat {
 /// What follows a list number or bullet.
 enum ListSuffix { tab, space, nothing }
 
+/// How a list number or bullet lines up where it starts.
+enum NumberAlign { left, center, right }
+
 class ListLevelSpec {
   const ListLevelSpec({
     required this.format,
@@ -280,6 +283,8 @@ class ListLevelSpec {
     this.hanging = 18,
     this.font,
     this.suffix = ListSuffix.tab,
+    this.align = NumberAlign.left,
+    this.legal = false,
   });
 
   final NumberFormat format;
@@ -295,11 +300,19 @@ class ListLevelSpec {
   /// Font of the bullet or number.
   final String? font;
   final ListSuffix suffix;
+  final NumberAlign align;
+
+  /// Word's legal numbering: the numbers the text shows are decimals.
+  final bool legal;
 }
 
 class ListSpec {
-  ListSpec(List<ListLevelSpec> levels)
-    : levels = List.unmodifiable(levels.take(9));
+  ListSpec(
+    List<ListLevelSpec> levels, {
+    this.continues,
+    Map<int, int> restarts = const {},
+  }) : levels = List.unmodifiable(levels.take(9)),
+       restarts = restarts.isEmpty ? const {} : Map.unmodifiable(restarts);
 
   factory ListSpec.bullets() => ListSpec([
     for (var level = 0; level < 9; level++)
@@ -326,6 +339,14 @@ class ListSpec {
   ];
 
   final List<ListLevelSpec> levels;
+
+  /// The id of an earlier list whose levels this one takes and whose numbers
+  /// it goes on counting, as Word counts the lists of one list definition.
+  final int? continues;
+
+  /// Levels that start again at these numbers at the list's first paragraph
+  /// there, as Word's w:startOverride.
+  final Map<int, int> restarts;
 }
 
 sealed class InlineSpec {
@@ -1607,7 +1628,15 @@ class DocxBuilder {
     final out = StringBuffer(
       '$_declaration<w:numbering xmlns:w="${Namespaces.w}">',
     );
+    final abstracts = <int>[];
     for (final (index, list) in spec.lists.indexed) {
+      final continued = list.continues;
+      final abstractId =
+          continued != null && continued >= 1 && continued <= index
+          ? abstracts[continued - 1]
+          : index;
+      abstracts.add(abstractId);
+      if (abstractId != index) continue;
       out.write(
         '<w:abstractNum w:abstractNumId="$index">'
         '<w:multiLevelType w:val="hybridMultilevel"/>',
@@ -1619,9 +1648,10 @@ class DocxBuilder {
           '<w:lvl w:ilvl="$level">'
           '<w:start w:val="${definition.start.clamp(0, 32767)}"/>'
           '<w:numFmt w:val="${definition.format.name}"/>'
+          '${definition.legal ? '<w:isLgl/>' : ''}'
           '${definition.suffix == ListSuffix.tab ? '' : '<w:suff w:val="${definition.suffix.name}"/>'}'
           '<w:lvlText w:val="${escapeXmlAttribute(stripInvalidXmlChars(definition.text))}"/>'
-          '<w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${_twips(left)}" '
+          '<w:lvlJc w:val="${definition.align.name}"/><w:pPr><w:ind w:left="${_twips(left)}" '
           'w:hanging="${_twips(definition.hanging)}"/></w:pPr>'
           '${font.isEmpty ? '' : '<w:rPr><w:rFonts w:ascii="$font" w:hAnsi="$font" w:hint="default"/></w:rPr>'}'
           '</w:lvl>',
@@ -1629,11 +1659,20 @@ class DocxBuilder {
       }
       out.write('</w:abstractNum>');
     }
-    for (var index = 0; index < spec.lists.length; index++) {
+    for (final (index, list) in spec.lists.indexed) {
       out.write(
         '<w:num w:numId="${index + 1}">'
-        '<w:abstractNumId w:val="$index"/></w:num>',
+        '<w:abstractNumId w:val="${abstracts[index]}"/>',
       );
+      for (var level = 0; list.restarts.isNotEmpty && level < 9; level++) {
+        if (list.restarts[level] case final start?) {
+          out.write(
+            '<w:lvlOverride w:ilvl="$level"><w:startOverride '
+            'w:val="${start.clamp(0, 32767)}"/></w:lvlOverride>',
+          );
+        }
+      }
+      out.write('</w:num>');
     }
     out.write('</w:numbering>');
     return out.toString();

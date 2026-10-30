@@ -11,6 +11,8 @@ class DocListLevel {
     this.firstLine,
     this.font,
     this.follow = 0,
+    this.alignment = 0,
+    this.legal = false,
   });
 
   final int start;
@@ -31,6 +33,12 @@ class DocListLevel {
   /// What follows the number (ixchFollow): 0 a tab, 1 a space, 2 nothing.
   final int follow;
 
+  /// How the number lines up (jc): 0 left, 1 centered, 2 right.
+  final int alignment;
+
+  /// fLegal: the numbers of the levels it shows are decimals.
+  final bool legal;
+
   DocListLevel startingAt(int value) => DocListLevel(
     start: value,
     format: format,
@@ -39,6 +47,8 @@ class DocListLevel {
     firstLine: firstLine,
     font: font,
     follow: follow,
+    alignment: alignment,
+    legal: legal,
   );
 }
 
@@ -160,6 +170,7 @@ class DocLists {
     forEachSprm(data, chpx, textAt, (sprm, operand, _) {
       if (sprm == Sprm.cRgFtc0) font = data.u16(operand);
     });
+    final flags = data.u8(at + 5);
     return (
       DocListLevel(
         start: data.i32(at),
@@ -169,6 +180,8 @@ class DocLists {
         firstLine: firstLine,
         font: font,
         follow: data.u8(at + 15),
+        alignment: flags & 0x03,
+        legal: flags & 0x04 != 0,
       ),
       28 + papxSize + chpxSize + 2 + length * 2,
     );

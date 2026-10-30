@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import '../document/delta_blocks.dart';
 import '../document/embeds.dart';
 import 'docx_numbering.dart';
@@ -71,13 +73,18 @@ class WordListCounter {
       final shown = int.parse(match[1]!) - 1;
       final definition = numbering.level(numId, shown);
       // Word shows a level that hasn't counted yet one before its start.
-      final count = counts[shown] ?? (definition?.start ?? 1) - 1;
-      return wordNumber(
-        count,
-        word.legal ? 'decimal' : definition?.format ?? 'decimal',
-      );
+      final count = counts[shown] ?? math.max((definition?.start ?? 1) - 1, 0);
+      final format = definition?.format ?? 'decimal';
+      return wordNumber(count, word.legal ? _legal(format) : format);
     });
   }
+
+  /// Legal numbering shows numbers in decimals, but keeps zero-padded ones,
+  /// as in `Section 1.01`; levels without a number still show none.
+  static String _legal(String format) => switch (format) {
+    'decimalZero' || 'none' || 'bullet' => format,
+    _ => 'decimal',
+  };
 
   /// The Word list [line] belongs to while the line is still the kind of
   /// list its level is.
