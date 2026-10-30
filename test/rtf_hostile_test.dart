@@ -174,8 +174,9 @@ void main() {
     final document = _read(
       '{\\rtf1{\\fonttbl{\\f0 Arial;}{\\f1 ${'a' * 10000};}}{\\f1 x}\\par}',
     );
-    final font = document.delta.toList().first.attributes?['font'] as String;
-    expect(font.length, inInclusiveRange(1, 256));
+    // The builder leaves out names over 100 characters.
+    final font = document.delta.toList().first.attributes?['font'] as String?;
+    expect(font, isNull);
   });
 
   test('formatting repeated on every paragraph counts toward the limit', () {
