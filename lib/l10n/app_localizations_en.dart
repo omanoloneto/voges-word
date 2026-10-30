@@ -449,18 +449,26 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String unsupportedImage(String format) {
-    return '$format picture: it shows in Word but not here. It is kept when you save.';
+    return '$format picture: it shows in Word but not here. It is kept when you save as .docx.';
   }
+
+  @override
+  String get pictureTooLarge =>
+      'This picture is too large to show here. It is kept when you save as .docx.';
 
   @override
   String get sectionBreak => 'Section break';
 
   @override
-  String get protectedContentTooltip => 'Word content kept as is when you save';
+  String get columnBreak => 'Column break';
+
+  @override
+  String get protectedContentTooltip =>
+      'Word content: kept as is when you save as .docx';
 
   @override
   String keptAsIs(String label) {
-    return '$label · kept as is when you save';
+    return '$label · kept as is when you save as .docx';
   }
 
   @override

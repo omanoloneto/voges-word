@@ -937,8 +937,14 @@ abstract class AppLocalizations {
   /// No description provided for @unsupportedImage.
   ///
   /// In en, this message translates to:
-  /// **'{format} picture: it shows in Word but not here. It is kept when you save.'**
+  /// **'{format} picture: it shows in Word but not here. It is kept when you save as .docx.'**
   String unsupportedImage(String format);
+
+  /// No description provided for @pictureTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'This picture is too large to show here. It is kept when you save as .docx.'**
+  String get pictureTooLarge;
 
   /// No description provided for @sectionBreak.
   ///
@@ -946,16 +952,22 @@ abstract class AppLocalizations {
   /// **'Section break'**
   String get sectionBreak;
 
+  /// No description provided for @columnBreak.
+  ///
+  /// In en, this message translates to:
+  /// **'Column break'**
+  String get columnBreak;
+
   /// No description provided for @protectedContentTooltip.
   ///
   /// In en, this message translates to:
-  /// **'Word content kept as is when you save'**
+  /// **'Word content: kept as is when you save as .docx'**
   String get protectedContentTooltip;
 
   /// No description provided for @keptAsIs.
   ///
   /// In en, this message translates to:
-  /// **'{label} · kept as is when you save'**
+  /// **'{label} · kept as is when you save as .docx'**
   String keptAsIs(String label);
 
   /// No description provided for @unsupportedPastedContent.

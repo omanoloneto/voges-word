@@ -236,7 +236,7 @@
   "linkAddress": "Address (website or email)",
   "removeLink": "Remove link",
   "ok": "OK",
-  "unsupportedImage": "{format} picture: it shows in Word but not here. It is kept when you save.",
+  "unsupportedImage": "{format} picture: it shows in Word but not here. It is kept when you save as .docx.",
   "@unsupportedImage": {
     "placeholders": {
       "format": {
@@ -244,9 +244,11 @@
       }
     }
   },
+  "pictureTooLarge": "This picture is too large to show here. It is kept when you save as .docx.",
   "sectionBreak": "Section break",
-  "protectedContentTooltip": "Word content kept as is when you save",
-  "keptAsIs": "{label} · kept as is when you save",
+  "columnBreak": "Column break",
+  "protectedContentTooltip": "Word content: kept as is when you save as .docx",
+  "keptAsIs": "{label} · kept as is when you save as .docx",
   "@keptAsIs": {
     "placeholders": {
       "label": {

@@ -6,6 +6,7 @@ import 'package:flutter_quill/flutter_quill.dart';
 import '../../docx/image_formats.dart';
 import '../../document/embeds.dart';
 import '../../l10n/l10n.dart';
+import '../picture_decoding.dart';
 
 const _guideColor = Color(0xFF9E9E9E);
 
@@ -59,9 +60,20 @@ class EmbeddedImage extends StatelessWidget {
   /// bytes as the widget, so the Image finds the picture in the cache.
   static Future<void> precache(String source, BuildContext context) async {
     final decoded = _decode(source);
-    if (decoded == null || !isDisplayable(decoded.mime)) return;
-    await precacheImage(MemoryImage(decoded.bytes), context);
+    if (decoded == null || !_isDrawable(decoded)) return;
+    await precacheImage(
+      PictureImage(decoded.bytes),
+      context,
+      onError: (error, stackTrace) {},
+    );
   }
+
+  static bool _isDrawable(({Uint8List bytes, String mime}) decoded) =>
+      isDisplayable(decoded.mime) &&
+      !_isTooLarge(imagePixelSize(decoded.bytes));
+
+  static bool _isTooLarge(({int width, int height})? pixels) =>
+      pixels != null && exceedsPictureLimit(pixels.width, pixels.height);
 
   static ({Uint8List bytes, String mime})? _decode(String source) {
     if (_cache.containsKey(source)) {
@@ -84,17 +96,27 @@ class EmbeddedImage extends StatelessWidget {
         ? 4 / 3
         : pixels.width / pixels.height;
     final height = this.height ?? width / naturalRatio;
+    final l10n = context.l10n;
+    final unsupported = l10n.unsupportedImage(
+      decoded == null ? '' : extensionForMime(decoded.mime).toUpperCase(),
+    );
     final Widget image;
-    if (decoded != null && isDisplayable(decoded.mime)) {
-      image = Image.memory(
-        decoded.bytes,
+    if (decoded == null || !isDisplayable(decoded.mime)) {
+      image = _placeholder(context, unsupported);
+    } else if (_isTooLarge(pixels)) {
+      image = _placeholder(context, l10n.pictureTooLarge);
+    } else {
+      image = Image(
+        image: PictureImage(decoded.bytes),
         fit: BoxFit.fill,
         gaplessPlayback: true,
-        errorBuilder: (context, error, stackTrace) =>
-            _placeholder(context, decoded.mime),
+        errorBuilder: (context, error, stackTrace) => _placeholder(
+          context,
+          error is PictureTooLargeException
+              ? l10n.pictureTooLarge
+              : unsupported,
+        ),
       );
-    } else {
-      image = _placeholder(context, decoded?.mime);
     }
     return Semantics(
       image: true,
@@ -106,17 +128,17 @@ class EmbeddedImage extends StatelessWidget {
     );
   }
 
-  Widget _placeholder(BuildContext context, String? mime) {
-    final format = mime == null ? '' : extensionForMime(mime).toUpperCase();
+  Widget _placeholder(BuildContext context, String message) {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: const Color(0xFFF2F2F2),
         border: Border.all(color: _guideColor, width: 0.5),
       ),
       child: Center(
-        child: Tooltip(
-          message: context.l10n.unsupportedImage(format),
-          child: const Icon(Icons.image_outlined, color: _guideColor),
+        child: _withTooltip(
+          context,
+          message,
+          const Icon(Icons.image_outlined, color: _guideColor),
         ),
       ),
     );
@@ -234,6 +256,9 @@ class OpaqueInlineEmbedBuilder extends EmbedBuilder {
   Widget build(BuildContext context, EmbedContext embedContext) {
     final content = OpaqueContent.decode(embedContext.node.value.data);
     if (content.hidden) return const SizedBox.shrink();
+    if (_isColumnBreak(content)) {
+      return _BreakMarker(label: context.l10n.columnBreak);
+    }
     final style = embedContext.textStyle;
     final size = style.fontSize ?? 12;
     if (content.label == OpaqueLabels.note) {
@@ -249,9 +274,10 @@ class OpaqueInlineEmbedBuilder extends EmbedBuilder {
     final text = content.text.isNotEmpty
         ? content.text
         : '[${opaqueLabel(context.l10n, content.label ?? OpaqueLabels.object)}]';
-    return Tooltip(
-      message: context.l10n.protectedContentTooltip,
-      child: ColoredBox(
+    return _withTooltip(
+      context,
+      context.l10n.protectedContentTooltip,
+      ColoredBox(
         color: const Color(0xFFE6E6E6),
         child: Text(text, style: style, textScaler: TextScaler.noScaling),
       ),
@@ -281,9 +307,10 @@ class PageNumberEmbedBuilder extends EmbedBuilder {
 
   @override
   Widget build(BuildContext context, EmbedContext embedContext) {
-    return Tooltip(
-      message: context.l10n.pageNumber,
-      child: DecoratedBox(
+    return _withTooltip(
+      context,
+      context.l10n.pageNumber,
+      DecoratedBox(
         decoration: BoxDecoration(
           color: const Color(0xFFDCE7FB),
           borderRadius: BorderRadius.circular(3),
@@ -356,11 +383,25 @@ class UnknownEmbedBuilder extends EmbedBuilder {
   bool get expanded => false;
 
   @override
-  Widget build(BuildContext context, EmbedContext embedContext) => Tooltip(
-    message: context.l10n.unsupportedPastedContent,
-    child: const Icon(Icons.help_outline, size: 16, color: _guideColor),
+  Widget build(BuildContext context, EmbedContext embedContext) => _withTooltip(
+    context,
+    context.l10n.unsupportedPastedContent,
+    const Icon(Icons.help_outline, size: 16, color: _guideColor),
   );
 }
+
+/// Pages drawn off-screen for the PDF and printing have no overlay, which a
+/// tooltip needs.
+Widget _withTooltip(BuildContext context, String message, Widget child) =>
+    Overlay.maybeOf(context) == null
+    ? child
+    : Tooltip(message: message, child: child);
+
+/// The editor has a single column, so Word's column break shows as a mark.
+bool _isColumnBreak(OpaqueContent content) =>
+    content.text == '\u2028' && _columnBreak.hasMatch(content.xml);
+
+final _columnBreak = RegExp(r'''<(?:\w+:)?br\b[^>]*\btype=["']column["']''');
 
 /// Label of protected content in the user's language; unknown kinds (like a
 /// Word gallery name) are shown as they came.

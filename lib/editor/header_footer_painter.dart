@@ -9,6 +9,7 @@ import '../document/document_look.dart';
 import '../document/embeds.dart';
 import '../document/headers_footers.dart';
 import 'paper_styles.dart';
+import 'picture_decoding.dart';
 
 /// Paints the header and footer on each page, in points: text, page number
 /// and images (anchored logos at the position Word uses).
@@ -131,8 +132,9 @@ class HeaderFooterPainter extends ChangeNotifier {
       final decoded = decodeDataUri(source);
       if (decoded == null) continue;
       try {
-        final codec = await ui.instantiateImageCodec(decoded.bytes);
+        final codec = await openPicture(decoded.bytes);
         final frame = await codec.getNextFrame();
+        codec.dispose();
         if (_disposed) {
           frame.image.dispose();
           return;
