@@ -1,4 +1,3 @@
-import 'dart:collection';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -225,7 +224,9 @@ class _TextLineState extends State<TextLine> {
 
     // The line could contain more than one Embed & more than one Text
     final textSpanChildren = <InlineSpan>[];
-    var textNodes = LinkedList<Node>();
+    // Voges Word: the runs themselves, not parentless clones, so the span
+    // builder knows their line (the spell checker reads it) and offsets.
+    var textNodes = <Node>[];
     for (var child in widget.line.children) {
       if (child is Embed) {
         if (textNodes.isNotEmpty) {
@@ -235,7 +236,7 @@ class _TextLineState extends State<TextLine> {
             lineStyle,
             widget.textSpanBuilder,
           ));
-          textNodes = LinkedList<Node>();
+          textNodes = <Node>[];
         }
         // Creates correct node for custom embed
         if (child.value.type == BlockEmbed.customType) {
@@ -270,8 +271,7 @@ class _TextLineState extends State<TextLine> {
         continue;
       }
 
-      // here child is Text node and its value is cloned
-      textNodes.add(child.clone());
+      textNodes.add(child);
     }
 
     if (textNodes.isNotEmpty) {
@@ -302,12 +302,12 @@ class _TextLineState extends State<TextLine> {
 
   InlineSpan _buildTextSpan(
     DefaultStyles defaultStyles,
-    LinkedList<Node> nodes,
+    Iterable<Node> nodes,
     TextStyle lineStyle,
     TextSpanBuilder textSpanBuilder,
   ) {
     if (nodes.isEmpty && kIsWeb) {
-      nodes = LinkedList<Node>()..add(leaf.QuillText());
+      nodes = [leaf.QuillText()];
     }
 
     final isComposingRangeOutOfLine = !widget.composingRange.isValid ||
@@ -901,8 +901,7 @@ class RenderEditableTextLine extends RenderEditableBox {
   List<_PageBreak> _computePageBreaks(QuillPageLayout pages, double bodyTop) {
     final body = _body!;
     final height = body.size.height;
-    if (bodyTop + height <=
-        pages.contentBottom(pages.pageAt(bodyTop)) + 0.5) {
+    if (bodyTop + height <= pages.contentBottom(pages.pageAt(bodyTop)) + 0.5) {
       return const [];
     }
     final lines = _visualLines();
@@ -1618,7 +1617,9 @@ class RenderEditableTextLine extends RenderEditableBox {
     final paint = Paint()..color = color;
     for (final box in _selectedRects!) {
       context.canvas.drawRect(
-          box.toRect().shift(effectiveOffset + Offset(0, _visualShift(box.top))),
+          box
+              .toRect()
+              .shift(effectiveOffset + Offset(0, _visualShift(box.top))),
           paint);
     }
   }

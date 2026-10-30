@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import '../document/document_codec.dart';
 import '../l10n/l10n.dart';
 import 'editor_session.dart';
+import 'zoom.dart';
+
+const _zoomStep = 0.05;
 
 class StatusBar extends StatefulWidget {
   const StatusBar({
@@ -35,6 +38,7 @@ class _StatusBarState extends State<StatusBar> {
   Timer? _debounce;
   var _words = 0;
   var _characters = 0;
+  var _protectedContent = false;
   StreamSubscription<void>? _changes;
   StreamSubscription<void>? _tableChanges;
 
@@ -69,16 +73,21 @@ class _StatusBarState extends State<StatusBar> {
   }
 
   void _count() {
-    final text = widget.session.plainTextContent();
+    final session = widget.session;
+    final text = session.plainTextContent();
     final words = RegExp(
       r'[\p{L}\p{N}]+(?:[-’\x27][\p{L}\p{N}]+)*',
       unicode: true,
     ).allMatches(text).length;
     final characters = text.replaceAll(RegExp(r'[\n\uFFFC]'), '').length;
+    final protectedContent =
+        _FormatNote.dependsOnProtectedContent.contains(session.format) &&
+        session.hasProtectedContent();
     if (!mounted) return;
     setState(() {
       _words = words;
       _characters = characters;
+      _protectedContent = protectedContent;
     });
   }
 
@@ -117,15 +126,14 @@ class _StatusBarState extends State<StatusBar> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (session.format == DocumentFormat.plainText) ...[
+              if (_FormatNote.of(
+                    l10n,
+                    session.format,
+                    protectedContent: _protectedContent,
+                  )
+                  case final note?) ...[
                 const SizedBox(width: 12),
-                Tooltip(
-                  message: l10n.plainTextWarning,
-                  child: Text(
-                    l10n.plainText,
-                    style: small?.copyWith(color: theme.colorScheme.error),
-                  ),
-                ),
+                _FormatChip(note),
               ],
               const Spacer(),
               if (widget.trailing case final trailing?) ...[
@@ -145,10 +153,11 @@ class _StatusBarState extends State<StatusBar> {
                     ),
                   ),
                   child: Slider(
-                    min: 0.5,
-                    max: 2,
-                    divisions: 30,
-                    value: widget.zoom.clamp(0.5, 2),
+                    min: smallestZoom,
+                    max: largestZoom,
+                    divisions: ((largestZoom - smallestZoom) / _zoomStep)
+                        .round(),
+                    value: widget.zoom.clamp(smallestZoom, largestZoom),
                     label: '${(widget.zoom * 100).round()}%',
                     semanticFormatterCallback: (value) =>
                         'Zoom ${(value * 100).round()}%',
@@ -166,6 +175,105 @@ class _StatusBarState extends State<StatusBar> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// What saving in the document's format leaves out or does differently.
+class _FormatNote {
+  const _FormatNote(this.label, this.message, {required this.losesContent});
+
+  /// Formats that don't keep Word's equations, charts and other protected
+  /// content as they are; their note shows only when the document has some.
+  static const dependsOnProtectedContent = {
+    DocumentFormat.odt,
+    DocumentFormat.rtf,
+  };
+
+  /// Null for the formats that keep what the editor shows.
+  static _FormatNote? of(
+    AppLocalizations l10n,
+    DocumentFormat format, {
+    required bool protectedContent,
+  }) => switch (format) {
+    DocumentFormat.plainText => _FormatNote(
+      l10n.plainText,
+      l10n.plainTextWarning,
+      losesContent: true,
+    ),
+    DocumentFormat.markdown => _FormatNote(
+      l10n.markdown,
+      l10n.markdownWarning,
+      losesContent: true,
+    ),
+    DocumentFormat.html => _FormatNote(
+      l10n.webPage,
+      l10n.webPageWarning,
+      losesContent: true,
+    ),
+    DocumentFormat.doc => _FormatNote(
+      l10n.word97,
+      l10n.word97Warning,
+      losesContent: false,
+    ),
+    DocumentFormat.docm => _FormatNote(
+      l10n.wordMacros,
+      l10n.wordMacrosWarning,
+      losesContent: false,
+    ),
+    DocumentFormat.odt when protectedContent => _FormatNote(
+      l10n.openDocumentText,
+      l10n.openDocumentTextWarning,
+      losesContent: true,
+    ),
+    DocumentFormat.rtf when protectedContent => _FormatNote(
+      l10n.richText,
+      l10n.richTextWarning,
+      losesContent: true,
+    ),
+    DocumentFormat.docx || DocumentFormat.odt || DocumentFormat.rtf => null,
+  };
+
+  final String label;
+  final String message;
+  final bool losesContent;
+}
+
+class _FormatChip extends StatelessWidget {
+  const _FormatChip(this.note);
+
+  final _FormatNote note;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = note.losesContent
+        ? theme.colorScheme.error
+        : theme.colorScheme.onSurfaceVariant;
+    // On phones only the icon fits beside the zoom.
+    final compact = MediaQuery.sizeOf(context).width < 480;
+    return Tooltip(
+      message: note.message,
+      triggerMode: TooltipTriggerMode.tap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            note.losesContent
+                ? Icons.warning_amber_rounded
+                : Icons.info_outline,
+            size: 14,
+            color: color,
+          ),
+          if (!compact) ...[
+            const SizedBox(width: 4),
+            Text(
+              note.label,
+              style: theme.textTheme.bodySmall?.copyWith(color: color),
+            ),
+          ],
+        ],
       ),
     );
   }

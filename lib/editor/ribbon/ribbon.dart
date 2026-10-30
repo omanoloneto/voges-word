@@ -12,6 +12,7 @@ import '../editor_factory.dart';
 import '../editor_session.dart';
 import '../page_numbers.dart';
 import '../embeds/table_embed.dart';
+import '../zoom.dart';
 import 'font_picker.dart';
 import 'ribbon_controls.dart';
 import 'ribbon_style.dart';
@@ -57,8 +58,6 @@ enum RibbonTab {
     table => l10n.tabTable,
   };
 }
-
-const zoomLevels = [0.5, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
 
 const _sizes = <num>[
   8,
@@ -286,23 +285,16 @@ class _RibbonState extends State<Ribbon> {
   Widget _homeTab() => _withController((controller) {
     final l10n = context.l10n;
     final look = session.look;
-    final header = controller.valueOf<int>(Attribute.header.key) ?? 0;
+    final style = controller.getSelectionStyle();
+    final header = style.valueOf<int>(Attribute.header.key) ?? 0;
     final base = header == 0 ? look.body : look.heading(header);
-    final font =
-        controller.valueOf<String>(Attribute.font.key) ?? base.fontFamily;
-    final sizeValue = controller
-        .getSelectionStyle()
-        .attributes[Attribute.size.key]
-        ?.value;
+    final font = style.valueOf<String>(Attribute.font.key) ?? base.fontFamily;
+    final sizeValue = style.attributes[Attribute.size.key]?.value;
     final size = num.tryParse('${sizeValue ?? ''}') ?? base.fontSize;
-    final align = controller.valueOf<String>(Attribute.align.key) ?? 'left';
-    final list = controller.valueOf<String>(Attribute.list.key);
+    final align = style.valueOf<String>(Attribute.align.key) ?? 'left';
+    final list = style.valueOf<String>(Attribute.list.key);
     final lineSpacing =
-        (controller
-                    .getSelectionStyle()
-                    .attributes[Attribute.lineHeight.key]
-                    ?.value
-                as num?)
+        (style.attributes[Attribute.lineHeight.key]?.value as num?)
             ?.toDouble() ??
         look.lineSpacing;
 
@@ -380,7 +372,7 @@ class _RibbonState extends State<Ribbon> {
                     RibbonIconButton(
                       icon: icon,
                       tooltip: tip,
-                      selected: controller.isActive(attribute),
+                      selected: style.isActive(attribute),
                       onPressed: () => controller.toggle(attribute),
                     ),
                   RibbonIconButton(
@@ -404,7 +396,7 @@ class _RibbonState extends State<Ribbon> {
                 tooltip: l10n.fontColor,
                 quick: _quickTextColors,
                 palette: _textPalette,
-                current: controller.valueOf<String>(Attribute.color.key),
+                current: style.valueOf<String>(Attribute.color.key),
                 lastUsed: _lastTextColor,
                 clearLabel: l10n.automaticColor,
                 onSelected: (hex) => _apply(() {
@@ -418,7 +410,7 @@ class _RibbonState extends State<Ribbon> {
                 tooltip: l10n.highlightColor,
                 quick: _quickHighlights,
                 palette: _highlightPalette,
-                current: controller.valueOf<String>(Attribute.background.key),
+                current: style.valueOf<String>(Attribute.background.key),
                 lastUsed: _lastHighlight,
                 clearLabel: l10n.noHighlight,
                 onSelected: (hex) => _apply(() {
@@ -704,9 +696,8 @@ class _RibbonState extends State<Ribbon> {
   Widget _viewTab() {
     final l10n = context.l10n;
     final zoom = widget.actions.zoom;
-    final index = zoomLevels.indexWhere(
-      (level) => (level - zoom).abs() < 0.001,
-    );
+    final zoomOut = nextZoomLevel(zoom, -1);
+    final zoomIn = nextZoomLevel(zoom, 1);
     return Row(
       children: [
         RibbonGroup(
@@ -740,9 +731,9 @@ class _RibbonState extends State<Ribbon> {
               RibbonIconButton(
                 icon: Icons.zoom_out,
                 tooltip: '${l10n.zoomOut} ($_mod-)',
-                onPressed: index > 0
-                    ? () => widget.actions.onZoom(zoomLevels[index - 1])
-                    : null,
+                onPressed: zoomOut == null
+                    ? null
+                    : () => widget.actions.onZoom(zoomOut),
               ),
               SizedBox(
                 width: 52,
@@ -755,9 +746,9 @@ class _RibbonState extends State<Ribbon> {
               RibbonIconButton(
                 icon: Icons.zoom_in,
                 tooltip: '${l10n.zoomIn} ($_mod=)',
-                onPressed: index < zoomLevels.length - 1
-                    ? () => widget.actions.onZoom(zoomLevels[index + 1])
-                    : null,
+                onPressed: zoomIn == null
+                    ? null
+                    : () => widget.actions.onZoom(zoomIn),
               ),
               const SizedBox(width: 8),
               RibbonBigButton(

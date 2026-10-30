@@ -8,6 +8,7 @@ import 'document_look.dart';
 import 'embeds.dart';
 import 'headers_footers.dart';
 import 'tables.dart';
+import 'text_encodings.dart';
 
 class PlainTextCodec implements DocumentCodec {
   PlainTextCodec({required this.look, required this.tables});
@@ -16,13 +17,16 @@ class PlainTextCodec implements DocumentCodec {
   final TableStore tables;
 
   @override
-  DocumentFormat get format => DocumentFormat.plainText;
+  LoadedDocument decode(Uint8List bytes) => load(prepare(bytes));
+
+  /// The text of the file, with its line breaks as `\n`.
+  static PreparedText prepare(Uint8List bytes) => PreparedText(
+    decodeText(bytes).replaceAll('\r\n', '\n').replaceAll('\r', '\n'),
+  );
 
   @override
-  LoadedDocument decode(Uint8List bytes) {
-    final text = _decodeText(
-      bytes,
-    ).replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  LoadedDocument load(covariant PreparedText prepared) {
+    final text = prepared.text;
     final delta = Delta();
     if (text.isNotEmpty) delta.insert(text);
     if (!text.endsWith('\n')) delta.insert('\n');
@@ -33,7 +37,8 @@ class PlainTextCodec implements DocumentCodec {
   Uint8List encode(
     Delta delta, {
     Object? source,
-    DocumentLook? pageSetup,
+    DocumentLook look = const DocumentLook(),
+    bool pageSetupChanged = false,
     HeadersFooters? headersFooters,
   }) => Uint8List.fromList(utf8.encode(plainTextOf(delta)));
 
@@ -42,14 +47,14 @@ class PlainTextCodec implements DocumentCodec {
     for (final operation in delta.toList()) {
       final data = operation.data;
       if (data is String) {
-        out.write(data.replaceAll('\u2028', '\n'));
+        out.write(_withLineBreaks(data));
         continue;
       }
       if (data is! Map) continue;
       final value = data.values.first;
       switch (data.keys.first) {
         case EmbedTypes.opaqueInline || EmbedTypes.opaqueBlock:
-          out.write(OpaqueContent.decode(value).text);
+          out.write(_withLineBreaks(OpaqueContent.decode(value).text));
         case EmbedTypes.pageBreak:
           out.write('\n');
         case EmbedTypes.table:
@@ -73,29 +78,5 @@ class PlainTextCodec implements DocumentCodec {
     return out.toString();
   }
 
-  static String _decodeText(Uint8List bytes) {
-    if (bytes.length >= 3 &&
-        bytes[0] == 0xEF &&
-        bytes[1] == 0xBB &&
-        bytes[2] == 0xBF) {
-      return utf8.decode(bytes.sublist(3), allowMalformed: true);
-    }
-    if (bytes.length >= 2 &&
-        (bytes[0] == 0xFF && bytes[1] == 0xFE ||
-            bytes[0] == 0xFE && bytes[1] == 0xFF)) {
-      final littleEndian = bytes[0] == 0xFF;
-      final units = <int>[
-        for (var i = 2; i + 1 < bytes.length; i += 2)
-          littleEndian
-              ? bytes[i] | bytes[i + 1] << 8
-              : bytes[i] << 8 | bytes[i + 1],
-      ];
-      return String.fromCharCodes(units);
-    }
-    try {
-      return utf8.decode(bytes);
-    } on FormatException {
-      return latin1.decode(bytes);
-    }
-  }
+  static String _withLineBreaks(String text) => text.replaceAll('\u2028', '\n');
 }

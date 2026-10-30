@@ -1,5 +1,7 @@
 import 'dart:collection';
 
+import 'package:meta/meta.dart';
+
 import '../../../../quill_delta.dart';
 import '../../editor/embed/embed_editor_builder.dart';
 import '../attribute.dart';
@@ -64,23 +66,38 @@ abstract base class Node extends LinkedListEntry<Node> {
     if (list == null || isFirst) {
       return 0;
     }
-    var offset = 0;
-    for (final node in list!) {
-      if (node == this) {
-        break;
-      }
+    // Voges Word: a node counts from the nearest previous sibling whose
+    // offset is known, so reading every line's or leaf's offset in order, as
+    // the editor does when it builds and paints, takes linear time.
+    return _offset = _offsetFromKnownSibling();
+  }
+
+  /// Also keeps the offsets of the siblings it passes.
+  int _offsetFromKnownSibling() {
+    var known = previous!;
+    while (known._offset == null && !known.isFirst) {
+      known = known.previous!;
+    }
+    var offset = known._offset ?? 0;
+    for (var node = known; !identical(node, this); node = node.next!) {
+      node._offset = offset;
       offset += node.length;
     }
-
-    _offset = offset;
-    return _offset!;
+    return offset;
   }
 
   void clearOffsetCache() {
-    _offset = null;
-    final next = this.next;
-    if (next != null) {
-      next.clearOffsetCache();
+    // Voges Word: a loop, since a long document has more lines than the
+    // stack has room for calls. Siblings know their offsets from the first
+    // one on, so the first unknown one ends the walk; an edit of every line
+    // from the top no longer walks every line below each one. A node clears
+    // its own offset and the ones after it whenever it is unlinked or one is
+    // linked before it, and a linked node's offset is unknown, which keeps
+    // the known offsets first.
+    for (Node? node = this;
+        node != null && node._offset != null;
+        node = node.next) {
+      node._offset = null;
     }
   }
 
@@ -123,9 +140,11 @@ abstract base class Node extends LinkedListEntry<Node> {
   @override
   void insertAfter(Node entry) {
     assert(entry.parent == null && parent != null);
+    // Voges Word: the offsets after this node are cleared before [entry],
+    // whose offset is unknown, goes between them; see [clearOffsetCache].
+    clearLengthCache();
     entry.parent = parent;
     super.insertAfter(entry);
-    clearLengthCache();
   }
 
   @override
@@ -162,6 +181,13 @@ abstract base class Node extends LinkedListEntry<Node> {
 
 /// Root node of document tree.
 base class Root extends QuillContainer<QuillContainer<Node?>> {
+  /// Voges Word: the lines of this tree query and edit it with Quill
+  /// 11.5.0's algorithms, which recurse once per line, and Document.compose
+  /// searches it from the first line for each operation. Set only in
+  /// documents made by Document.fromDeltaByInserts, so tests can compare.
+  @internal
+  bool quillAlgorithms = false;
+
   @override
   Node newInstance() => Root();
 
@@ -169,7 +195,5 @@ base class Root extends QuillContainer<QuillContainer<Node?>> {
   QuillContainer<Node?> get defaultChild => Line();
 
   @override
-  Delta toDelta() => children
-      .map((child) => child.toDelta())
-      .fold(Delta(), (a, b) => a.concat(b));
+  Delta toDelta() => childrenDelta();
 }

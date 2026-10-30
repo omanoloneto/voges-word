@@ -42,6 +42,18 @@ class ResolveLineFormatRule extends FormatRule {
     // Apply line styles to all newline characters within range of this
     // retain operation.
     var result = Delta()..retain(index);
+    // Voges Word: each line's part joins the result in place; concat copied
+    // the whole result for every line. Quill's way is kept for tests.
+    final copies = document.root.quillAlgorithms;
+    void add(Delta delta) {
+      if (copies) {
+        result = result.concat(delta);
+      } else if (delta.isNotEmpty) {
+        result.push(delta.first);
+        result.operations.addAll(delta.operations.skip(1));
+      }
+    }
+
     final itr = DeltaIterator(document.toDelta())..skip(index);
     Operation op;
     for (var cur = 0; cur < len! && itr.hasNext; cur += op.length!) {
@@ -52,8 +64,7 @@ class ResolveLineFormatRule extends FormatRule {
         continue;
       }
 
-      final delta = _applyAttribute(opText, op, attribute);
-      result = result.concat(delta);
+      add(_applyAttribute(opText, op, attribute));
     }
     // And include extra newline after retain
     while (itr.hasNext) {
@@ -65,8 +76,7 @@ class ResolveLineFormatRule extends FormatRule {
         continue;
       }
 
-      final delta = _applyAttribute(opText, op, attribute, firstOnly: true);
-      result = result.concat(delta);
+      add(_applyAttribute(opText, op, attribute, firstOnly: true));
       break;
     }
     return result;

@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../document/document_codec.dart';
 import '../l10n/l10n.dart';
+import 'format_names.dart';
 
 enum UnsavedChoice { save, discard, cancel }
 
@@ -62,33 +64,56 @@ Future<bool> askToRecover(
   return recover ?? false;
 }
 
-enum ShareFormat { docx, pdf }
+/// [current] is the document in the format of its file.
+enum ShareFormat { docx, current, pdf }
 
-Future<ShareFormat?> askShareFormat(BuildContext context) =>
-    showDialog<ShareFormat>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: Text(context.l10n.shareAs),
-        children: [
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, ShareFormat.docx),
-            child: ListTile(
-              leading: const Icon(Icons.description_outlined),
-              title: Text(context.l10n.shareWordDocument),
-              subtitle: Text(context.l10n.shareWordDocumentHint),
-            ),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, ShareFormat.pdf),
-            child: ListTile(
-              leading: const Icon(Icons.picture_as_pdf_outlined),
-              title: Text(context.l10n.sharePdf),
-              subtitle: Text(context.l10n.sharePdfHint),
-            ),
-          ),
-        ],
+/// Offers the document's own format only when it is saved and isn't a .docx.
+Future<ShareFormat?> askShareFormat(
+  BuildContext context,
+  DocumentFormat current,
+) => showDialog<ShareFormat>(
+  context: context,
+  builder: (context) {
+    final l10n = context.l10n;
+    Widget option(
+      ShareFormat value,
+      IconData icon,
+      String title,
+      String hint,
+    ) => SimpleDialogOption(
+      onPressed: () => Navigator.pop(context, value),
+      child: ListTile(
+        leading: Icon(icon),
+        title: Text(title),
+        subtitle: Text(hint),
       ),
     );
+    return SimpleDialog(
+      title: Text(l10n.shareAs),
+      children: [
+        option(
+          ShareFormat.docx,
+          Icons.description_outlined,
+          l10n.formatDocx,
+          l10n.shareWordDocumentHint,
+        ),
+        if (current.writable && current != DocumentFormat.docx)
+          option(
+            ShareFormat.current,
+            Icons.insert_drive_file_outlined,
+            formatName(l10n, current),
+            l10n.shareCurrentFormatHint,
+          ),
+        option(
+          ShareFormat.pdf,
+          Icons.picture_as_pdf_outlined,
+          l10n.sharePdf,
+          l10n.sharePdfHint,
+        ),
+      ],
+    );
+  },
+);
 
 /// Dialog showing the progress while the PDF is built.
 void showPdfProgress(

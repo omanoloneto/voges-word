@@ -1258,8 +1258,8 @@ class RenderEditor extends RenderEditableContainerBox
               .addPostFrameCallback((_) => onChanged(count));
         }
       }
-      size = constraints.constrain(
-          Size(constraints.maxWidth, pages.totalHeight(count)));
+      size = constraints
+          .constrain(Size(constraints.maxWidth, pages.totalHeight(count)));
       return;
     }
     while (child != null) {
@@ -1857,6 +1857,13 @@ class RenderEditableContainerBox extends RenderBox
     while (child != null) {
       if (paged != null) {
         final pages = paged.pages;
+        // Voges Word: a line of a block that starts with a page break starts
+        // a page, as the editor's own lines do in RenderEditor._layoutPaged.
+        final y = paged.top + mainAxisExtent;
+        if ((pages.breaksBefore?.call(child.container) ?? false) &&
+            !pages.isAtPageTop(y)) {
+          mainAxisExtent = pages.nextPage(y + 1) - paged.top;
+        }
         mainAxisExtent = pages.place(paged.top + mainAxisExtent, 0) - paged.top;
         layoutPagedChild(
             child, innerConstraints, pages, paged.top + mainAxisExtent);

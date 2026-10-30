@@ -16,64 +16,107 @@ String spellingTextOf(Line line) {
       .replaceAll('￼', ' ');
 }
 
+/// A line's misspellings for one build of the line's widget.
+final class _LineSpelling {
+  _LineSpelling(this._widget, this._line, this.misspellings);
+
+  final Widget _widget;
+  final Line _line;
+  final List<Misspelling>? misspellings;
+  Map<Node, int>? _starts;
+
+  bool isFor(Widget widget, Line line) =>
+      identical(widget, _widget) && identical(line, _line);
+
+  /// Where [leaf] starts in the paragraph's text, from one walk over the
+  /// line: Quill's cached offset of a run stays put when another run is
+  /// inserted before it.
+  int startOf(Node leaf) {
+    var start = _starts?[leaf];
+    if (start == null) {
+      final starts = _starts = Map.identity();
+      var offset = 0;
+      for (final child in _line.children) {
+        starts[child] = offset;
+        offset += child.length;
+      }
+      start = starts[leaf]!;
+    }
+    return start;
+  }
+}
+
 /// Underlines misspelled words with a wavy red line.
-TextSpanBuilder spellingSpanBuilder(SpellChecker checker) =>
-    (context, node, nodeOffset, text, style, recognizer) {
-      final line = node.parent;
-      final found = recognizer != null || line is! Line || text.isEmpty
-          ? null
-          : checker.misspellingsOf(spellingTextOf(line));
-      if (found == null || found.isEmpty) {
-        return defaultSpanBuilder(
-          context,
-          node,
-          nodeOffset,
-          text,
-          style,
-          recognizer,
+TextSpanBuilder spellingSpanBuilder(SpellChecker checker) {
+  _LineSpelling? last;
+  return (context, node, nodeOffset, text, style, recognizer) {
+    final line = node.parent;
+    _LineSpelling? paragraph;
+    if (recognizer == null && line is Line && text.isNotEmpty) {
+      paragraph = last;
+      // Quill builds a line's leaves one after another for the same widget,
+      // so each build looks the paragraph up once instead of once per leaf.
+      if (paragraph == null || !paragraph.isFor(context.widget, line)) {
+        paragraph = last = _LineSpelling(
+          context.widget,
+          line,
+          checker.misspellingsOf(spellingTextOf(line)),
         );
       }
-      final start = node.offset + nodeOffset;
-      final end = start + text.length;
-      final wavy = (style ?? const TextStyle()).copyWith(
-        decoration: TextDecoration.combine([
-          ?style?.decoration,
-          TextDecoration.underline,
-        ]),
-        decorationStyle: TextDecorationStyle.wavy,
-        decorationColor: _wavyColor,
+    }
+    final found = paragraph?.misspellings;
+    if (paragraph == null || found == null || found.isEmpty) {
+      return defaultSpanBuilder(
+        context,
+        node,
+        nodeOffset,
+        text,
+        style,
+        recognizer,
       );
-      final children = <TextSpan>[];
-      var cursor = start;
-      for (final misspelling in found) {
-        final from = math.max(misspelling.start, start);
-        final to = math.min(misspelling.end, end);
-        if (from >= to) continue;
-        if (from > cursor) {
-          children.add(
-            TextSpan(text: text.substring(cursor - start, from - start)),
-          );
-        }
+    }
+    final start = paragraph.startOf(node) + nodeOffset;
+    final end = start + text.length;
+    final wavy = (style ?? const TextStyle()).copyWith(
+      decoration: TextDecoration.combine([
+        ?style?.decoration,
+        TextDecoration.underline,
+      ]),
+      decorationStyle: TextDecorationStyle.wavy,
+      decorationColor: _wavyColor,
+    );
+    final children = <TextSpan>[];
+    var cursor = start;
+    for (final misspelling in found) {
+      final from = math.max(misspelling.start, start);
+      final to = math.min(misspelling.end, end);
+      if (from >= to) continue;
+      if (from > cursor) {
         children.add(
-          TextSpan(text: text.substring(from - start, to - start), style: wavy),
-        );
-        cursor = to;
-      }
-      if (children.isEmpty) {
-        return defaultSpanBuilder(
-          context,
-          node,
-          nodeOffset,
-          text,
-          style,
-          recognizer,
+          TextSpan(text: text.substring(cursor - start, from - start)),
         );
       }
-      if (cursor < end) {
-        children.add(TextSpan(text: text.substring(cursor - start)));
-      }
-      return TextSpan(style: style, children: children);
-    };
+      children.add(
+        TextSpan(text: text.substring(from - start, to - start), style: wavy),
+      );
+      cursor = to;
+    }
+    if (children.isEmpty) {
+      return defaultSpanBuilder(
+        context,
+        node,
+        nodeOffset,
+        text,
+        style,
+        recognizer,
+      );
+    }
+    if (cursor < end) {
+      children.add(TextSpan(text: text.substring(cursor - start)));
+    }
+    return TextSpan(style: style, children: children);
+  };
+}
 
 /// Right-click (or long-press) menu with suggestions for the word.
 QuillEditorContextMenuBuilder spellingContextMenu(SpellChecker checker) =>

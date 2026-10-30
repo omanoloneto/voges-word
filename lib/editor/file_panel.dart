@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../docx/docx_template.dart';
 import '../document/document_codec.dart';
@@ -9,6 +10,7 @@ import '../l10n/app_language.dart';
 import '../l10n/l10n.dart';
 import 'app_logo.dart';
 import 'editor_session.dart';
+import 'format_names.dart';
 import 'ribbon/ribbon_style.dart';
 
 class FilePanelActions {
@@ -168,14 +170,11 @@ class _FilePanel extends StatelessWidget {
                         context,
                         () => actions.saveAs(DocumentFormat.docx),
                       ),
+                      tooltip: l10n.formatDocx,
                     ),
-                    _PanelAction(
-                      Icons.text_snippet_outlined,
-                      l10n.plainTextFile,
-                      () => _run(
-                        context,
-                        () => actions.saveAs(DocumentFormat.plainText),
-                      ),
+                    _OtherFormats(
+                      onSelected: (format) =>
+                          _run(context, () => actions.saveAs(format)),
                     ),
                     _PanelAction(
                       Icons.picture_as_pdf_outlined,
@@ -310,23 +309,117 @@ class _SectionTitle extends StatelessWidget {
 }
 
 class _PanelAction extends StatelessWidget {
-  const _PanelAction(this.icon, this.label, this.onTap);
+  const _PanelAction(
+    this.icon,
+    this.label,
+    this.onTap, {
+    this.tooltip,
+    this.focusNode,
+    this.opensMenu = false,
+  });
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final String? tooltip;
+  final FocusNode? focusNode;
+
+  /// Shows an arrow after the label.
+  final bool opensMenu;
 
   @override
-  Widget build(BuildContext context) => TextButton.icon(
-    onPressed: onTap,
-    style: TextButton.styleFrom(
-      foregroundColor: RibbonColors.text,
-      overlayColor: RibbonColors.hover,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-    ),
-    icon: Icon(icon, size: 18),
-    label: Text(label, style: RibbonText.control),
-  );
+  Widget build(BuildContext context) {
+    final text = Text(label, style: RibbonText.control);
+    final button = TextButton.icon(
+      onPressed: onTap,
+      focusNode: focusNode,
+      style: TextButton.styleFrom(
+        foregroundColor: RibbonColors.text,
+        overlayColor: RibbonColors.hover,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      ),
+      icon: Icon(icon, size: 18),
+      label: opensMenu
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [text, const Icon(Icons.arrow_drop_down, size: 18)],
+            )
+          : text,
+    );
+    return tooltip == null ? button : Tooltip(message: tooltip, child: button);
+  }
+}
+
+/// Save as in the formats besides .docx, which Save as itself uses.
+class _OtherFormats extends StatefulWidget {
+  const _OtherFormats({required this.onSelected});
+
+  static const formats = [
+    DocumentFormat.odt,
+    DocumentFormat.rtf,
+    DocumentFormat.html,
+    DocumentFormat.markdown,
+    DocumentFormat.plainText,
+  ];
+
+  final ValueChanged<DocumentFormat> onSelected;
+
+  @override
+  State<_OtherFormats> createState() => _OtherFormatsState();
+}
+
+class _OtherFormatsState extends State<_OtherFormats> {
+  final _button = FocusNode(debugLabel: 'Other formats');
+  final _firstFormat = FocusNode(debugLabel: 'First format');
+
+  @override
+  void dispose() {
+    _button.dispose();
+    _firstFormat.dispose();
+    super.dispose();
+  }
+
+  void _toggle(MenuController menu) {
+    if (menu.isOpen) {
+      menu.close();
+      return;
+    }
+    // Opened with Enter or Space, the list takes the focus for the arrow keys.
+    final fromKeyboard =
+        _button.hasPrimaryFocus &&
+        HardwareKeyboard.instance.logicalKeysPressed.isNotEmpty;
+    menu.open();
+    if (fromKeyboard) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _firstFormat.requestFocus(),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return MenuAnchor(
+      childFocusNode: _button,
+      style: ribbonMenuStyle(),
+      menuChildren: [
+        for (final (index, format) in _OtherFormats.formats.indexed)
+          MenuItemButton(
+            focusNode: index == 0 ? _firstFormat : null,
+            style: ribbonMenuItemStyle(),
+            onPressed: () => widget.onSelected(format),
+            child: Text(formatName(l10n, format)),
+          ),
+      ],
+      builder: (context, menu, _) => _PanelAction(
+        Icons.description_outlined,
+        l10n.otherFormats,
+        () => _toggle(menu),
+        focusNode: _button,
+        opensMenu: true,
+      ),
+    );
+  }
 }
 
 class _Card extends StatelessWidget {

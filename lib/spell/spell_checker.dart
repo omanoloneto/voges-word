@@ -81,6 +81,16 @@ class _MobileSpellBackend implements SpellBackend {
   }
 }
 
+/// What the backend found in a paragraph.
+final class _Checked {
+  _Checked(this.misspellings, this.round);
+
+  final List<Misspelling> misspellings;
+
+  /// The announcement round in which it was checked or last asked for.
+  int round;
+}
+
 /// Paragraph spelling, checked in the background and cached by each
 /// paragraph's text; ignored words apply to every document.
 class SpellChecker extends ChangeNotifier {
@@ -90,8 +100,11 @@ class SpellChecker extends ChangeNotifier {
   static const _ignoredKey = 'ortografia_ignoradas';
   static const _enabledKey = 'ortografia_ligada';
 
+  static const _batchSize = 20;
+  static const _maxResults = 4000;
+
   final SpellBackend _backend;
-  final _results = <String, List<Misspelling>>{};
+  final _results = <String, _Checked>{};
   final _queue = <String>{};
   var _ignored = <String>{};
   var _enabled = true;
@@ -99,6 +112,10 @@ class SpellChecker extends ChangeNotifier {
   Timer? _timer;
   var _running = false;
   var _disposed = false;
+
+  /// Counts the announcements of new results; each one rebuilds the editor,
+  /// which asks again for every paragraph it shows.
+  var _round = 0;
 
   bool get enabled => _enabled;
 
@@ -134,13 +151,14 @@ class SpellChecker extends ChangeNotifier {
   /// Null while the paragraph has not been checked yet.
   List<Misspelling>? misspellingsOf(String text) {
     if (!_enabled || text.trim().isEmpty) return null;
-    final found = _results[text];
-    if (found == null) {
+    final result = _results[text];
+    if (result == null) {
       _enqueue(text);
       return null;
     }
+    result.round = _round;
     return [
-      for (final misspelling in found)
+      for (final misspelling in result.misspellings)
         if (misspelling.end <= text.length &&
             !_ignored.contains(
               text.substring(misspelling.start, misspelling.end).toLowerCase(),
@@ -165,25 +183,55 @@ class SpellChecker extends ChangeNotifier {
   Future<void> _drain() async {
     if (_running) return;
     _running = true;
+    var checked = 0;
+    var announced = 0;
     try {
       while (_queue.isNotEmpty && !_disposed) {
-        final batch = _queue.take(20).toList();
+        final batch = _queue.take(_batchSize).toList();
         _queue.removeAll(batch);
         final language = _language;
         final found = await _backend.check(batch, language);
         if (language != _language) continue;
         for (var i = 0; i < batch.length && i < found.length; i++) {
-          _results[batch[i]] = found[i];
+          _results[batch[i]] = _Checked(found[i], _round);
         }
-        if (_results.length > 4000) {
-          _results.remove(_results.keys.first);
+        checked += batch.length;
+        // Each announcement rebuilds the whole editor, so a long check
+        // announces only when its results double, about log2(n) times. A
+        // short queue, as while typing, is announced after every batch.
+        if (checked >= 2 * announced || _queue.length < _batchSize) {
+          announced = checked;
+          _announce();
         }
-        if (!_disposed) notifyListeners();
       }
     } catch (_) {
       _queue.clear();
     } finally {
       _running = false;
+      if (checked > announced) _announce();
+    }
+  }
+
+  void _announce() {
+    if (_disposed) return;
+    _trim();
+    _round++;
+    notifyListeners();
+  }
+
+  /// Drops the oldest results beyond [_maxResults] that were neither checked
+  /// nor asked for in the last two rounds. The editor asks for every
+  /// paragraph it shows after each announcement, so dropping one of those
+  /// would only queue it again.
+  void _trim() {
+    final excess = _results.length - _maxResults;
+    if (excess <= 0) return;
+    final unused = [
+      for (final MapEntry(:key, :value) in _results.entries)
+        if (value.round < _round - 1) key,
+    ];
+    for (final text in unused.take(excess)) {
+      _results.remove(text);
     }
   }
 

@@ -868,17 +868,17 @@ abstract class AppLocalizations {
   /// **'Share as'**
   String get shareAs;
 
-  /// No description provided for @shareWordDocument.
-  ///
-  /// In en, this message translates to:
-  /// **'Word document (.docx)'**
-  String get shareWordDocument;
-
   /// No description provided for @shareWordDocumentHint.
   ///
   /// In en, this message translates to:
   /// **'Whoever receives it can edit it'**
   String get shareWordDocumentHint;
+
+  /// No description provided for @shareCurrentFormatHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Same format as the file'**
+  String get shareCurrentFormatHint;
 
   /// No description provided for @sharePdf.
   ///
@@ -903,6 +903,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Building the PDF: page {page} of {total}'**
   String buildingPdfPage(int page, int total);
+
+  /// No description provided for @openingDocument.
+  ///
+  /// In en, this message translates to:
+  /// **'Opening “{name}”…'**
+  String openingDocument(String name);
 
   /// No description provided for @editLink.
   ///
@@ -937,8 +943,14 @@ abstract class AppLocalizations {
   /// No description provided for @unsupportedImage.
   ///
   /// In en, this message translates to:
-  /// **'{format} picture: it shows in Word but not here. It is kept when you save.'**
+  /// **'{format} picture: it shows in Word but not here. It is kept when you save as .docx.'**
   String unsupportedImage(String format);
+
+  /// No description provided for @pictureTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'This picture is too large to show here. It is kept when you save as .docx.'**
+  String get pictureTooLarge;
 
   /// No description provided for @sectionBreak.
   ///
@@ -946,16 +958,22 @@ abstract class AppLocalizations {
   /// **'Section break'**
   String get sectionBreak;
 
+  /// No description provided for @columnBreak.
+  ///
+  /// In en, this message translates to:
+  /// **'Column break'**
+  String get columnBreak;
+
   /// No description provided for @protectedContentTooltip.
   ///
   /// In en, this message translates to:
-  /// **'Word content kept as is when you save'**
+  /// **'Word content: kept as is when you save as .docx'**
   String get protectedContentTooltip;
 
   /// No description provided for @keptAsIs.
   ///
   /// In en, this message translates to:
-  /// **'{label} · kept as is when you save'**
+  /// **'{label} · kept as is when you save as .docx'**
   String keptAsIs(String label);
 
   /// No description provided for @unsupportedPastedContent.
@@ -1069,25 +1087,31 @@ abstract class AppLocalizations {
   /// No description provided for @problemLegacyDoc.
   ///
   /// In en, this message translates to:
-  /// **'Old .doc files aren’t supported. Open the file in Word and save it as .docx.'**
+  /// **'Files from Word 95 and older aren’t supported. Open the file in Word and save it as .docx.'**
   String get problemLegacyDoc;
 
   /// No description provided for @problemUnsupportedFormat.
   ///
   /// In en, this message translates to:
-  /// **'Voges Word opens .docx and .txt files.'**
+  /// **'Voges Word opens .docx, .doc, .odt, .rtf, .html, .md and .txt files.'**
   String get problemUnsupportedFormat;
 
   /// No description provided for @problemNotWordDocument.
   ///
   /// In en, this message translates to:
-  /// **'The file isn’t a valid Word document.'**
+  /// **'The file isn’t a valid document.'**
   String get problemNotWordDocument;
+
+  /// No description provided for @problemPasswordProtected.
+  ///
+  /// In en, this message translates to:
+  /// **'The file is protected with a password. Remove the password in the app that created it and try again.'**
+  String get problemPasswordProtected;
 
   /// No description provided for @problemTooLarge.
   ///
   /// In en, this message translates to:
-  /// **'The file is too large to open.'**
+  /// **'The file is too large or too complex to open.'**
   String get problemTooLarge;
 
   /// No description provided for @problemDamaged.
@@ -1107,6 +1131,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The document’s comments don’t show in Voges Word.'**
   String get noticeCommentsHidden;
+
+  /// No description provided for @noticeContentNotImported.
+  ///
+  /// In en, this message translates to:
+  /// **'Some parts of this file can’t be shown in Voges Word and will be left out when you save it.'**
+  String get noticeContentNotImported;
+
+  /// No description provided for @noticeSavesAsDocx.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a Word 97–2003 file. Saving creates a .docx copy and leaves the original untouched.'**
+  String get noticeSavesAsDocx;
 
   /// No description provided for @recoverFailed.
   ///
@@ -1432,6 +1468,78 @@ abstract class AppLocalizations {
   /// **'Plain text'**
   String get plainText;
 
+  /// No description provided for @markdownWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'.md files keep only basic formatting. Use “Save as” to keep all of it.'**
+  String get markdownWarning;
+
+  /// No description provided for @markdown.
+  ///
+  /// In en, this message translates to:
+  /// **'Markdown'**
+  String get markdown;
+
+  /// No description provided for @webPageWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Web pages don’t keep the page setup, headers or footers. Use “Save as” to keep them.'**
+  String get webPageWarning;
+
+  /// No description provided for @webPage.
+  ///
+  /// In en, this message translates to:
+  /// **'Web page'**
+  String get webPage;
+
+  /// No description provided for @word97Warning.
+  ///
+  /// In en, this message translates to:
+  /// **'Voges Word doesn’t write Word 97–2003 files: saving creates a .docx copy and leaves the original untouched.'**
+  String get word97Warning;
+
+  /// No description provided for @word97.
+  ///
+  /// In en, this message translates to:
+  /// **'Word 97–2003'**
+  String get word97;
+
+  /// No description provided for @wordMacrosWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'Macros are kept when you save, but Voges Word never runs them. “Save as” creates a .docx without them.'**
+  String get wordMacrosWarning;
+
+  /// No description provided for @wordMacros.
+  ///
+  /// In en, this message translates to:
+  /// **'Word with macros'**
+  String get wordMacros;
+
+  /// No description provided for @openDocumentTextWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'.odt files don’t keep equations, charts and other Word content as they are. Use “Save as” to keep them.'**
+  String get openDocumentTextWarning;
+
+  /// No description provided for @openDocumentText.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenDocument'**
+  String get openDocumentText;
+
+  /// No description provided for @richTextWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'.rtf files don’t keep equations, charts and other Word content as they are. Use “Save as” to keep them.'**
+  String get richTextWarning;
+
+  /// No description provided for @richText.
+  ///
+  /// In en, this message translates to:
+  /// **'RTF'**
+  String get richText;
+
   /// No description provided for @minimize.
   ///
   /// In en, this message translates to:
@@ -1492,11 +1600,59 @@ abstract class AppLocalizations {
   /// **'Open'**
   String get open;
 
-  /// No description provided for @plainTextFile.
+  /// No description provided for @otherFormats.
   ///
   /// In en, this message translates to:
-  /// **'Text (.txt)'**
-  String get plainTextFile;
+  /// **'Other formats'**
+  String get otherFormats;
+
+  /// No description provided for @formatDocx.
+  ///
+  /// In en, this message translates to:
+  /// **'Word document (.docx)'**
+  String get formatDocx;
+
+  /// No description provided for @formatDocm.
+  ///
+  /// In en, this message translates to:
+  /// **'Word document with macros (.docm)'**
+  String get formatDocm;
+
+  /// No description provided for @formatDoc.
+  ///
+  /// In en, this message translates to:
+  /// **'Word 97–2003 document (.doc)'**
+  String get formatDoc;
+
+  /// No description provided for @formatOdt.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenDocument Text (.odt)'**
+  String get formatOdt;
+
+  /// No description provided for @formatRtf.
+  ///
+  /// In en, this message translates to:
+  /// **'Rich Text Format (.rtf)'**
+  String get formatRtf;
+
+  /// No description provided for @formatHtml.
+  ///
+  /// In en, this message translates to:
+  /// **'Web page (.html)'**
+  String get formatHtml;
+
+  /// No description provided for @formatMarkdown.
+  ///
+  /// In en, this message translates to:
+  /// **'Markdown (.md)'**
+  String get formatMarkdown;
+
+  /// No description provided for @formatPlainText.
+  ///
+  /// In en, this message translates to:
+  /// **'Plain text (.txt)'**
+  String get formatPlainText;
 
   /// No description provided for @print.
   ///

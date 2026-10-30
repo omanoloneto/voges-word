@@ -23,6 +23,11 @@ abstract final class HiddenAttributes {
   static const paragraphProperties = 'vw-ppr';
   static const runProperties = 'vw-rpr';
   static const numbering = 'vw-num';
+
+  /// The Word level of a paragraph at a level of its [numbering] list without
+  /// numbers (w:numFmt none), which the editor shows as a plain paragraph.
+  static const unnumberedLevel = 'vw-nlvl';
+
   static const bookmarks = 'vw-bmk';
   static const drawing = 'vw-drawing';
   static const package = 'vw-pkg';

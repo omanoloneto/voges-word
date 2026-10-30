@@ -414,10 +414,10 @@ class AppLocalizationsPt extends AppLocalizations {
   String get shareAs => 'Compartilhar como';
 
   @override
-  String get shareWordDocument => 'Documento do Word (.docx)';
+  String get shareWordDocumentHint => 'Quem receber pode editar';
 
   @override
-  String get shareWordDocumentHint => 'Quem receber pode editar';
+  String get shareCurrentFormatHint => 'No mesmo formato do arquivo';
 
   @override
   String get sharePdf => 'PDF';
@@ -431,6 +431,11 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String buildingPdfPage(int page, int total) {
     return 'Montando o PDF: página $page de $total';
+  }
+
+  @override
+  String openingDocument(String name) {
+    return 'Abrindo “$name”…';
   }
 
   @override
@@ -450,19 +455,26 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String unsupportedImage(String format) {
-    return 'Imagem $format: aparece no Word, mas não aqui. É mantida ao salvar.';
+    return 'Imagem $format: aparece no Word, mas não aqui. É mantida ao salvar em .docx.';
   }
+
+  @override
+  String get pictureTooLarge =>
+      'Esta imagem é grande demais para aparecer aqui. Ela é mantida ao salvar em .docx.';
 
   @override
   String get sectionBreak => 'Quebra de seção';
 
   @override
+  String get columnBreak => 'Quebra de coluna';
+
+  @override
   String get protectedContentTooltip =>
-      'Conteúdo do Word mantido como está ao salvar';
+      'Conteúdo do Word: fica do jeito que está ao salvar em .docx';
 
   @override
   String keptAsIs(String label) {
-    return '$label · mantido como está ao salvar';
+    return '$label · fica do jeito que está ao salvar em .docx';
   }
 
   @override
@@ -522,18 +534,22 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get problemLegacyDoc =>
-      'Arquivos .doc antigos não são suportados. Abra no Word e salve como .docx.';
+      'Arquivos do Word 95 ou anteriores não são suportados. Abra no Word e salve como .docx.';
 
   @override
   String get problemUnsupportedFormat =>
-      'O Voges Word abre arquivos .docx e .txt.';
+      'O Voges Word abre arquivos .docx, .doc, .odt, .rtf, .html, .md e .txt.';
 
   @override
-  String get problemNotWordDocument =>
-      'O arquivo não é um documento do Word válido.';
+  String get problemNotWordDocument => 'O arquivo não é um documento válido.';
 
   @override
-  String get problemTooLarge => 'O arquivo é grande demais para abrir.';
+  String get problemPasswordProtected =>
+      'O arquivo está protegido por senha. Tire a senha no programa que o criou e tente de novo.';
+
+  @override
+  String get problemTooLarge =>
+      'O arquivo é grande ou complexo demais para abrir.';
 
   @override
   String problemDamaged(String name) {
@@ -547,6 +563,14 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String get noticeCommentsHidden =>
       'Os comentários do documento não aparecem no Voges Word.';
+
+  @override
+  String get noticeContentNotImported =>
+      'Algumas partes deste arquivo não aparecem no Voges Word e ficam de fora ao salvar.';
+
+  @override
+  String get noticeSavesAsDocx =>
+      'Este é um arquivo do Word 97–2003. Ao salvar, é criada uma cópia .docx e o original fica intacto.';
 
   @override
   String get recoverFailed => 'Não foi possível recuperar o documento.';
@@ -757,6 +781,48 @@ class AppLocalizationsPt extends AppLocalizations {
   String get plainText => 'Texto simples';
 
   @override
+  String get markdownWarning =>
+      'Arquivos .md guardam só a formatação básica. Use “Salvar como” para manter toda a formatação.';
+
+  @override
+  String get markdown => 'Markdown';
+
+  @override
+  String get webPageWarning =>
+      'Páginas da web não guardam a configuração da página, o cabeçalho nem o rodapé. Use “Salvar como” para mantê-los.';
+
+  @override
+  String get webPage => 'Página da web';
+
+  @override
+  String get word97Warning =>
+      'O Voges Word não grava arquivos do Word 97–2003: ao salvar, é criada uma cópia .docx e o original fica intacto.';
+
+  @override
+  String get word97 => 'Word 97–2003';
+
+  @override
+  String get wordMacrosWarning =>
+      'As macros são mantidas ao salvar, mas o Voges Word nunca as executa. “Salvar como” cria um .docx sem elas.';
+
+  @override
+  String get wordMacros => 'Word com macros';
+
+  @override
+  String get openDocumentTextWarning =>
+      'Arquivos .odt não guardam equações, gráficos e outros conteúdos do Word do jeito que estão. Use “Salvar como” para mantê-los.';
+
+  @override
+  String get openDocumentText => 'OpenDocument';
+
+  @override
+  String get richTextWarning =>
+      'Arquivos .rtf não guardam equações, gráficos e outros conteúdos do Word do jeito que estão. Use “Salvar como” para mantê-los.';
+
+  @override
+  String get richText => 'RTF';
+
+  @override
   String get minimize => 'Minimizar';
 
   @override
@@ -789,7 +855,31 @@ class AppLocalizationsPt extends AppLocalizations {
   String get open => 'Abrir';
 
   @override
-  String get plainTextFile => 'Texto (.txt)';
+  String get otherFormats => 'Outros formatos';
+
+  @override
+  String get formatDocx => 'Documento do Word (.docx)';
+
+  @override
+  String get formatDocm => 'Documento do Word com macros (.docm)';
+
+  @override
+  String get formatDoc => 'Documento do Word 97–2003 (.doc)';
+
+  @override
+  String get formatOdt => 'Texto OpenDocument (.odt)';
+
+  @override
+  String get formatRtf => 'Formato Rich Text (.rtf)';
+
+  @override
+  String get formatHtml => 'Página da web (.html)';
+
+  @override
+  String get formatMarkdown => 'Markdown (.md)';
+
+  @override
+  String get formatPlainText => 'Texto simples (.txt)';
 
   @override
   String get print => 'Imprimir';

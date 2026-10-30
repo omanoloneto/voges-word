@@ -58,15 +58,16 @@ class _PaperViewState extends State<PaperView> {
     super.dispose();
   }
 
-  HeaderFooterPainter _decorationsFor() {
+  HeaderFooterPainter _decorationsFor(double pixelRatio) {
     final session = widget.session;
     final current = _decorations;
     if (current != null &&
         current.stories == session.headersFooters &&
         current.look == session.look) {
-      return current;
+      return current..raisePixelRatio(pixelRatio);
     }
-    final next = HeaderFooterPainter(session.headersFooters, session.look);
+    final next = HeaderFooterPainter(session.headersFooters, session.look)
+      ..raisePixelRatio(pixelRatio);
     WidgetsBinding.instance.addPostFrameCallback((_) => current?.dispose());
     return _decorations = next;
   }
@@ -97,8 +98,8 @@ class _PaperViewState extends State<PaperView> {
     return _factory!;
   }
 
-  QuillPageLayout _pageLayoutFor(double scale) {
-    final decorations = _decorationsFor();
+  QuillPageLayout _pageLayoutFor(double scale, double pixelRatio) {
+    final decorations = _decorationsFor(pixelRatio);
     final key = (widget.session.look, scale, decorations);
     if (_pageLayout == null || _pageLayoutKey != key) {
       _pageLayoutKey = key;
@@ -190,7 +191,12 @@ class _PaperViewState extends State<PaperView> {
                       autoFocus: true,
                       placeholder: context.l10n.startWriting,
                       editorKey: widget.editorKey,
-                      pageLayout: paged ? _pageLayoutFor(scale) : null,
+                      pageLayout: paged
+                          ? _pageLayoutFor(
+                              scale,
+                              MediaQuery.devicePixelRatioOf(context),
+                            )
+                          : null,
                     ),
                   ),
                 ),

@@ -9,12 +9,13 @@ import '../document/document_look.dart';
 import '../document/embeds.dart';
 import '../document/headers_footers.dart';
 import 'paper_styles.dart';
+import 'picture_decoding.dart';
 
 /// Paints the header and footer on each page, in points: text, page number
 /// and images (anchored logos at the position Word uses).
 class HeaderFooterPainter extends ChangeNotifier {
   HeaderFooterPainter(this.stories, this.look) {
-    ready = _decodeImages();
+    ready = _decodeImages(_pixelRatio);
   }
 
   /// Completes when the header and footer images are ready.
@@ -24,7 +25,18 @@ class HeaderFooterPainter extends ChangeNotifier {
   final DocumentLook look;
   final _images = <String, ui.Image>{};
   final _layouts = <(HeaderFooterStory, int, int), _StoryLayout>{};
+  var _pixelRatio = _sharpestScreen;
   var _disposed = false;
+
+  /// Decodes the pictures again when the pages are drawn on a screen sharper
+  /// than the one they were decoded for, as when the window moves to another
+  /// screen or the system's scaling grows; until then the current ones are
+  /// drawn.
+  void raisePixelRatio(double devicePixelRatio) {
+    if (_disposed || devicePixelRatio <= _pixelRatio) return;
+    _pixelRatio = devicePixelRatio;
+    _decodeImages(devicePixelRatio).ignore();
+  }
 
   Iterable<HeaderFooterStory> get _all => [
     ...stories.headers.values,
@@ -121,28 +133,53 @@ class HeaderFooterPainter extends ChangeNotifier {
   static bool _isField(String type) =>
       type == EmbedTypes.pageNumber || type == EmbedTypes.opaqueInline;
 
-  Future<void> _decodeImages() async {
-    final sources = {
-      for (final story in _all)
-        for (final op in story.delta.toList())
-          if (op.data case {EmbedTypes.image: final String source}) source,
-    };
-    for (final source in sources) {
+  /// Each picture is decoded once for [pixelRatio], at the largest size it is
+  /// drawn; a later call for a sharper screen takes over.
+  Future<void> _decodeImages(double pixelRatio) async {
+    final sizes = <String, Size>{};
+    for (final story in _all) {
+      for (final op in story.delta.toList()) {
+        if (op.data case {EmbedTypes.image: final String source}) {
+          final size = _imageSize(op.attributes);
+          final other = sizes[source] ?? Size.zero;
+          sizes[source] = Size(
+            math.max(size.width, other.width),
+            math.max(size.height, other.height),
+          );
+        }
+      }
+    }
+    for (final MapEntry(key: source, value: size) in sizes.entries) {
       final decoded = decodeDataUri(source);
-      if (decoded == null) continue;
+      if (decoded == null || size.isEmpty) continue;
       try {
-        final codec = await ui.instantiateImageCodec(decoded.bytes);
+        final codec = await openPicture(
+          decoded.bytes,
+          drawnSize: drawnPictureSize(size.width, size.height, pixelRatio),
+        );
         final frame = await codec.getNextFrame();
-        if (_disposed) {
+        codec.dispose();
+        if (_disposed || pixelRatio < _pixelRatio) {
           frame.image.dispose();
           return;
         }
+        _images.remove(source)?.dispose();
         _images[source] = frame.image;
         notifyListeners();
       } catch (_) {
         continue;
       }
     }
+  }
+
+  /// The sharpest screen's: the pictures stay sharp when the window moves to
+  /// another screen.
+  static double get _sharpestScreen {
+    final platform = PaintingBinding.instance.platformDispatcher;
+    return [
+      for (final view in platform.views) view.devicePixelRatio,
+      for (final display in platform.displays) display.devicePixelRatio,
+    ].fold(1.0, math.max);
   }
 
   @override
@@ -154,6 +191,13 @@ class HeaderFooterPainter extends ChangeNotifier {
     super.dispose();
   }
 }
+
+/// Size in points from the image embed's attributes; nothing is drawn
+/// without one.
+Size _imageSize(Map<String, dynamic>? attributes) => Size(
+  double.tryParse('${attributes?[Attribute.width.key]}') ?? 0,
+  double.tryParse('${attributes?[Attribute.height.key]}') ?? 0,
+);
 
 class _PlacedText {
   const _PlacedText(this.painter, this.offset, this.images);
@@ -279,10 +323,7 @@ class _StoryLayout {
               }
             case EmbedTypes.image:
               final attributes = node.style.attributes;
-              final size = Size(
-                double.tryParse('${attributes['width']?.value}') ?? 0,
-                double.tryParse('${attributes['height']?.value}') ?? 0,
-              );
+              final size = _imageSize(node.style.toJson());
               final xml =
                   '${attributes[HiddenAttributes.drawing]?.value ?? ''}';
               final source = value.data as String;

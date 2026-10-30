@@ -22,6 +22,9 @@ class DocxReader {
   final DocxPackage package;
   final TableStore tables;
 
+  /// Each picture's data URI, made once however often the picture appears.
+  final _pictures = <String, String>{};
+
   LoadedDocument read() {
     final path = package.mainDocumentPath;
     final document = package.xml(path)!;
@@ -54,21 +57,28 @@ class DocxReader {
       numbering: DocxNumbering.parse(_xmlOf(partOf('numbering'))),
       relationships: {for (final r in relationships) r.id: r},
       tables: tables,
+      pictures: _pictures,
     );
 
-    final delta = Delta();
+    final delta = _DeltaBuilder();
     _BlockReader(context, delta).read(body.childElements);
-    if (delta.isEmpty || !_endsWithNewline(delta)) delta.insert('\n');
+    delta.endWithNewline();
 
     final section = x.child(body, 'sectPr');
+    final firstSection = x
+        .children(body, 'p')
+        .map((paragraph) => x.child(x.child(paragraph, 'pPr'), 'sectPr'))
+        .nonNulls
+        .firstOrNull;
     return LoadedDocument(
-      delta: delta,
+      delta: delta.build(),
       look: _look(styles, x, section),
       source: package,
       notices: context.notices.toList(),
       headersFooters: _headersFooters(
         context,
         section,
+        firstSection ?? section,
         _xmlOf(partOf('settings')),
       ),
     );
@@ -77,21 +87,35 @@ class DocxReader {
   HeadersFooters _headersFooters(
     _ReadContext main,
     XmlElement? section,
+    XmlElement? firstSection,
     XmlDocument? settings,
   ) {
     final x = main.x;
-    Map<PageVariant, HeaderFooterStory> read(String reference) => {
-      if (section != null)
-        for (final element in x.children(section, reference))
-          switch (x.attr(element, 'type')) {
-            'first' => PageVariant.first,
-            'even' => PageVariant.even,
-            _ => PageVariant.normal,
-          }: ?_story(
-            main,
-            x.relAttr(element, 'id'),
-          ),
-    };
+    Map<PageVariant, HeaderFooterStory> read(String reference) {
+      Map<PageVariant, String?> ids(XmlElement? section) => {
+        if (section != null)
+          for (final element in x.children(section, reference))
+            switch (x.attr(element, 'type')) {
+              'first' => PageVariant.first,
+              'even' => PageVariant.even,
+              _ => PageVariant.normal,
+            }: x.relAttr(
+              element,
+              'id',
+            ),
+      };
+      final last = ids(section);
+      // DocxBuilder repeats the normal story as a later section's first-page
+      // one; the document's first page is then the first section's.
+      if (last[PageVariant.first] != null &&
+          last[PageVariant.first] == last[PageVariant.normal]) {
+        last[PageVariant.first] = ids(firstSection)[PageVariant.first];
+      }
+      return {
+        for (final MapEntry(key: variant, value: id) in last.entries)
+          variant: ?_story(main, id),
+      };
+    }
 
     double distance(String name) =>
         (double.tryParse(x.attr(x.child(section, 'pgMar'), name) ?? '') ??
@@ -128,20 +152,89 @@ class DocxReader {
       numbering: main.numbering,
       relationships: {for (final r in package.relationships(path)) r.id: r},
       tables: tables,
+      pictures: _pictures,
     );
-    final delta = Delta();
+    final delta = _DeltaBuilder();
     _BlockReader(context, delta).read(root.childElements);
-    if (delta.isEmpty || !_endsWithNewline(delta)) delta.insert('\n');
+    delta.endWithNewline();
     main.notices.addAll(context.notices);
-    return HeaderFooterStory(delta: delta, partPath: path);
+    return HeaderFooterStory(delta: delta.build(), partPath: path);
+  }
+
+  /// The footnotes or endnotes ([kind] is `footnote` or `endnote`) by id,
+  /// read like the body, without the reference mark that starts each one.
+  Map<String, Delta> notes(String kind) {
+    final main = package.mainDocumentPath;
+    final relationships = package.relationships(main);
+    String? partOf(String type) {
+      for (final relationship in relationships) {
+        if (relationship.hasType(type) && !relationship.external) {
+          return DocxPackage.resolve(main, relationship.target);
+        }
+      }
+      return null;
+    }
+
+    final path = partOf('${kind}s');
+    final root = path == null ? null : package.xml(path)?.rootElement;
+    if (path == null || root == null) return const {};
+    final x = WordXml(root);
+    final context = _ReadContext(
+      package: package,
+      documentPath: path,
+      x: x,
+      styles: DocxStyles.parse(
+        _xmlOf(partOf('styles')),
+        _xmlOf(partOf('theme')),
+      ),
+      numbering: DocxNumbering.parse(_xmlOf(partOf('numbering'))),
+      relationships: {for (final r in package.relationships(path)) r.id: r},
+      tables: tables,
+      pictures: _pictures,
+    );
+    final notes = <String, Delta>{};
+    for (final note in root.childElements) {
+      final id = x.attr(note, 'id');
+      if (!x.isW(note, kind) || id == null) continue;
+      final delta = _DeltaBuilder();
+      _BlockReader(context, delta).read(note.childElements);
+      notes[id] = _withoutNoteMark(delta.build());
+    }
+    return notes;
+  }
+
+  static Delta _withoutNoteMark(Delta delta) {
+    final out = _DeltaBuilder();
+    var leading = true;
+    var marked = false;
+    for (final op in delta.operations) {
+      final data = op.data;
+      if (leading && data is Map) {
+        final value = data[EmbedTypes.opaqueInline];
+        if (!marked &&
+            value != null &&
+            RegExp(
+              r'<w:(footnoteRef|endnoteRef)\b',
+            ).hasMatch(OpaqueContent.decode(value).xml)) {
+          marked = true;
+          continue;
+        }
+      }
+      if (leading && marked && data is String) {
+        final trimmed = data.replaceFirst(RegExp(r'^[ \t]+'), '');
+        if (trimmed.isEmpty) continue;
+        out.insert(trimmed, op.attributes);
+        leading = false;
+        continue;
+      }
+      leading = false;
+      out.push(op);
+    }
+    out.endWithNewline();
+    return out.build();
   }
 
   XmlDocument? _xmlOf(String? path) => path == null ? null : package.xml(path);
-
-  static bool _endsWithNewline(Delta delta) {
-    final last = delta.last.data;
-    return last is String && last.endsWith('\n');
-  }
 
   static DocumentLook _look(DocxStyles styles, WordXml x, XmlElement? section) {
     TextLook lookOf(RunProps run, ParagraphProps paragraph) => TextLook(
@@ -208,6 +301,7 @@ class _ReadContext {
     required this.numbering,
     required this.relationships,
     required this.tables,
+    required this.pictures,
   }) : normalRun = styles.runProps(null),
        normalParagraph = styles.paragraphProps(null),
        listParagraphStyleId = styles.idByName('List Paragraph');
@@ -219,11 +313,45 @@ class _ReadContext {
   final DocxNumbering numbering;
   final Map<String, Relationship> relationships;
   final TableStore tables;
+  final Map<String, String> pictures;
   final RunProps normalRun;
   final ParagraphProps normalParagraph;
   final String? listParagraphStyleId;
   final notices = <DocumentNotice>{};
   var footnotes = 0;
+
+  // Documents repeat a few formats on all their runs and paragraphs, so
+  // each one is worked out once.
+  final _runFormats = <_Markup, _RunFormat>{};
+  final _paragraphFormats = <_Markup, _ParagraphFormat>{};
+
+  _RunFormat runFormat(XmlElement? properties, String? paragraphStyleId) =>
+      _cached(
+        _runFormats,
+        properties,
+        paragraphStyleId,
+        () => _RunFormat(this, properties, paragraphStyleId),
+      );
+
+  _ParagraphFormat paragraphFormat(XmlElement? properties) => _cached(
+    _paragraphFormats,
+    properties,
+    null,
+    () => _ParagraphFormat(this, properties),
+  );
+
+  static T _cached<T>(
+    Map<_Markup, T> cache,
+    XmlElement? properties,
+    Object? context,
+    T Function() make,
+  ) {
+    final key = properties == null ? null : _Markup.of(properties, context);
+    if (key == null) return make();
+    if (cache[key] case final known?) return known;
+    if (cache.length >= _maxFormats) cache.clear();
+    return cache[key] = make();
+  }
 
   String textOf(XmlElement element) {
     final buffer = StringBuffer();
@@ -275,11 +403,204 @@ const _ignoredMarkers = {
   'lastRenderedPageBreak',
 };
 
+/// Formats kept at once; the cache starts over past this, so files that
+/// never repeat one don't fill memory.
+const _maxFormats = 4096;
+
+/// Formatting markup, like a w:rPr, compared by its content. Only elements
+/// and text a few levels deep count: other markup is worked out each time.
+class _Markup {
+  _Markup._(this.element, this.context, this.hashCode);
+
+  static _Markup? of(XmlElement element, Object? context) {
+    final hash = _hash(element, 0);
+    return hash == null
+        ? null
+        : _Markup._(element, context, Object.hash(hash, context));
+  }
+
+  static const _maxDepth = 3;
+
+  final XmlElement element;
+
+  /// What the value depends on besides the markup.
+  final Object? context;
+
+  @override
+  final int hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _Markup &&
+      other.hashCode == hashCode &&
+      other.context == context &&
+      _same(element, other.element);
+
+  static int? _hash(XmlElement element, int depth) {
+    if (depth > _maxDepth) return null;
+    var hash = element.name.qualified.hashCode;
+    for (final attribute in element.attributes) {
+      hash = Object.hash(hash, attribute.name.qualified, attribute.value);
+    }
+    for (final child in element.children) {
+      final part = switch (child) {
+        XmlElement() => _hash(child, depth + 1),
+        XmlText() => child.value.hashCode,
+        _ => null,
+      };
+      if (part == null) return null;
+      hash = Object.hash(hash, part);
+    }
+    return hash;
+  }
+
+  /// Equal names (with their namespaces), attributes and children: what
+  /// [WordXml] reads and what [XmlElement.toXmlString] writes.
+  static bool _same(XmlElement a, XmlElement b) {
+    if (a.name.qualified != b.name.qualified ||
+        a.name.namespaceUri != b.name.namespaceUri ||
+        a.isSelfClosing != b.isSelfClosing ||
+        a.attributes.length != b.attributes.length ||
+        a.children.length != b.children.length) {
+      return false;
+    }
+    for (var index = 0; index < a.attributes.length; index++) {
+      final first = a.attributes[index];
+      final second = b.attributes[index];
+      if (first.name.qualified != second.name.qualified ||
+          first.name.namespaceUri != second.name.namespaceUri ||
+          first.value != second.value ||
+          first.attributeType != second.attributeType) {
+        return false;
+      }
+    }
+    for (var index = 0; index < a.children.length; index++) {
+      final same = switch ((a.children[index], b.children[index])) {
+        (final XmlElement first, final XmlElement second) => _same(
+          first,
+          second,
+        ),
+        (final XmlText first, final XmlText second) =>
+          first.value == second.value,
+        _ => false,
+      };
+      if (!same) return false;
+    }
+    return true;
+  }
+}
+
+/// What a run's w:rPr makes of it in a paragraph of a style.
+class _RunFormat {
+  _RunFormat(this._c, this._properties, this._paragraphStyleId);
+
+  final _ReadContext _c;
+  final XmlElement? _properties;
+  final String? _paragraphStyleId;
+
+  WordXml get _x => _c.x;
+
+  late final bool hidden = _x.onOff(_x.child(_properties, 'vanish')) ?? false;
+
+  late final RunProps props = _c.styles
+      .runProps(_paragraphStyleId, _x.childVal(_properties, 'rStyle'))
+      .merge(_properties, _x, _c.styles.theme);
+
+  /// The properties the editor doesn't model, kept for saving.
+  late final String? preserved = _preserved();
+
+  late final String xml = _properties?.toXmlString() ?? '';
+
+  String? _preserved() {
+    final properties = _properties;
+    bool dropped(XmlNode node) =>
+        node is XmlElement &&
+        (_modeledRunProperties.contains(node.name.local) ||
+            _changeMarkers.contains(node.name.local));
+    if (properties == null || properties.childElements.every(dropped)) {
+      return null;
+    }
+    final copy = properties.copy();
+    copy.children.removeWhere(dropped);
+    return copy.toXmlString();
+  }
+}
+
+/// What a paragraph's w:pPr makes of it.
+class _ParagraphFormat {
+  _ParagraphFormat(this._c, this._properties);
+
+  final _ReadContext _c;
+  final XmlElement? _properties;
+  final _preserved = <(bool, bool, bool), String?>{};
+
+  WordXml get _x => _c.x;
+
+  /// The style the paragraph names.
+  late final String? ownStyleId = _x.childVal(_properties, 'pStyle');
+  late final String? styleId = ownStyleId ?? _c.styles.defaultParagraphStyleId;
+  late final ParagraphProps props = _c.styles
+      .paragraphProps(styleId)
+      .merge(_properties, _x);
+
+  /// The properties the editor doesn't model, kept for saving.
+  String? preserved({
+    required bool dropStyle,
+    required bool isList,
+    required bool exactSpacing,
+  }) => _preserved.putIfAbsent(
+    (dropStyle, isList, exactSpacing),
+    () => _preservedParagraphProperties(
+      _properties,
+      dropStyle: dropStyle,
+      isList: isList,
+      exactSpacing: exactSpacing,
+    ),
+  );
+}
+
+String? _preservedParagraphProperties(
+  XmlElement? pPr, {
+  required bool dropStyle,
+  required bool isList,
+  required bool exactSpacing,
+}) {
+  if (pPr == null) return null;
+  final copy = pPr.copy();
+  final removed = <XmlElement>[];
+  for (final element in copy.childElements) {
+    final name = element.name.local;
+    final drop = switch (name) {
+      'pStyle' => dropStyle,
+      'numPr' || 'ind' => isList,
+      'jc' || 'sectPr' => true,
+      _ => _changeMarkers.contains(name),
+    };
+    if (drop) {
+      removed.add(element);
+    } else if (name == 'spacing' && !exactSpacing) {
+      element.attributes.removeWhere(
+        (a) => a.name.local == 'line' || a.name.local == 'lineRule',
+      );
+      if (element.attributes.isEmpty) removed.add(element);
+    } else if (name == 'rPr') {
+      element.children.removeWhere(
+        (node) =>
+            node is XmlElement && _changeMarkers.contains(node.name.local),
+      );
+    }
+  }
+  for (final element in removed) {
+    element.remove();
+  }
+  return copy.childElements.isEmpty ? null : copy.toXmlString();
+}
+
 class _BlockReader {
   _BlockReader(this.c, this.delta);
 
   final _ReadContext c;
-  final Delta delta;
+  final _DeltaBuilder delta;
   final _pendingBookmarks = <String>[];
 
   WordXml get x => c.x;
@@ -317,24 +638,30 @@ class _BlockReader {
 
   void _paragraph(XmlElement paragraph) {
     final pPr = x.child(paragraph, 'pPr');
-    final styleId =
-        x.childVal(pPr, 'pStyle') ?? c.styles.defaultParagraphStyleId;
+    final format = c.paragraphFormat(pPr);
+    final styleId = format.styleId;
     final level = c.styles.headingLevel(styleId);
     final header = level != null && level <= 6 ? level : null;
-    final props = c.styles.paragraphProps(styleId).merge(pPr, x);
-    final numId = props.numId;
+    final props = format.props;
+    // Word's body text level (9 and above) puts the paragraph in no list.
+    final numId = props.level > 8 ? null : props.numId;
     final list = numId == null || numId == 0
         ? null
         : c.numbering.kind(numId, props.level);
+    // A paragraph at a level without numbers stays in its list: Word counts
+    // it and shows the level's text.
+    final unnumbered =
+        list == null &&
+        numId != null &&
+        numId != 0 &&
+        (c.numbering.level(numId, props.level)?.unnumbered ?? false);
 
     final inline = _InlineReader(
       c,
+      delta,
       paragraphStyleId: styleId,
       baseline: header != null ? c.styles.runProps(styleId) : c.normalRun,
     )..readParagraph(paragraph);
-    for (final operation in inline.ops.toList()) {
-      delta.push(operation);
-    }
 
     final bookmarks = [..._pendingBookmarks, ...inline.bookmarks];
     _pendingBookmarks.clear();
@@ -347,13 +674,14 @@ class _BlockReader {
     bool differs(double a, double b) => (a - b).abs() > 0.05;
     final attributes = <String, dynamic>{
       'header': ?header,
-      if (list != null) 'list': list == ListKind.bullet ? 'bullet' : 'ordered',
+      if (list != null) 'list': list.name,
       if (indentLevel > 0) 'indent': math.min(indentLevel, 8),
       if (props.align != 'left') 'align': props.align,
       if (!props.exactLineSpacing &&
           (props.lineSpacing - c.normalParagraph.lineSpacing).abs() > 0.01)
         'line-height': (props.lineSpacing * 100).round() / 100,
-      if (list != null) HiddenAttributes.numbering: numId,
+      if (list != null || unnumbered) HiddenAttributes.numbering: numId,
+      if (unnumbered) HiddenAttributes.unnumberedLevel: props.level,
       if (list == null) ...{
         if (differs(props.spaceBefore, base.spaceBefore))
           HiddenAttributes.spaceBefore: props.spaceBefore,
@@ -369,11 +697,10 @@ class _BlockReader {
       if (bookmarks.isNotEmpty)
         HiddenAttributes.bookmarks: jsonEncode(bookmarks),
     };
-    final preserved = _preservedParagraphProperties(
-      pPr,
+    final preserved = format.preserved(
       dropStyle:
           header != null ||
-          (list != null && x.childVal(pPr, 'pStyle') == c.listParagraphStyleId),
+          (list != null && format.ownStyleId == c.listParagraphStyleId),
       isList: list != null,
       exactSpacing: props.exactLineSpacing,
     );
@@ -390,43 +717,6 @@ class _BlockReader {
         })
         ..insert('\n');
     }
-  }
-
-  String? _preservedParagraphProperties(
-    XmlElement? pPr, {
-    required bool dropStyle,
-    required bool isList,
-    required bool exactSpacing,
-  }) {
-    if (pPr == null) return null;
-    final copy = pPr.copy();
-    final removed = <XmlElement>[];
-    for (final element in copy.childElements) {
-      final name = element.name.local;
-      final drop = switch (name) {
-        'pStyle' => dropStyle,
-        'numPr' || 'ind' => isList,
-        'jc' || 'sectPr' => true,
-        _ => _changeMarkers.contains(name),
-      };
-      if (drop) {
-        removed.add(element);
-      } else if (name == 'spacing' && !exactSpacing) {
-        element.attributes.removeWhere(
-          (a) => a.name.local == 'line' || a.name.local == 'lineRule',
-        );
-        if (element.attributes.isEmpty) removed.add(element);
-      } else if (name == 'rPr') {
-        element.children.removeWhere(
-          (node) =>
-              node is XmlElement && _changeMarkers.contains(node.name.local),
-        );
-      }
-    }
-    for (final element in removed) {
-      element.remove();
-    }
-    return copy.childElements.isEmpty ? null : copy.toXmlString();
   }
 
   void _structuredBlock(XmlElement sdt) {
@@ -482,14 +772,12 @@ class _BlockReader {
       for (final cell in _unwrap(row, 'tc')) {
         final cellProperties = x.child(cell, 'tcPr');
         final merge = x.child(cellProperties, 'vMerge');
-        final content = Delta();
+        final content = _DeltaBuilder();
         _BlockReader(c, content).read(cell.childElements);
-        if (content.isEmpty || !DocxReader._endsWithNewline(content)) {
-          content.insert('\n');
-        }
+        content.endWithNewline();
         cells.add(
           TableCellModel(
-            controller: c.tables.newCellController(content),
+            controller: c.tables.newCellController(content.build()),
             propertiesXml: cellProperties?.toXmlString(),
             gridSpan:
                 int.tryParse(x.childVal(cellProperties, 'gridSpan') ?? '') ?? 1,
@@ -563,15 +851,18 @@ String? _hexOrNull(String? value) {
 
 class _InlineReader {
   _InlineReader(
-    this.c, {
+    this.c,
+    this.ops, {
     required this.paragraphStyleId,
     required this.baseline,
   });
 
   final _ReadContext c;
+
+  /// The content of the story being read, which the runs are added to.
+  final _DeltaBuilder ops;
   final String? paragraphStyleId;
   final RunProps baseline;
-  final ops = Delta();
   final bookmarks = <String>[];
 
   List<XmlElement>? _field;
@@ -696,23 +987,21 @@ class _InlineReader {
   }
 
   void _run(XmlElement run, String? link) {
-    final rPr = x.child(run, 'rPr');
-    if (x.onOff(x.child(rPr, 'vanish')) ?? false) {
+    final format = c.runFormat(x.child(run, 'rPr'), paragraphStyleId);
+    if (format.hidden) {
       _opaque(run.toXmlString(), '', hidden: true);
       return;
     }
-    if (run.childElements.any(
-      (e) => x.isW(e, 'commentReference') || x.isW(e, 'annotationRef'),
-    )) {
+    if (run.childElements.any((e) {
+      final name = e.name.local;
+      return (name == 'commentReference' || name == 'annotationRef') &&
+          x.isIn(e, Namespaces.w);
+    })) {
       c.notices.add(DocumentNotice.commentsHidden);
       return;
     }
 
-    final props = c.styles
-        .runProps(paragraphStyleId, x.childVal(rPr, 'rStyle'))
-        .merge(rPr, x, c.styles.theme);
-    final attributes = _attributes(props, _preservedRunProperties(rPr), link);
-    final rPrXml = rPr?.toXmlString() ?? '';
+    final attributes = _attributes(format.props, format.preserved, link);
     final text = StringBuffer();
 
     void flush() {
@@ -723,52 +1012,62 @@ class _InlineReader {
 
     for (final child in run.childElements) {
       final name = child.name.local;
-      if (x.isW(child, 't')) {
-        text.write(child.innerText.replaceAll('\n', ' '));
-      } else if (x.isW(child, 'tab') || x.isW(child, 'ptab')) {
-        text.write('\t');
-      } else if (x.isW(child, 'br')) {
-        if (x.attr(child, 'type') == 'page') {
-          flush();
-          ops.insert({EmbedTypes.pageBreak: 'page'});
-        } else {
+      switch (x.isIn(child, Namespaces.w) ? name : null) {
+        case 't':
+          text.write(_textOf(child).replaceAll('\n', ' '));
+        case 'tab' || 'ptab':
+          text.write('\t');
+        case 'br':
+          switch (x.attr(child, 'type')) {
+            case 'page':
+              flush();
+              ops.insert({EmbedTypes.pageBreak: 'page'});
+            case 'column':
+              // Kept as it is for Word; other formats get a line break.
+              flush();
+              _opaque(
+                '<${run.name.qualified}>${format.xml}${child.toXmlString()}'
+                    '</${run.name.qualified}>',
+                '\u2028',
+              );
+            default:
+              text.write('\u2028');
+          }
+        case 'cr':
           text.write('\u2028');
-        }
-      } else if (x.isW(child, 'cr')) {
-        text.write('\u2028');
-      } else if (x.isW(child, 'noBreakHyphen')) {
-        text.write('\u2011');
-      } else if (x.isW(child, 'softHyphen')) {
-        text.write('\u00AD');
-      } else if (x.isW(child, 'rPr') ||
-          x.isW(child, 'fldChar') ||
-          x.isW(child, 'instrText') ||
-          x.isW(child, 'delText') ||
-          x.isW(child, 'lastRenderedPageBreak')) {
-        continue;
-      } else {
-        flush();
-        final xml =
-            '<${run.name.qualified}>$rPrXml${child.toXmlString()}</${run.name.qualified}>';
-        final alternative = name == 'AlternateContent'
-            ? child.descendantElements
-                  .where((element) => x.isW(element, 'drawing'))
-                  .firstOrNull
-            : null;
-        if (x.isW(child, 'drawing')) {
-          _drawing(child, xml);
-        } else if (alternative != null) {
-          _drawing(alternative, xml);
-        } else if (x.isW(child, 'footnoteReference') ||
-            x.isW(child, 'endnoteReference')) {
-          _opaque(xml, '${++c.footnotes}', label: OpaqueLabels.note);
-        } else {
-          _opaque(
-            xml,
-            c.textOf(child),
-            label: _labelFor(child, fallback: name),
-          );
-        }
+        case 'noBreakHyphen':
+          text.write('\u2011');
+        case 'softHyphen':
+          text.write('\u00AD');
+        case 'rPr' ||
+            'fldChar' ||
+            'instrText' ||
+            'delText' ||
+            'lastRenderedPageBreak':
+          break;
+        default:
+          flush();
+          final xml =
+              '<${run.name.qualified}>${format.xml}${child.toXmlString()}</${run.name.qualified}>';
+          final alternative = name == 'AlternateContent'
+              ? child.descendantElements
+                    .where((element) => x.isW(element, 'drawing'))
+                    .firstOrNull
+              : null;
+          if (x.isW(child, 'drawing')) {
+            _drawing(child, xml);
+          } else if (alternative != null) {
+            _drawing(alternative, xml);
+          } else if (x.isW(child, 'footnoteReference') ||
+              x.isW(child, 'endnoteReference')) {
+            _opaque(xml, '${++c.footnotes}', label: OpaqueLabels.note);
+          } else {
+            _opaque(
+              xml,
+              c.textOf(child),
+              label: _labelFor(child, fallback: name),
+            );
+          }
       }
     }
     flush();
@@ -796,7 +1095,12 @@ class _InlineReader {
       final bytes = c.package.parts[path];
       if (bytes != null) {
         ops.insert(
-          {EmbedTypes.image: dataUri(bytes, path)},
+          {
+            EmbedTypes.image: c.pictures.putIfAbsent(
+              path,
+              () => dataUri(bytes, path),
+            ),
+          },
           {
             'width': formatPoints((width * 100).round() / 100),
             'height': formatPoints((height * 100).round() / 100),
@@ -853,19 +1157,13 @@ class _InlineReader {
     };
     return attributes.isEmpty ? null : attributes;
   }
-
-  String? _preservedRunProperties(XmlElement? rPr) {
-    if (rPr == null) return null;
-    final copy = rPr.copy();
-    copy.children.removeWhere(
-      (node) =>
-          node is XmlElement &&
-          (_modeledRunProperties.contains(node.name.local) ||
-              _changeMarkers.contains(node.name.local)),
-    );
-    return copy.childElements.isEmpty ? null : copy.toXmlString();
-  }
 }
+
+/// A w:t's text, which Word writes as one text node.
+String _textOf(XmlElement element) => switch (element.children) {
+  [XmlText(:final value)] => value,
+  _ => element.innerText,
+};
 
 const _modeledRunProperties = {
   'rFonts',
@@ -883,3 +1181,58 @@ const _modeledRunProperties = {
   'shd',
   'vertAlign',
 };
+
+/// Makes the same Delta as [Delta.insert] and [Delta.push], which join
+/// neighboring text with the same attributes, in linear time: [Delta.push]
+/// copies all the text joined so far on each join.
+class _DeltaBuilder {
+  final _operations = <Operation>[];
+  final _text = StringBuffer();
+
+  /// The last text operation, whose text ends [_text].
+  Operation? _tail;
+
+  void insert(Object data, [Map<String, dynamic>? attributes]) {
+    if (data is String && data.isEmpty) return;
+    push(Operation.insert(data, attributes));
+  }
+
+  void push(Operation operation) {
+    if (operation.isEmpty) return;
+    final data = operation.data;
+    final tail = _tail;
+    if (data is String) {
+      if (tail == null || !tail.hasSameAttributes(operation)) _flush();
+      _text.write(data);
+      _tail = operation;
+    } else {
+      _flush();
+      _operations.add(operation);
+    }
+  }
+
+  /// Ends the content with a line, as documents and cells must.
+  void endWithNewline() {
+    final tail = _tail;
+    final last = tail?.data ?? _operations.lastOrNull?.data;
+    if (last is! String || !last.endsWith('\n')) insert('\n');
+  }
+
+  Delta build() {
+    _flush();
+    return Delta.fromOperations(_operations);
+  }
+
+  void _flush() {
+    final tail = _tail;
+    if (tail == null) return;
+    final text = _text.toString();
+    _operations.add(
+      text.length == tail.length
+          ? tail
+          : Operation.insert(text, tail.attributes),
+    );
+    _text.clear();
+    _tail = null;
+  }
+}

@@ -64,6 +64,10 @@ class DocxWriter {
     final marginRight = double.tryParse(x.attr(margins, 'right') ?? '') ?? 1701;
 
     final takenMedia = {...package.parts.keys};
+    // Headers and footers add their lists to the body's numbering part, and
+    // their headings' styles to its styles part.
+    final numberingPlan = NumberingPlan(numbering);
+    final addedHeadingStyles = <int, String>{};
     _WriteContext contextFor(
       List<Relationship> relationships, {
       int bookmarkStart = 100000,
@@ -71,6 +75,8 @@ class DocxWriter {
       packageId: package.id,
       styles: styles,
       numbering: numbering,
+      numberingPlan: numberingPlan,
+      addedHeadingStyles: addedHeadingStyles,
       usedRelationshipIds: {for (final r in relationships) r.id},
       existingHyperlinks: {
         for (final r in relationships)
@@ -108,12 +114,9 @@ class DocxWriter {
       document.toXmlString().replaceFirst('<!--vw-body-->', bodyXml),
     );
 
-    if (!context.numberingPlan.isEmpty) {
+    if (!numberingPlan.isEmpty) {
       final target = numberingPath ?? 'word/numbering.xml';
-      package.setText(
-        target,
-        context.numberingPlan.apply(package.text(target)),
-      );
+      package.setText(target, numberingPlan.apply(package.text(target)));
       if (numberingPath == null) {
         context.newRelationships.add(
           Relationship(
@@ -394,6 +397,8 @@ class _WriteContext {
     required this.packageId,
     required this.styles,
     required this.numbering,
+    required this.numberingPlan,
+    required this.addedHeadingStyles,
     required this.usedRelationshipIds,
     required this.existingHyperlinks,
     required this.tables,
@@ -401,7 +406,6 @@ class _WriteContext {
     required this.takenMedia,
     int bookmarkStart = 100000,
   }) : _bookmarkId = bookmarkStart,
-       numberingPlan = NumberingPlan(numbering),
        normalRun = styles.runProps(null),
        normalParagraph = styles.paragraphProps(null),
        listParagraphStyleId = styles.idByName('List Paragraph'),
@@ -411,6 +415,10 @@ class _WriteContext {
   final DocxStyles styles;
   final DocxNumbering numbering;
   final NumberingPlan numberingPlan;
+
+  /// Heading styles the styles part lacks, by level, which the package's
+  /// stories share.
+  final Map<int, String> addedHeadingStyles;
   final Set<String> usedRelationshipIds;
   final Map<String, String> existingHyperlinks;
   final TableStore tables;
@@ -426,7 +434,6 @@ class _WriteContext {
   final newRelationships = <Relationship>[];
   final media = <String, Uint8List>{};
   final mediaTypes = <String, String>{};
-  final addedHeadingStyles = <int, String>{};
   final usedBookmarks = <String>{};
   var _relationshipCounter = 0;
   var _mediaCounter = 0;
@@ -641,10 +648,11 @@ class _BlockWriter {
 
   void _paragraph(List<_Segment> segments, Map<String, dynamic> attributes) {
     final header = attributes['header'] as int?;
-    final listValue = attributes['list'] as String?;
-    final list = switch (listValue) {
-      'ordered' => ListKind.ordered,
+    final list = switch (attributes['list']) {
       null => null,
+      'ordered' => ListKind.ordered,
+      'checked' => ListKind.checked,
+      'unchecked' => ListKind.unchecked,
       _ => ListKind.bullet,
     };
     final indent = math.min((attributes['indent'] as num?)?.toInt() ?? 0, 8);
@@ -699,7 +707,8 @@ class _BlockWriter {
             ind?.getAttribute('w:left') ?? ind?.getAttribute('w:start') ?? '',
           ) ??
           styleProps.indentLeft;
-      if ((currentLeft / 720).round() != indent) {
+      // The reader shows outdents as level 0 and stops at 8.
+      if ((currentLeft / 720).round().clamp(0, 8) != indent) {
         final element = ind ?? _w('ind');
         final key = element.getAttribute('w:start') != null
             ? 'w:start'
@@ -754,13 +763,18 @@ class _BlockWriter {
     );
   }
 
+  /// The line keeps its Word list while it is still the kind of list its
+  /// level is, as the other formats' writers keep it.
   int _numIdFor(ListKind kind, int level, Object? original) {
-    final originalId = (original as num?)?.toInt();
-    if (originalId != null && c.numbering.kind(originalId, level) == kind) {
+    final originalId = original is num && original.isFinite
+        ? original.toInt()
+        : null;
+    if (originalId != null &&
+        c.numbering.level(originalId, level)?.kind == kind) {
       if (kind == ListKind.ordered) _orderedListNum = null;
       return originalId;
     }
-    if (kind == ListKind.bullet) return c.numberingPlan.bulletList();
+    if (kind != ListKind.ordered) return c.numberingPlan.sharedList(kind);
     return _orderedListNum ??= c.numberingPlan.newOrderedList();
   }
 
@@ -768,7 +782,10 @@ class _BlockWriter {
     final out = StringBuffer();
     String? openLink;
     for (final segment in segments) {
-      final link = segment.link;
+      final link = switch (segment.link) {
+        final link? => stripInvalidXmlChars(link),
+        null => null,
+      };
       if (link != openLink) {
         if (openLink != null) out.write('</w:hyperlink>');
         if (link != null) {
@@ -816,7 +833,14 @@ class _BlockWriter {
 
   String _plainRun(String text) {
     if (text.isEmpty) return '';
-    return '<w:r><w:t xml:space="preserve">${escapeXmlText(stripInvalidXmlChars(text))}</w:t></w:r>';
+    final content = [
+      for (final part in text.split('\u2028'))
+        if (part.isEmpty)
+          ''
+        else
+          '<w:t xml:space="preserve">${escapeXmlText(stripInvalidXmlChars(part))}</w:t>',
+    ].join('<w:br/>');
+    return '<w:r>$content</w:r>';
   }
 
   String _textRun(

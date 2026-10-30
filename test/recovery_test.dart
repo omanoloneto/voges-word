@@ -143,6 +143,15 @@ void main() {
 
     expect(find.text('Recover document?'), findsOneWidget);
     await tester.tap(find.text('Recover'));
+    // The copy is read on a background isolate, whose reply only arrives
+    // outside the fake clock.
+    await tester.pump();
+    for (var turn = 0; turn < 3000 && session.name != 'report.docx'; turn++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
     await tester.pumpAndSettle();
 
     expect(session.name, 'report.docx');

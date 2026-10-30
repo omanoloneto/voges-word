@@ -24,9 +24,7 @@ base class Block extends QuillContainer<Line?> {
   @override
   Delta toDelta() {
     // Line nodes take care of incorporating block style into their delta.
-    return children
-        .map((child) => child.toDelta())
-        .fold(Delta(), (a, b) => a.concat(b));
+    return childrenDelta();
   }
 
   @override

@@ -15,9 +15,6 @@ import '../editor/pagination.dart';
 import '../editor/paper_styles.dart';
 import 'pdf_document.dart';
 
-/// Page resolution in the PDF and when printing.
-const printDpi = 200.0;
-
 /// Draws the document off-screen, in pages and just like the editor, and
 /// builds the PDF page by page.
 Future<Uint8List> documentPdf(
@@ -40,6 +37,7 @@ Future<Uint8List> documentPdf(
   final focusManager = FocusManager();
   final view = View.of(context);
   final theme = Theme.of(context);
+  final pixelRatio = MediaQuery.devicePixelRatioOf(context);
 
   try {
     await decorations.ready;
@@ -64,6 +62,8 @@ Future<Uint8List> documentPdf(
       child: MediaQuery(
         data: MediaQueryData(
           size: Size(pageWidth, _maxHeight),
+          // The editor's ratio: pictures draw from the ones it decoded.
+          devicePixelRatio: pixelRatio,
           textScaler: const TextScaler.linear(scale),
         ),
         child: Directionality(
@@ -97,6 +97,10 @@ Future<Uint8List> documentPdf(
     );
 
     final boundary = _PageBoundary();
+    final topLeft = RenderPositionedBox(
+      alignment: Alignment.topLeft,
+      child: boundary,
+    );
     final renderView = RenderView(
       view: view,
       configuration: ViewConfiguration(
@@ -110,12 +114,12 @@ Future<Uint8List> documentPdf(
         ),
         devicePixelRatio: 1,
       ),
-      child: RenderPositionedBox(alignment: Alignment.topLeft, child: boundary),
+      child: topLeft,
     );
     final pipeline = PipelineOwner()..rootNode = renderView;
     renderView.prepareInitialFrame();
     final buildOwner = BuildOwner(focusManager: focusManager);
-    var root = RenderObjectToWidgetAdapter<RenderBox>(
+    final root = RenderObjectToWidgetAdapter<RenderBox>(
       container: boundary,
       child: editor,
     ).attachToRenderTree(buildOwner);
@@ -181,12 +185,20 @@ Future<Uint8List> documentPdf(
       }
       return pdf.build(title: session.baseName);
     } finally {
-      root = RenderObjectToWidgetAdapter<RenderBox>(
+      // Rebuilt with no child, the root unmounts the editor, whose states let
+      // go of the pictures and the table cells.
+      RenderObjectToWidgetAdapter<RenderBox>(
         container: boundary,
-        child: const SizedBox.shrink(),
       ).attachToRenderTree(buildOwner, root);
-      buildOwner.finalizeTree();
-      pipeline.rootNode = null;
+      buildOwner
+        ..buildScope(root)
+        ..finalizeTree();
+      pipeline
+        ..rootNode = null
+        ..dispose();
+      for (final node in [renderView, topLeft, boundary]) {
+        node.dispose();
+      }
     }
   } finally {
     decorations.dispose();
@@ -212,7 +224,7 @@ Future<void> _precacheImages(BuildContext context, EditorSession session) {
     for (final controller in controllers)
       for (final op in controller.document.toDelta().toList())
         if (op.data case {EmbedTypes.image: final String source})
-          EmbeddedImage.precache(source, context),
+          EmbeddedImage.fromAttributes(source, op.attributes).precache(context),
   ]);
 }
 

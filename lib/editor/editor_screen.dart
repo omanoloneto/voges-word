@@ -18,6 +18,7 @@ import '../files/recent_files.dart';
 import '../files/recovery.dart';
 import '../files/system_open.dart';
 import '../fonts/font_catalog.dart';
+import '../formats/background_open.dart';
 import '../l10n/app_language.dart';
 import '../l10n/l10n.dart';
 import '../print/page_renderer.dart';
@@ -36,6 +37,7 @@ import 'ribbon/ribbon_style.dart';
 import 'status_bar.dart';
 import 'title_bar.dart';
 import 'window_buttons.dart';
+import 'zoom.dart';
 
 class EditorScreen extends StatefulWidget {
   const EditorScreen({
@@ -86,6 +88,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   var _fullScreen = false;
   var _pageInfoScheduled = false;
   String? _title;
+  Future<void> _opening = Future.value();
 
   EditorSession get session => widget.session;
 
@@ -169,16 +172,24 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       return;
     }
     try {
-      // On macOS the sandbox only allows writing to the file the user picked.
-      session.restore(
-        snapshot,
-        keepPath: defaultTargetPlatform != TargetPlatform.macOS,
+      await _openInTurn(
+        name,
+        () => session.restoreInBackground(
+          snapshot,
+          // On macOS the sandbox only allows writing to the file the user
+          // picked.
+          keepPath: defaultTargetPlatform != TargetPlatform.macOS,
+        ),
       );
+    } on BackgroundWorkCanceled {
+      // The copy stays, to be offered again until other work replaces it.
+      return;
     } catch (_) {
       _showError((l10n) => l10n.recoverFailed);
       await store.clear();
       return;
     }
+    if (!mounted) return;
     _recoveryRevision = session.revision;
     _recoverySaved = true;
     _afterLoad();
@@ -352,9 +363,11 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     if (await _confirmDiscard()) _load(file);
   }
 
-  void _load(OpenedFile file) {
+  Future<void> _load(OpenedFile file) async {
     try {
-      session.open(file);
+      await _openInTurn(file.name, () => session.openInBackground(file));
+    } on BackgroundWorkCanceled {
+      return;
     } on DocumentProblemException catch (error) {
       _showError((l10n) => _problemMessage(l10n, error.problem, file.name));
       return;
@@ -362,6 +375,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       _showError((l10n) => l10n.problemDamaged(file.name));
       return;
     }
+    if (!mounted) return;
     final path = file.path;
     if (path != null) widget.recents.remember(path);
     _afterLoad();
@@ -376,12 +390,69 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
                     context.l10n.noticeTrackedChangesAccepted,
                   DocumentNotice.commentsHidden =>
                     context.l10n.noticeCommentsHidden,
+                  DocumentNotice.contentNotImported =>
+                    context.l10n.noticeContentNotImported,
+                  DocumentNotice.savesAsDocx => context.l10n.noticeSavesAsDocx,
                 },
             ].join('\n'),
           ),
           duration: const Duration(seconds: 6),
         ),
       );
+    }
+  }
+
+  /// Runs [open] once the opens asked before it are done, so the document
+  /// shown is the one asked for last.
+  Future<void> _openInTurn(String name, Future<void> Function() open) {
+    final turn = _opening.then((_) => _withProgress(name, open));
+    _opening = turn.then((_) {}, onError: (Object _) {});
+    return turn;
+  }
+
+  /// The format's work runs on another isolate, so the window stays
+  /// responsive under the progress meanwhile, and Cancel stops it at once
+  /// with [BackgroundWorkCanceled].
+  Future<void> _withProgress(String name, Future<void> Function() open) async {
+    if (!mounted) return open();
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final scope = CancelScope();
+    final progress = _ProgressRoute(
+      context: context,
+      themes: InheritedTheme.capture(from: context, to: navigator.context),
+      barrierColor: DialogTheme.of(context).barrierColor ?? Colors.black54,
+      builder: (context) => PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) scope.cancel();
+        },
+        child: AlertDialog(
+          content: Row(
+            children: [
+              const SizedBox.square(
+                dimension: 24,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
+              const SizedBox(width: 18),
+              Expanded(child: Text(context.l10n.openingDocument(name))),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: scope.cancel,
+              child: Text(context.l10n.cancel),
+            ),
+          ],
+        ),
+      ),
+    );
+    navigator.push(progress);
+    try {
+      await scope.run(open);
+    } finally {
+      if (navigator.mounted && progress.isActive) {
+        navigator.removeRoute(progress);
+      }
     }
   }
 
@@ -432,6 +503,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       DocumentProblem.legacyDoc => l10n.problemLegacyDoc,
       DocumentProblem.unsupportedFormat => l10n.problemUnsupportedFormat,
       DocumentProblem.notWordDocument => l10n.problemNotWordDocument,
+      DocumentProblem.passwordProtected => l10n.problemPasswordProtected,
       DocumentProblem.tooLarge => l10n.problemTooLarge,
       DocumentProblem.damaged => l10n.problemDamaged(name),
     };
@@ -576,11 +648,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   }
 
   void _stepZoom(int direction) {
-    final index = zoomLevels.indexWhere(
-      (level) => (level - _zoom).abs() < 0.001,
-    );
-    final next = (index < 0 ? zoomLevels.indexOf(1.0) : index) + direction;
-    if (next >= 0 && next < zoomLevels.length) _setZoom(zoomLevels[next]);
+    if (nextZoomLevel(_zoom, direction) case final zoom?) _setZoom(zoom);
   }
 
   void _showFilePanel() => showFilePanel(
@@ -653,23 +721,32 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   }
 
   Future<void> _share() async {
-    final format = await askShareFormat(context);
+    final format = await askShareFormat(context, session.format);
     if (format != null) await _shareAs(format);
   }
 
   Future<void> _shareAs(ShareFormat format) async {
+    final document = switch (format) {
+      ShareFormat.docx => DocumentFormat.docx,
+      ShareFormat.current => session.format,
+      ShareFormat.pdf => null,
+    };
     final Uint8List? bytes;
     final String name;
     final String mime;
-    if (format == ShareFormat.pdf) {
+    if (document == null) {
       bytes = await _buildPdf();
       name = _pdfName;
       mime = 'application/pdf';
     } else {
-      bytes = session.encode(DocumentFormat.docx);
-      name = '${safeFileName(session.baseName)}.docx';
-      mime =
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      try {
+        bytes = session.encode(document);
+      } catch (error) {
+        _showError((l10n) => l10n.shareFailed);
+        return;
+      }
+      name = '${safeFileName(session.baseName)}.${document.extension}';
+      mime = mimeTypeOf(document);
     }
     if (bytes == null || !mounted) return;
     final size = MediaQuery.sizeOf(context);
@@ -818,4 +895,27 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       child: child,
     );
   }
+}
+
+/// The progress of an open. It covers the window at once, so nothing goes
+/// into the document being replaced, but shows only after a moment, so
+/// quick opens don't flash.
+class _ProgressRoute extends DialogRoute<void> {
+  _ProgressRoute({
+    required super.context,
+    required super.builder,
+    super.themes,
+    super.barrierColor,
+  }) : super(
+         barrierDismissible: false,
+         animationStyle: const AnimationStyle(
+           duration: Duration(milliseconds: 450),
+           curve: _appear,
+         ),
+       );
+
+  static const _appear = Interval(2 / 3, 1, curve: Curves.easeOut);
+
+  @override
+  Curve get barrierCurve => _appear;
 }

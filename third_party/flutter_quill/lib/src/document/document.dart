@@ -5,6 +5,7 @@ import 'package:meta/meta.dart';
 import '../../quill_delta.dart';
 import '../common/structs/offset_value.dart';
 import '../common/structs/segment_leaf_node.dart';
+import '../delta/delta_writer.dart';
 
 import '../editor/config/search_config.dart';
 import '../editor/embed/embed_editor_builder.dart';
@@ -36,6 +37,18 @@ class Document {
   /// Creates new document from provided `delta`.
   Document.fromDelta(Delta delta) : _delta = delta {
     loadDocument(delta);
+  }
+
+  /// Voges Word: a document as Quill 11.5.0 built and edited it. The tree is
+  /// built by inserting each operation at its offset, in quadratic time, and
+  /// its lines and [compose] keep Quill's algorithms, which recurse once per
+  /// line and search the tree from the start for each operation (see
+  /// [Root.quillAlgorithms]). Tests check that [Document.fromDelta] builds
+  /// the same tree and that both give the same results.
+  @visibleForTesting
+  Document.fromDeltaByInserts(Delta delta) : _delta = delta {
+    _root.quillAlgorithms = true;
+    _loadByInserts(delta);
   }
 
   /// Stores the plain text content of the entire document in memory for quick access.
@@ -448,6 +461,7 @@ class Document {
     var offset = 0;
     delta = _transform(delta);
     final originalDelta = toDelta();
+    final lines = _LineCursor(_root);
     for (final op in delta.toList()) {
       final style =
           op.attributes != null ? Style.fromJson(op.attributes) : null;
@@ -455,11 +469,14 @@ class Document {
       if (op.isInsert) {
         // Must normalize data before inserting into the document, makes sure
         // that any embedded objects are converted into EmbeddableObject type.
-        _root.insert(offset, _normalize(op.data), style);
+        final (node, index) = lines.find(offset);
+        node.insert(index, _normalize(op.data), style);
       } else if (op.isDelete) {
-        _root.delete(offset, op.length);
+        final (node, index) = lines.find(offset);
+        node.delete(index, op.length);
       } else if (op.attributes != null) {
-        _root.retain(offset, op.length, style);
+        final (node, index) = lines.find(offset);
+        node.retain(index, op.length, style);
       }
 
       if (!op.isDelete) {
@@ -467,7 +484,10 @@ class Document {
       }
     }
     try {
-      _delta = _delta.compose(delta);
+      // Voges Word: the same delta as Delta.compose, in linear time.
+      _delta = _root.quillAlgorithms
+          ? _delta.compose(delta)
+          : composeDeltas(_delta, delta);
     } catch (e) {
       throw StateError('_delta compose failed');
     }
@@ -553,9 +573,34 @@ class Document {
           .map((e) => e.toPlainText(embedBuilders, unknownEmbedBuilder))
           .join();
 
+  /// Voges Word: each operation goes at the end of the last line, so loading
+  /// takes linear time; Quill searched the tree for every insert.
   @visibleForTesting
   @internal
   void loadDocument(Delta doc) {
+    if (doc.isEmpty) {
+      throw ArgumentError.value(
+          doc.toString(), 'Document Delta cannot be empty.');
+    }
+
+    assert((doc.last.data as String).endsWith('\n'));
+
+    final loader = _TreeLoader(_root);
+    for (final op in doc.toList()) {
+      if (!op.isInsert) {
+        throw ArgumentError.value(doc,
+            'Document can only contain insert operations but ${op.key} found.');
+      }
+      final attributes = op.attributes;
+      final style = attributes != null ? Style.fromJson(attributes) : null;
+      loader.add(_normalize(op.data), style);
+    }
+    loader.close();
+    _removeTrailingLine();
+    cachedPlainText = null;
+  }
+
+  void _loadByInserts(Delta doc) {
     if (doc.isEmpty) {
       throw ArgumentError.value(
           doc.toString(), 'Document Delta cannot be empty.');
@@ -575,6 +620,11 @@ class Document {
       _root.insert(offset, data, style);
       offset += op.length!;
     }
+    _removeTrailingLine();
+    cachedPlainText = null;
+  }
+
+  void _removeTrailingLine() {
     final node = _root.last;
     if (node is Line &&
         node.parent is! Block &&
@@ -582,7 +632,6 @@ class Document {
         _root.childCount > 1) {
       _root.remove(node);
     }
-    cachedPlainText = null;
   }
 
   bool isEmpty() {
@@ -599,6 +648,128 @@ class Document {
     return delta.length == 1 &&
         delta.first.data == '\n' &&
         delta.first.key == 'insert';
+  }
+}
+
+/// Voges Word: finds the line of each operation of [Document.compose] by
+/// walking on from the line before the previous operation's, where Quill
+/// searched the tree from the first line for every operation. An operation
+/// changes nothing before its offset, so that line keeps its place.
+class _LineCursor {
+  _LineCursor(this._root);
+
+  final Root _root;
+
+  /// A line that ends at or before the next operation, and its offset.
+  Line? _before;
+  var _beforeStart = 0;
+
+  /// The line that holds [offset] and the offset in it, as [Root.queryChild]
+  /// finds them; the root itself, with [offset], when Quill's algorithms run
+  /// or when no line holds it, so the root handles it as it always did.
+  (Node, int) find(int offset) {
+    if (_root.quillAlgorithms) {
+      return (_root, offset);
+    }
+    var before = _before;
+    if (before != null &&
+        (before.parent == null || offset < _beforeStart + before.length)) {
+      before = _before = null;
+    }
+    var start = before == null ? 0 : _beforeStart + before.length;
+    var line = before == null ? _firstLine() : before.nextLine;
+    while (line != null) {
+      final end = start + line.length;
+      if (offset < end) {
+        return (line, offset - start);
+      }
+      _before = line;
+      _beforeStart = start;
+      start = end;
+      line = line.nextLine;
+    }
+    return (_root, offset);
+  }
+
+  Line? _firstLine() {
+    final first = _root.first;
+    return first is Block ? first.first as Line? : first as Line?;
+  }
+}
+
+/// Voges Word: builds a document tree by appending each operation to the last
+/// line, with the same result as [Root.insert] at the end of the document.
+/// Text that joins the previous leaf, which has the same style, is
+/// concatenated once when the leaf is complete, not once per operation.
+class _TreeLoader {
+  _TreeLoader(this._root);
+
+  final Root _root;
+  Line? _line;
+
+  /// The last leaf of [_line] when it is text, and what joins it.
+  QuillText? _text;
+  List<String>? _joined;
+
+  void add(Object data, Style? style) {
+    var line = _line ??= _newLine();
+    if (data is Embeddable) {
+      _closeText();
+      final embed = Embed(data);
+      line.add(embed);
+      embed.format(style);
+      return;
+    }
+    final text = data as String;
+    var start = 0;
+    for (var end = text.indexOf('\n');
+        end >= 0;
+        end = text.indexOf('\n', start)) {
+      if (end > start) {
+        _addText(line, text.substring(start, end), style);
+      }
+      _closeText();
+      line = _line = line.appendLineBreak(style);
+      start = end + 1;
+    }
+    if (start < text.length) {
+      _addText(line, text.substring(start), style);
+    }
+  }
+
+  void close() => _closeText();
+
+  Line _newLine() {
+    final line = Line();
+    _root.add(line);
+    return line;
+  }
+
+  void _addText(Line line, String value, Style? style) {
+    final leaf = QuillText(value);
+    if (style != null && style.isNotEmpty) {
+      leaf.applyStyle(style);
+    }
+    final previous = _text;
+    if (previous != null && previous.style == leaf.style) {
+      (_joined ??= [previous.value]).add(value);
+      return;
+    }
+    _closeText();
+    line.add(leaf);
+    _text = leaf;
+  }
+
+  void _closeText() {
+    final text = _text;
+    final joined = _joined;
+    if (text != null && joined != null) {
+      text
+        ..value = joined.join()
+        ..clearLengthCache();
+    }
+    _text = null;
+    _joined = null;
   }
 }
 

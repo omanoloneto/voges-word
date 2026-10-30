@@ -19,6 +19,19 @@ class OpenedFile {
   final String? path;
 }
 
+/// Media type of the files of [format], for sharing.
+String mimeTypeOf(DocumentFormat format) => switch (format) {
+  DocumentFormat.docx =>
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  DocumentFormat.docm => 'application/vnd.ms-word.document.macroEnabled.12',
+  DocumentFormat.doc => 'application/msword',
+  DocumentFormat.odt => 'application/vnd.oasis.opendocument.text',
+  DocumentFormat.rtf => 'application/rtf',
+  DocumentFormat.html => 'text/html',
+  DocumentFormat.markdown => 'text/markdown',
+  DocumentFormat.plainText => 'text/plain',
+};
+
 class PickedImage {
   const PickedImage({required this.bytes, required this.mime});
 
@@ -49,7 +62,7 @@ class DocumentFiles {
       !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
 
   static final _extensions = [
-    for (final format in DocumentFormat.values) format.extension,
+    for (final format in DocumentFormat.values) ...format.extensions,
   ];
 
   Future<OpenedFile?> pickDocument() async {

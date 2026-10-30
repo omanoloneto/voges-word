@@ -14,11 +14,14 @@ import '../docx/docx_template.dart';
 import '../docx/image_formats.dart';
 import '../document/document_codec.dart';
 import '../document/document_look.dart';
+import '../document/embeds.dart';
 import '../document/headers_footers.dart';
 import '../document/plain_text_codec.dart';
 import '../document/tables.dart';
 import '../files/document_files.dart';
 import '../files/recovery.dart';
+import '../formats/background_open.dart';
+import '../formats/document_codecs.dart';
 import '../l10n/app_language.dart';
 import '../l10n/l10n.dart';
 import 'document_commands.dart';
@@ -62,7 +65,8 @@ class EditorSession extends ChangeNotifier {
     SessionLocale? locale,
   }) : locale =
            locale ??
-           SessionLocale.of(lookupAppLocalizations(appLanguages.first)) {
+           SessionLocale.of(lookupAppLocalizations(appLanguages.first)),
+       codecs = DocumentCodecs(docx: docx, plainText: plainText) {
     _tableEdits = tables.edits.listen((_) => _markDirty());
     _load(
       docx.create(DocumentTemplate.blank, language: this.locale.language),
@@ -79,6 +83,7 @@ class EditorSession extends ChangeNotifier {
   final PlainTextCodec plainText;
   final DocumentFiles files;
   final TableStore tables;
+  final DocumentCodecs codecs;
 
   late QuillController controller;
   late final ValueNotifier<QuillController> activeController = ValueNotifier(
@@ -152,41 +157,134 @@ class EditorSession extends ChangeNotifier {
         format: DocumentFormat.docx,
       );
 
+  /// How long [openInBackground] and [restoreInBackground] may take to
+  /// prepare a file before refusing it as too large or too complex.
+  @visibleForTesting
+  Duration openTimeLimit = const Duration(seconds: 60);
+
+  /// Templates open as new documents; formats that aren't saved will be
+  /// saved as .docx. A file named in one of them, like a .doc that is really
+  /// RTF, is never written either. The whole file is read on this isolate:
+  /// the app uses [openInBackground].
+  @visibleForTesting
   void open(OpenedFile file) {
-    final format = DocumentFormat.fromFileName(file.name);
-    if (format == null) {
-      throw DocumentProblemException(
-        file.name.toLowerCase().endsWith('.doc')
-            ? DocumentProblem.legacyDoc
-            : DocumentProblem.unsupportedFormat,
-      );
+    final detected = detectFormat(file.name, file.bytes);
+    if (detected == null) {
+      throw DocumentProblemException(DocumentProblem.unsupportedFormat);
     }
-    final LoadedDocument loaded;
+    final decoder = codecs.decoder(detected.format);
+    _openAs(
+      file,
+      _damagedOnFormatError(() => decoder.decode(file.bytes)),
+      format: detected.format,
+      template: detected.template,
+    );
+  }
+
+  /// [open] with the format's work on another isolate, so the window stays
+  /// responsive; only reading the prepared package into the editor happens
+  /// here. A file that takes longer than [openTimeLimit] to prepare is
+  /// refused as [DocumentProblem.tooLarge].
+  Future<void> openInBackground(OpenedFile file) async {
+    final prepared = await prepareFileInBackground(
+      file.name,
+      file.bytes,
+      timeLimit: openTimeLimit,
+    );
+    final decoder = codecs.decoder(prepared.format);
+    _openAs(
+      file,
+      _damagedOnFormatError(() => decoder.load(prepared.document)),
+      format: prepared.format,
+      template: prepared.template,
+    );
+  }
+
+  static LoadedDocument _damagedOnFormatError(LoadedDocument Function() read) {
     try {
-      loaded = format == DocumentFormat.docx
-          ? docx.decode(file.bytes)
-          : plainText.decode(file.bytes);
+      return read();
     } on DocumentProblemException {
       rethrow;
     } on FormatException {
       throw DocumentProblemException(DocumentProblem.damaged);
     }
-    _load(loaded, name: file.name, path: file.path, format: format);
   }
 
-  RecoverySnapshot snapshot() => RecoverySnapshot(
-    name: _name ?? '',
-    path: path,
-    format: format,
-    bytes: encode(format),
-    savedAt: DateTime.now(),
+  void _openAs(
+    OpenedFile file,
+    LoadedDocument loaded, {
+    required DocumentFormat format,
+    required bool template,
+  }) {
+    if (template) {
+      _load(
+        loaded,
+        name: null,
+        path: null,
+        format: format.writable ? format : DocumentFormat.docx,
+      );
+      return;
+    }
+    final named = DocumentFormat.fromFileName(file.name) ?? format;
+    final saved = named.writable ? format : named;
+    _load(
+      saved.writable
+          ? loaded
+          : loaded.withNotices([DocumentNotice.savesAsDocx]),
+      name: file.name,
+      path: file.path,
+      format: saved,
+    );
+  }
+
+  /// The copy is always a .docx (.docm for .docm files), which keeps
+  /// everything the editor has.
+  RecoverySnapshot snapshot() {
+    final content = format == DocumentFormat.docm
+        ? DocumentFormat.docm
+        : DocumentFormat.docx;
+    return RecoverySnapshot(
+      name: _name ?? '',
+      path: path,
+      format: format,
+      content: content,
+      bytes: encode(content),
+      savedAt: DateTime.now(),
+    );
+  }
+
+  /// Reopens the recovery copy as a document that is not saved yet, reading
+  /// it on this isolate: the app uses [restoreInBackground].
+  @visibleForTesting
+  void restore(RecoverySnapshot snapshot, {required bool keepPath}) => _restore(
+    snapshot,
+    codecs.decoder(snapshot.content).decode(snapshot.bytes),
+    keepPath: keepPath,
   );
 
-  /// Reopens the recovery copy as a document that is not saved yet.
-  void restore(RecoverySnapshot snapshot, {required bool keepPath}) {
-    final loaded = snapshot.format == DocumentFormat.docx
-        ? docx.decode(snapshot.bytes)
-        : plainText.decode(snapshot.bytes);
+  /// [restore] with the format's work on another isolate, as in
+  /// [openInBackground].
+  Future<void> restoreInBackground(
+    RecoverySnapshot snapshot, {
+    required bool keepPath,
+  }) async {
+    final prepared = await prepareInBackground(
+      snapshot.content,
+      snapshot.bytes,
+      timeLimit: openTimeLimit,
+    );
+    _restore(
+      snapshot,
+      codecs.decoder(snapshot.content).load(prepared),
+      keepPath: keepPath,
+    );
+  }
+
+  void _restore(
+    RecoverySnapshot snapshot,
+    LoadedDocument loaded, {
+    required bool keepPath,
+  }) {
     _load(
       loaded,
       name: snapshot.name.isEmpty ? null : snapshot.name,
@@ -200,6 +298,7 @@ class EditorSession extends ChangeNotifier {
 
   /// Returns false if the user canceled.
   Future<bool> save() async {
+    if (!format.writable) return saveAs(DocumentFormat.docx);
     final target = path;
     if (target != null && files.canSaveInPlace) {
       await files.write(target, encode(format));
@@ -223,9 +322,14 @@ class EditorSession extends ChangeNotifier {
     }
     var chosen = await files.chooseSaveLocation(suggested, target);
     if (chosen == null) return false;
-    final chosenFormat = DocumentFormat.fromFileName(chosen);
-    if (chosenFormat == null) chosen = '$chosen.${target.extension}';
-    final finalFormat = chosenFormat ?? target;
+    final typed = DocumentFormat.matchFileName(chosen);
+    final DocumentFormat finalFormat;
+    if (typed != null && !typed.template && typed.format.writable) {
+      finalFormat = typed.format;
+    } else {
+      finalFormat = target;
+      chosen = '$chosen.${target.extension}';
+    }
     await files.write(chosen, encode(finalFormat));
     path = chosen;
     name = chosen.split(RegExp(r'[\\/]')).last;
@@ -234,20 +338,82 @@ class EditorSession extends ChangeNotifier {
     return true;
   }
 
-  Uint8List encode(DocumentFormat target) {
-    final delta = controller.document.toDelta();
-    return target == DocumentFormat.docx
-        ? docx.encode(
-            delta,
-            source: _document.source,
-            pageSetup: _pageSetupChanged ? _look : null,
-            headersFooters: headersFooters,
-          )
-        : plainText.encode(delta);
-  }
+  Uint8List encode(DocumentFormat target) => codecs
+      .encoder(target)
+      .encode(
+        controller.document.toDelta(),
+        source: _document.source,
+        look: _look,
+        pageSetupChanged: _pageSetupChanged,
+        headersFooters: headersFooters,
+      );
 
   String plainTextContent() =>
       plainText.plainTextOf(controller.document.toDelta());
+
+  /// Whether the document, with its tables, headers and footers, has
+  /// equations, charts or other protected Word content that only .docx and
+  /// .docm keep as it is.
+  bool hasProtectedContent() {
+    final tablesSeen = <String>{};
+    return [
+      controller.document.toDelta(),
+      for (final story in [
+        ...headersFooters.headers.values,
+        ...headersFooters.footers.values,
+      ])
+        story.delta,
+    ].any((delta) => _hasProtectedContent(delta, tablesSeen));
+  }
+
+  bool _hasProtectedContent(Delta delta, Set<String> tablesSeen) =>
+      delta.operations.any(
+        (operation) => switch (operation.data) {
+          {EmbedTypes.opaqueBlock: final Object value} => _isProtected(
+            value,
+            block: true,
+          ),
+          {EmbedTypes.opaqueInline: final Object value} => _isProtected(
+            value,
+            block: false,
+          ),
+          {EmbedTypes.table: final Object value} => _tableHasProtectedContent(
+            value,
+            tablesSeen,
+          ),
+          _ => false,
+        },
+      );
+
+  bool _tableHasProtectedContent(Object value, Set<String> tablesSeen) {
+    final TableModel? table;
+    try {
+      table = tables[tableIdOf(value)];
+    } catch (_) {
+      return false;
+    }
+    if (table == null || !tablesSeen.add(table.id)) return false;
+    return table.rows.any(
+      (row) => row.cells.any(
+        (cell) => _hasProtectedContent(
+          cell.controller.document.toDelta(),
+          tablesSeen,
+        ),
+      ),
+    );
+  }
+
+  /// Notes and fields don't count: .odt and .rtf write them as their own.
+  static bool _isProtected(Object value, {required bool block}) {
+    final OpaqueContent content;
+    try {
+      content = OpaqueContent.decode(value);
+    } catch (_) {
+      return false;
+    }
+    if (content.hidden || content.label == OpaqueLabels.note) return false;
+    return block || content.label != null || fieldNameOf(content.xml) == null;
+  }
 
   Set<String> fontsInUse() => {
     ?_look.body.fontFamily,

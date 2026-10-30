@@ -12,16 +12,33 @@ import 'docx_template.dart';
 import 'docx_writer.dart';
 
 class DocxCodec implements DocumentCodec {
-  DocxCodec(this.tables);
+  DocxCodec(this.tables, {this.flavor = DocxFlavor.document});
 
   final TableStore tables;
 
-  @override
-  DocumentFormat get format => DocumentFormat.docx;
+  /// Kind of package written; .docm keeps its macros.
+  final DocxFlavor flavor;
 
   @override
-  LoadedDocument decode(Uint8List bytes) =>
-      DocxReader(DocxPackage.decode(bytes), tables).read();
+  LoadedDocument decode(Uint8List bytes) => load(prepare(bytes));
+
+  /// Unzips the package and checks that it is a Word document.
+  static PreparedPackage prepare(Uint8List bytes) =>
+      PreparedPackage(DocxPackage.decode(bytes).parts);
+
+  /// Reads a package prepared by this codec or built from another format.
+  @override
+  LoadedDocument load(covariant PreparedPackage prepared) =>
+      read(DocxPackage(prepared.parts)).withNotices(prepared.notices);
+
+  /// Opens a package built in memory, like the ones made from other formats.
+  LoadedDocument read(DocxPackage package) =>
+      DocxReader(package, tables).read();
+
+  /// The footnotes or endnotes of an opened package by id, for formats that
+  /// write them as notes of their own; [kind] is `footnote` or `endnote`.
+  Map<String, Delta> notes(DocxPackage package, String kind) =>
+      DocxReader(package, tables).notes(kind);
 
   LoadedDocument createEmpty() => create(DocumentTemplate.blank);
 
@@ -41,12 +58,14 @@ class DocxCodec implements DocumentCodec {
   Uint8List encode(
     Delta delta, {
     Object? source,
-    DocumentLook? pageSetup,
+    DocumentLook look = const DocumentLook(),
+    bool pageSetupChanged = false,
     HeadersFooters? headersFooters,
   }) => DocxWriter(tables).write(
     delta,
-    source is DocxPackage ? source : newDocumentPackage(),
-    pageSetup: pageSetup,
+    (source is DocxPackage ? source : newDocumentPackage()).copy()
+      ..convertTo(flavor),
+    pageSetup: pageSetupChanged ? look : null,
     headersFooters: headersFooters,
   );
 }

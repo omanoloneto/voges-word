@@ -50,14 +50,20 @@ base class Line extends QuillContainer<Leaf?> {
         : parent!.next as Line?;
   }
 
+  /// Voges Word: Quill's own algorithms, kept for tests; see
+  /// [Root.quillAlgorithms]. The others walk the lines in loops, as a long
+  /// document has more lines than the stack has room for calls.
+  bool get _quillAlgorithms {
+    final root = parent is Block ? parent!.parent : parent;
+    return root is Root && root.quillAlgorithms;
+  }
+
   @override
   Node newInstance() => Line();
 
   @override
   Delta toDelta() {
-    final delta = children
-        .map((child) => child.toDelta())
-        .fold(Delta(), (dynamic a, b) => a.concat(b));
+    final delta = childrenDelta();
     var attributes = style;
     if (parent is Block) {
       final block = parent as Block;
@@ -83,6 +89,44 @@ base class Line extends QuillContainer<Leaf?> {
 
   @override
   void insert(int index, Object data, Style? style) {
+    if (_quillAlgorithms) {
+      _insertByRecursion(index, data, style);
+      return;
+    }
+    if (data is Embeddable) {
+      _insertSafe(index, data, style);
+      return;
+    }
+    // Voges Word: each line break moves on to the next line in a loop, and
+    // the text after it is read in place instead of copied for each line.
+    final text = data as String;
+    var line = this;
+    var start = 0;
+    while (true) {
+      final lineBreak = text.indexOf('\n', start);
+      if (lineBreak < 0) {
+        line._insertSafe(
+            index, start == 0 ? text : text.substring(start), style);
+        return;
+      }
+      final prefix = text.substring(start, lineBreak);
+      line._insertSafe(index, prefix, style);
+      if (prefix.isNotEmpty) {
+        index += prefix.length;
+      }
+      final nextLine = line._getNextLine(index);
+      line.clearStyle();
+      if (line.parent is Block) {
+        line._unwrap();
+      }
+      line._format(style);
+      line = nextLine;
+      index = 0;
+      start = lineBreak + 1;
+    }
+  }
+
+  void _insertByRecursion(int index, Object data, Style? style) {
     if (data is Embeddable) {
       // We do not check whether this line already has any children here as
       // inserting an embed into a line with other text is acceptable from the
@@ -121,11 +165,69 @@ base class Line extends QuillContainer<Leaf?> {
 
     // Continue with remaining part.
     final remain = text.substring(lineBreak + 1);
-    nextLine.insert(0, remain, style);
+    nextLine._insertByRecursion(0, remain, style);
+  }
+
+  /// Voges Word: what [insert] does with a line break at the end of this
+  /// line, without searching the tree: this line takes [style] and the new
+  /// empty line after it is returned. Documents load with it in one pass.
+  @internal
+  Line appendLineBreak(Style? style) {
+    final line = clone() as Line;
+    insertAfter(line);
+    clearStyle();
+    if (parent is Block) {
+      _unwrap();
+    }
+    _format(style);
+    return line;
   }
 
   @override
   void retain(int index, int? len, Style? style) {
+    if (_quillAlgorithms) {
+      _retainByRecursion(index, len, style);
+      return;
+    }
+    if (style == null) {
+      return;
+    }
+    // Voges Word: a loop over the lines the range covers.
+    var line = this;
+    var remain = len!;
+    while (true) {
+      final length = line.length;
+      final local = math.min(length - index, remain);
+      // If index is at newline character then this is a line/block style
+      // update.
+      if ((index + local == length) && local == 1) {
+        assert(
+            style.values.every((attr) =>
+                attr.scope == AttributeScope.block ||
+                attr.scope == AttributeScope.ignore),
+            'It is not allowed to apply inline attributes to line itself.');
+        line._format(style);
+      } else {
+        // Otherwise forward to children as it's an inline format update.
+        final attr = <String, Attribute>{}..addEntries(style.attributes.entries
+            .where((a) => a.value.scope != AttributeScope.block));
+        assert(index + local != length, 'Not at line end');
+        line._retainChildren(index, local, Style.attr(attr));
+      }
+      remain -= local;
+      if (remain <= 0) {
+        return;
+      }
+      assert(line.nextLine != null);
+      line = line.nextLine!;
+      index = 0;
+    }
+  }
+
+  void _retainChildren(int index, int len, Style style) =>
+      super.retain(index, len, style);
+
+  void _retainByRecursion(int index, int? len, Style? style) {
     if (style == null) {
       return;
     }
@@ -153,12 +255,66 @@ base class Line extends QuillContainer<Leaf?> {
     final remain = len - local;
     if (remain > 0) {
       assert(nextLine != null);
-      nextLine!.retain(0, remain, style);
+      nextLine!._retainByRecursion(0, remain, style);
     }
   }
 
   @override
   void delete(int index, int? len) {
+    if (_quillAlgorithms) {
+      _deleteByRecursion(index, len);
+      return;
+    }
+    // Voges Word: the lines whose line break goes hand what is left of them
+    // to the line after them from the last one back, as Quill's recursion
+    // did on its way back.
+    final joined = <Line>[];
+    var line = this;
+    var remaining = len!;
+    while (true) {
+      final length = line.length;
+      final local = math.min(length - index, remaining);
+      if (index + local == length) {
+        // Our newline character deleted with all style information.
+        line.clearStyle();
+        if (local > 1) {
+          // Exclude newline character from delete range for children.
+          line._deleteChildren(index, local - 1);
+        }
+        joined.add(line);
+      } else {
+        line._deleteChildren(index, local);
+      }
+      remaining -= local;
+      final next = line.nextLine;
+      if (remaining <= 0 || next == null) {
+        break;
+      }
+      line = next;
+      index = 0;
+    }
+    for (final line in joined.reversed) {
+      if (line.isNotEmpty) {
+        // Since we lost our line-break and still have child text nodes those
+        // must migrate to the next line.
+        final next = line.nextLine;
+        if (next != null) {
+          // Move remaining children in this line to the next line so that
+          // all attributes of nextLine are preserved.
+          next.moveChildToNewParent(line);
+          line.moveChildToNewParent(next);
+        }
+      }
+      // Now we can remove this line.
+      final block = line.parent!; // remember reference before un-linking.
+      line.unlink();
+      block.adjust();
+    }
+  }
+
+  void _deleteChildren(int index, int len) => super.delete(index, len);
+
+  void _deleteByRecursion(int index, int? len) {
     final length = this.length;
     final local = math.min(length - index, len!);
     final isLFDeleted = index + local == length; // Line feed
@@ -175,7 +331,7 @@ base class Line extends QuillContainer<Leaf?> {
 
     final remaining = len - local;
     if (remaining > 0 && nextLine != null) {
-      nextLine?.delete(0, remaining);
+      nextLine?._deleteByRecursion(0, remaining);
     }
 
     if (isLFDeleted && isNotEmpty) {
@@ -357,6 +513,115 @@ base class Line extends QuillContainer<Leaf?> {
   ///
   /// In essence, it is INTERSECTION of each individual segment's styles
   Style collectStyle(int offset, int len) {
+    if (_quillAlgorithms) {
+      return _collectStyleByRecursion(offset, len);
+    }
+    // Voges Word: the lines of the range are listed first, then their styles
+    // are taken from the last line back, in the order Quill's recursion
+    // took them.
+    final parts = <(Line, int, int)>[];
+    var line = this;
+    while (true) {
+      parts.add((line, offset, len));
+      final local = math.min(line.length - offset, len);
+      var remaining = len - local;
+      var next = line.nextLine;
+      // Skip over empty lines that have no attributes
+      while (remaining > 0 && next != null && next.isEmpty) {
+        remaining--;
+        next = next.nextLine;
+      }
+      if (remaining <= 0 || next == null) {
+        break;
+      }
+      line = next;
+      offset = 0;
+      len = remaining;
+    }
+    Style? rest;
+    for (final (line, offset, len) in parts.reversed) {
+      rest = line._partStyle(
+        offset,
+        len,
+        before: line.isEmpty ? line._endStyleBefore() : null,
+        rest: rest,
+      );
+    }
+    return rest!;
+  }
+
+  /// One line's step of [collectStyle]: the style of its characters in the
+  /// range, merged with [before], the style a blank line takes from the line
+  /// before it, and intersected with [rest], the style of the lines after.
+  Style _partStyle(int offset, int len, {Style? before, Style? rest}) {
+    final local = math.min(length - offset, len);
+    var result = const Style();
+    final excluded = <Attribute>{};
+
+    void handle(Style style) {
+      for (final attr in result.values) {
+        if (!style.containsKey(attr.key) ||
+            (style.attributes[attr.key]?.value != attr.value)) {
+          excluded.add(attr);
+        }
+      }
+      result = result.removeAll(excluded);
+    }
+
+    final data = queryChild(offset, true);
+    var node = data.node as Leaf?;
+    if (node != null) {
+      result = node.style;
+      var pos = node.length - data.offset;
+      while (!node!.isLast && pos < local) {
+        node = node.next as Leaf;
+        handle(node.style);
+        pos += node.length;
+      }
+    }
+
+    if (isEmpty) {
+      if (before != null) {
+        result = result.mergeAll(before);
+      }
+    } else {
+      result = result.mergeAll(style);
+    }
+    if (parent is Block) {
+      final block = parent as Block;
+      result = result.mergeAll(block.style);
+    }
+    if (rest != null) {
+      handle(rest);
+    }
+    return result;
+  }
+
+  /// What a blank line takes from the end of the line before it: Quill read
+  /// it with `collectStyle(length - 1, 1)` on that line, which went on to
+  /// the line before when that one was blank too.
+  Style? _endStyleBefore() {
+    final lines = <Line>[];
+    for (var line = _lineBefore(); line != null;) {
+      lines.add(line);
+      line = line.isEmpty ? line._lineBefore() : null;
+    }
+    Style? style;
+    for (final line in lines.reversed) {
+      style = line._partStyle(line.length - 1, 1, before: style);
+    }
+    return style;
+  }
+
+  Line? _lineBefore() {
+    var prevLine = previous;
+    while (prevLine is Block && prevLine.isNotEmpty) {
+      prevLine = prevLine.children.last;
+    }
+    return prevLine is Line ? prevLine : null;
+  }
+
+  Style _collectStyleByRecursion(int offset, int len) {
     final local = math.min(length - offset, len);
     var result = const Style();
     final excluded = <Attribute>{};
@@ -390,7 +655,8 @@ base class Line extends QuillContainer<Leaf?> {
         prevLine = prevLine.children.last;
       }
       if (prevLine is Line) {
-        result = result.mergeAll(prevLine.collectStyle(prevLine.length - 1, 1));
+        result = result.mergeAll(
+            prevLine._collectStyleByRecursion(prevLine.length - 1, 1));
       }
     } else {
       result = result.mergeAll(style);
@@ -409,7 +675,7 @@ base class Line extends QuillContainer<Leaf?> {
       nxt = nxt.nextLine;
     }
     if (remaining > 0 && nxt != null) {
-      final rest = nxt.collectStyle(0, remaining);
+      final rest = nxt._collectStyleByRecursion(0, remaining);
       handle(rest);
     }
 
@@ -419,6 +685,55 @@ base class Line extends QuillContainer<Leaf?> {
   /// Returns each node segment's offset in selection
   /// with its corresponding style or embed as a list
   List<OffsetValue> collectAllIndividualStylesAndEmbed(int offset, int len,
+      {int beg = 0}) {
+    if (_quillAlgorithms) {
+      return _collectAllIndividualStylesAndEmbedByRecursion(offset, len,
+          beg: beg);
+    }
+    final result = <OffsetValue>[];
+    // Voges Word: a loop over the lines, adding to one list.
+    Line? line = this;
+    while (line != null) {
+      final local = math.min(line.length - offset, len);
+      final data = line.queryChild(offset, true);
+      var node = data.node as Leaf?;
+      if (node != null) {
+        var pos = math.min(local, node.length - data.offset);
+        if (node is QuillText && node.style.isNotEmpty) {
+          result.add(OffsetValue(beg, node.style, pos));
+        } else if (node.value is Embeddable) {
+          result.add(OffsetValue(beg, node.value as Embeddable, pos));
+        }
+
+        while (!node!.isLast && pos < local) {
+          node = node.next as Leaf;
+          final span = math.min(local - pos, node.length);
+          if (node is QuillText && node.style.isNotEmpty) {
+            result.add(OffsetValue(pos + beg, node.style, span));
+          } else if (node.value is Embeddable) {
+            result.add(OffsetValue(pos + beg, node.value as Embeddable, span));
+          }
+          pos += node.length;
+        }
+
+        if (line.style.isNotEmpty) {
+          result.add(OffsetValue(beg, line.style, pos));
+        }
+      }
+
+      len -= local;
+      if (len <= 0) {
+        break;
+      }
+      line = line.nextLine;
+      offset = 0;
+      beg += local;
+    }
+    return result;
+  }
+
+  List<OffsetValue> _collectAllIndividualStylesAndEmbedByRecursion(
+      int offset, int len,
       {int beg = 0}) {
     final local = math.min(length - offset, len);
     final result = <OffsetValue>[];
@@ -451,8 +766,9 @@ base class Line extends QuillContainer<Leaf?> {
 
     final remaining = len - local;
     if (remaining > 0 && nextLine != null) {
-      final rest = nextLine!
-          .collectAllIndividualStylesAndEmbed(0, remaining, beg: local + beg);
+      final rest = nextLine!._collectAllIndividualStylesAndEmbedByRecursion(
+          0, remaining,
+          beg: local + beg);
       result.addAll(rest);
     }
 
@@ -462,6 +778,43 @@ base class Line extends QuillContainer<Leaf?> {
   /// Returns all styles for any character within the specified text range.
   /// In essence, it is UNION of each individual segment's styles
   List<Style> collectAllStyles(int offset, int len) {
+    if (_quillAlgorithms) {
+      return _collectAllStylesByRecursion(offset, len);
+    }
+    final result = <Style>[];
+    // Voges Word: a loop over the lines, adding to one list.
+    Line? line = this;
+    while (line != null) {
+      final local = math.min(line.length - offset, len);
+      final data = line.queryChild(offset, true);
+      var node = data.node as Leaf?;
+      if (node != null) {
+        result.add(node.style);
+        var pos = node.length - data.offset;
+        while (!node!.isLast && pos < local) {
+          node = node.next as Leaf;
+          result.add(node.style);
+          pos += node.length;
+        }
+      }
+
+      result.add(line.style);
+      if (line.parent is Block) {
+        final block = line.parent as Block;
+        result.add(block.style);
+      }
+
+      len -= local;
+      if (len <= 0) {
+        break;
+      }
+      line = line.nextLine;
+      offset = 0;
+    }
+    return result;
+  }
+
+  List<Style> _collectAllStylesByRecursion(int offset, int len) {
     final local = math.min(length - offset, len);
     final result = <Style>[];
 
@@ -485,7 +838,7 @@ base class Line extends QuillContainer<Leaf?> {
 
     final remaining = len - local;
     if (remaining > 0 && nextLine != null) {
-      final rest = nextLine!.collectAllStyles(0, remaining);
+      final rest = nextLine!._collectAllStylesByRecursion(0, remaining);
       result.addAll(rest);
     }
 
@@ -494,6 +847,53 @@ base class Line extends QuillContainer<Leaf?> {
 
   /// Returns all styles for any character within the specified text range.
   List<OffsetValue<Style>> collectAllStylesWithOffsets(
+    int offset,
+    int len, {
+    int beg = 0,
+  }) {
+    if (_quillAlgorithms) {
+      return _collectAllStylesWithOffsetsByRecursion(offset, len, beg: beg);
+    }
+    final result = <OffsetValue<Style>>[];
+    // Voges Word: a loop over the lines, adding to one list. Each leaf's
+    // offset is its line's plus the leaves before it, as counted here;
+    // Quill's twin reads it from the leaf.
+    Line? line = this;
+    while (line != null) {
+      final local = math.min(line.length - offset, len);
+      final lineOffset = line.documentOffset;
+      final data = line.queryChild(offset, true);
+      var node = data.node as Leaf?;
+      if (node != null) {
+        var start = lineOffset + offset - data.offset;
+        var pos = node.length - data.offset;
+        result.add(OffsetValue(start, node.style, node.length));
+        while (!node!.isLast && pos < local) {
+          start += node.length;
+          node = node.next as Leaf;
+          result.add(OffsetValue(start, node.style, node.length));
+          pos += node.length;
+        }
+      }
+
+      result.add(OffsetValue(lineOffset, line.style, line.length));
+      if (line.parent is Block) {
+        final block = line.parent as Block;
+        result
+            .add(OffsetValue(block.documentOffset, block.style, block.length));
+      }
+
+      len -= local;
+      if (len <= 0) {
+        break;
+      }
+      line = line.nextLine;
+      offset = 0;
+    }
+    return result;
+  }
+
+  List<OffsetValue<Style>> _collectAllStylesWithOffsetsByRecursion(
     int offset,
     int len, {
     int beg = 0,
@@ -522,8 +922,8 @@ base class Line extends QuillContainer<Leaf?> {
 
     final remaining = len - local;
     if (remaining > 0 && nextLine != null) {
-      final rest =
-          nextLine!.collectAllStylesWithOffsets(0, remaining, beg: local);
+      final rest = nextLine!
+          ._collectAllStylesWithOffsetsByRecursion(0, remaining, beg: local);
       result.addAll(rest);
     }
 
@@ -538,8 +938,15 @@ base class Line extends QuillContainer<Leaf?> {
     @internal EmbedBuilder? unknownEmbedBuilder,
   }) {
     final plainText = StringBuffer();
-    _getPlainText(offset, len, plainText,
-        embedBuilders: embedBuilders, unknownEmbedBuilder: unknownEmbedBuilder);
+    if (_quillAlgorithms) {
+      _getPlainTextByRecursion(offset, len, plainText,
+          embedBuilders: embedBuilders,
+          unknownEmbedBuilder: unknownEmbedBuilder);
+    } else {
+      _getPlainText(offset, len, plainText,
+          embedBuilders: embedBuilders,
+          unknownEmbedBuilder: unknownEmbedBuilder);
+    }
     return plainText.toString();
   }
 
@@ -582,7 +989,71 @@ base class Line extends QuillContainer<Leaf?> {
     return remaining - (end - offset);
   }
 
+  /// Voges Word: where Quill went on with the next line's call and returned
+  /// what it returned, this goes on with the next line in a loop. It starts
+  /// in the first leaf where queryChild found the offset; Quill's twin
+  /// subtracts the leaf's offset.
   int _getPlainText(
+    int offset,
+    int len,
+    StringBuffer plainText, {
+    Iterable<EmbedBuilder>? embedBuilders,
+    EmbedBuilder? unknownEmbedBuilder,
+  }) {
+    var line = this;
+    var len0 = len;
+    lines:
+    while (true) {
+      final data = line.queryChild(offset, false);
+      var node = data.node as Leaf?;
+
+      while (len0 > 0) {
+        if (node == null) {
+          // blank line
+          plainText.write('\n');
+          len0 -= 1;
+        } else {
+          len0 = _getNodeText(
+            node,
+            plainText,
+            data.offset,
+            len0,
+            embedBuilders: embedBuilders,
+            unknownEmbedBuilder: unknownEmbedBuilder,
+          );
+
+          while (!node!.isLast && len0 > 0) {
+            node = node.next as Leaf;
+            len0 = _getNodeText(
+              node,
+              plainText,
+              0,
+              len0,
+              embedBuilders: embedBuilders,
+              unknownEmbedBuilder: unknownEmbedBuilder,
+            );
+          }
+
+          if (len0 > 0) {
+            // end of this line
+            plainText.write('\n');
+            len0 -= 1;
+          }
+        }
+
+        final next = line.nextLine;
+        if (len0 > 0 && next != null) {
+          line = next;
+          offset = 0;
+          continue lines;
+        }
+      }
+
+      return len0;
+    }
+  }
+
+  int _getPlainTextByRecursion(
     int offset,
     int len,
     StringBuffer plainText, {
@@ -628,7 +1099,7 @@ base class Line extends QuillContainer<Leaf?> {
       }
 
       if (len0 > 0 && nextLine != null) {
-        len0 = nextLine!._getPlainText(
+        len0 = nextLine!._getPlainTextByRecursion(
           0,
           len0,
           plainText,

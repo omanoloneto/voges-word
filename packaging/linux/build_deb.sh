@@ -31,8 +31,10 @@ Depends: libgtk-3-0t64 | libgtk-3-0, fontconfig, xdg-utils, zenity | kdialog
 Maintainer: omanoloneto <mano.afonso93@gmail.com>
 Homepage: https://omanoloneto.pro/voges/word/
 Description: lightweight document editor with .docx support
- Voges Word opens, edits and saves Word documents (.docx) and plain
- text, with pages like Word's, headers and footers, PDF and printing.
+ Voges Word opens, edits and saves Word documents (.docx and .docm),
+ OpenDocument text, RTF, HTML, Markdown and plain text, and opens
+ Word 97-2003 files, with pages like Word's, headers and footers, PDF
+ and printing.
 CONTROL
 
 dpkg-deb --build --root-owner-group "$root" "$output"

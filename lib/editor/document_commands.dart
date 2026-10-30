@@ -23,14 +23,22 @@ class InsertPageBreakIntent extends Intent {
   const InsertPageBreakIntent();
 }
 
-extension DocumentCommands on QuillController {
+extension SelectionStyle on Style {
   bool isActive(Attribute attribute) =>
-      getSelectionStyle().attributes[attribute.key]?.value == attribute.value;
+      attributes[attribute.key]?.value == attribute.value;
 
   T? valueOf<T>(String key) {
-    final value = getSelectionStyle().attributes[key]?.value;
+    final value = attributes[key]?.value;
     return value is T ? value : null;
   }
+}
+
+extension DocumentCommands on QuillController {
+  /// Each call reads the style of every selected line, so a view that shows
+  /// several values reads [getSelectionStyle] once and asks the [Style].
+  bool isActive(Attribute attribute) => getSelectionStyle().isActive(attribute);
+
+  T? valueOf<T>(String key) => getSelectionStyle().valueOf<T>(key);
 
   void toggle(Attribute attribute) => formatSelection(
     isActive(attribute) ? Attribute.clone(attribute, null) : attribute,
