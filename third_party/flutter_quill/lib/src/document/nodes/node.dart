@@ -64,6 +64,14 @@ abstract base class Node extends LinkedListEntry<Node> {
     if (list == null || isFirst) {
       return 0;
     }
+    // Voges Word: lines and blocks count from the nearest previous sibling
+    // whose offset is known, so reading every line's offset in order, as
+    // the editor does when it builds and paints, takes linear time. Leaves
+    // count from the start of their line: one moved to another line can keep
+    // the offset it had there.
+    if (parent is! Line) {
+      return _offset = _offsetFromKnownSibling();
+    }
     var offset = 0;
     for (final node in list!) {
       if (node == this) {
@@ -76,11 +84,25 @@ abstract base class Node extends LinkedListEntry<Node> {
     return _offset!;
   }
 
+  /// Also keeps the offsets of the siblings it passes.
+  int _offsetFromKnownSibling() {
+    var known = previous!;
+    while (known._offset == null && !known.isFirst) {
+      known = known.previous!;
+    }
+    var offset = known._offset ?? 0;
+    for (var node = known; !identical(node, this); node = node.next!) {
+      node._offset = offset;
+      offset += node.length;
+    }
+    return offset;
+  }
+
   void clearOffsetCache() {
-    _offset = null;
-    final next = this.next;
-    if (next != null) {
-      next.clearOffsetCache();
+    // Voges Word: a loop, since a long document has more lines than the
+    // stack has room for calls.
+    for (Node? node = this; node != null; node = node.next) {
+      node._offset = null;
     }
   }
 
@@ -169,7 +191,5 @@ base class Root extends QuillContainer<QuillContainer<Node?>> {
   QuillContainer<Node?> get defaultChild => Line();
 
   @override
-  Delta toDelta() => children
-      .map((child) => child.toDelta())
-      .fold(Delta(), (a, b) => a.concat(b));
+  Delta toDelta() => childrenDelta();
 }

@@ -55,9 +55,7 @@ base class Line extends QuillContainer<Leaf?> {
 
   @override
   Delta toDelta() {
-    final delta = children
-        .map((child) => child.toDelta())
-        .fold(Delta(), (dynamic a, b) => a.concat(b));
+    final delta = childrenDelta();
     var attributes = style;
     if (parent is Block) {
       final block = parent as Block;
@@ -122,6 +120,21 @@ base class Line extends QuillContainer<Leaf?> {
     // Continue with remaining part.
     final remain = text.substring(lineBreak + 1);
     nextLine.insert(0, remain, style);
+  }
+
+  /// Voges Word: what [insert] does with a line break at the end of this
+  /// line, without searching the tree: this line takes [style] and the new
+  /// empty line after it is returned. Documents load with it in one pass.
+  @internal
+  Line appendLineBreak(Style? style) {
+    final line = clone() as Line;
+    insertAfter(line);
+    clearStyle();
+    if (parent is Block) {
+      _unwrap();
+    }
+    _format(style);
+    return line;
   }
 
   @override

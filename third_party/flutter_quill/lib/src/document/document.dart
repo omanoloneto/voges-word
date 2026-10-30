@@ -38,6 +38,14 @@ class Document {
     loadDocument(delta);
   }
 
+  /// Voges Word: builds the tree as Quill 11.5.0 did, inserting each
+  /// operation at its offset in quadratic time. Tests check that
+  /// [Document.fromDelta] builds the same tree.
+  @visibleForTesting
+  Document.fromDeltaByInserts(Delta delta) : _delta = delta {
+    _loadByInserts(delta);
+  }
+
   /// Stores the plain text content of the entire document in memory for quick access.
   ///
   /// It acts as a cache to avoid repeatedly extracting or generating the plain text.
@@ -553,9 +561,34 @@ class Document {
           .map((e) => e.toPlainText(embedBuilders, unknownEmbedBuilder))
           .join();
 
+  /// Voges Word: each operation goes at the end of the last line, so loading
+  /// takes linear time; Quill searched the tree for every insert.
   @visibleForTesting
   @internal
   void loadDocument(Delta doc) {
+    if (doc.isEmpty) {
+      throw ArgumentError.value(
+          doc.toString(), 'Document Delta cannot be empty.');
+    }
+
+    assert((doc.last.data as String).endsWith('\n'));
+
+    final loader = _TreeLoader(_root);
+    for (final op in doc.toList()) {
+      if (!op.isInsert) {
+        throw ArgumentError.value(doc,
+            'Document can only contain insert operations but ${op.key} found.');
+      }
+      final attributes = op.attributes;
+      final style = attributes != null ? Style.fromJson(attributes) : null;
+      loader.add(_normalize(op.data), style);
+    }
+    loader.close();
+    _removeTrailingLine();
+    cachedPlainText = null;
+  }
+
+  void _loadByInserts(Delta doc) {
     if (doc.isEmpty) {
       throw ArgumentError.value(
           doc.toString(), 'Document Delta cannot be empty.');
@@ -575,6 +608,11 @@ class Document {
       _root.insert(offset, data, style);
       offset += op.length!;
     }
+    _removeTrailingLine();
+    cachedPlainText = null;
+  }
+
+  void _removeTrailingLine() {
     final node = _root.last;
     if (node is Line &&
         node.parent is! Block &&
@@ -582,7 +620,6 @@ class Document {
         _root.childCount > 1) {
       _root.remove(node);
     }
-    cachedPlainText = null;
   }
 
   bool isEmpty() {
@@ -599,6 +636,82 @@ class Document {
     return delta.length == 1 &&
         delta.first.data == '\n' &&
         delta.first.key == 'insert';
+  }
+}
+
+/// Voges Word: builds a document tree by appending each operation to the last
+/// line, with the same result as [Root.insert] at the end of the document.
+/// Text that joins the previous leaf, which has the same style, is
+/// concatenated once when the leaf is complete, not once per operation.
+class _TreeLoader {
+  _TreeLoader(this._root);
+
+  final Root _root;
+  Line? _line;
+
+  /// The last leaf of [_line] when it is text, and what joins it.
+  QuillText? _text;
+  List<String>? _joined;
+
+  void add(Object data, Style? style) {
+    var line = _line ??= _newLine();
+    if (data is Embeddable) {
+      _closeText();
+      final embed = Embed(data);
+      line.add(embed);
+      embed.format(style);
+      return;
+    }
+    final text = data as String;
+    var start = 0;
+    for (var end = text.indexOf('\n');
+        end >= 0;
+        end = text.indexOf('\n', start)) {
+      if (end > start) {
+        _addText(line, text.substring(start, end), style);
+      }
+      _closeText();
+      line = _line = line.appendLineBreak(style);
+      start = end + 1;
+    }
+    if (start < text.length) {
+      _addText(line, text.substring(start), style);
+    }
+  }
+
+  void close() => _closeText();
+
+  Line _newLine() {
+    final line = Line();
+    _root.add(line);
+    return line;
+  }
+
+  void _addText(Line line, String value, Style? style) {
+    final leaf = QuillText(value);
+    if (style != null && style.isNotEmpty) {
+      leaf.applyStyle(style);
+    }
+    final previous = _text;
+    if (previous != null && previous.style == leaf.style) {
+      (_joined ??= [previous.value]).add(value);
+      return;
+    }
+    _closeText();
+    line.add(leaf);
+    _text = leaf;
+  }
+
+  void _closeText() {
+    final text = _text;
+    final joined = _joined;
+    if (text != null && joined != null) {
+      text
+        ..value = joined.join()
+        ..clearLengthCache();
+    }
+    _text = null;
+    _joined = null;
   }
 }
 

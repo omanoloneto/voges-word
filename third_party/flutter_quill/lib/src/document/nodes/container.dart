@@ -1,5 +1,8 @@
 import 'dart:collection' show LinkedList;
 
+import 'package:meta/meta.dart';
+
+import '../../../../quill_delta.dart';
 import '../../editor/embed/embed_editor_builder.dart';
 import '../style.dart';
 import 'leaf.dart';
@@ -107,6 +110,22 @@ abstract base class QuillContainer<T extends Node?> extends Node {
       offset -= len;
     }
     return ChildQuery(null, 0);
+  }
+
+  /// Voges Word: the children's deltas joined as folding them with
+  /// [Delta.concat] did, without copying the result once per child.
+  @protected
+  Delta childrenDelta() {
+    final delta = Delta();
+    for (final child in children) {
+      final operations = child.toDelta().operations;
+      if (operations.isEmpty) {
+        continue;
+      }
+      delta.push(operations.first);
+      delta.operations.addAll(operations.skip(1));
+    }
+    return delta;
   }
 
   @override
