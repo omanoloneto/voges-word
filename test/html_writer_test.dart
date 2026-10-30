@@ -292,11 +292,11 @@ void main() {
       expect(_lines(_read(html).delta), [
         [
           'buy milk',
-          {'list': 'bullet'},
+          {'list': 'checked'},
         ],
         [
           'call mom',
-          {'list': 'bullet'},
+          {'list': 'unchecked'},
         ],
       ]);
     });

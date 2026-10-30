@@ -632,9 +632,9 @@ $blank$blank</table>''', tables);
             ?.toInt();
     expect(numId('Done task'), isNot(numId('Open task')));
     expect(numId('Plain'), isNot(numId('Open task')));
-    for (final text in ['Done task', 'Open task', 'Plain']) {
-      expect(_line(loaded.delta, text).list, 'bullet');
-    }
+    expect(_line(loaded.delta, 'Done task').list, 'checked');
+    expect(_line(loaded.delta, 'Open task').list, 'unchecked');
+    expect(_line(loaded.delta, 'Plain').list, 'bullet');
   });
 
   group('hostile pages', () {

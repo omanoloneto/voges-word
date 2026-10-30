@@ -289,14 +289,6 @@ void main() {
     final index = _tableIndex(expected);
     expect(_tableIndex(visible), index);
     expected[index] = visible[index];
-    final checked = expected.indexWhere(
-      (operation) => (operation['attributes'] as Map?)?['list'] == 'checked',
-    );
-    // Boxes come back as bullets until the .docx reader makes their levels
-    // checklists again.
-    final box = (visible[checked]['attributes'] as Map?)?['list'];
-    expect(box, anyOf('checked', 'bullet'));
-    (expected[checked]['attributes'] as Map)['list'] = box;
     expect(visible, expected);
 
     final spaced = reopened.delta.toList().firstWhere(
