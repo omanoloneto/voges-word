@@ -97,6 +97,10 @@ Future<Uint8List> documentPdf(
     );
 
     final boundary = _PageBoundary();
+    final topLeft = RenderPositionedBox(
+      alignment: Alignment.topLeft,
+      child: boundary,
+    );
     final renderView = RenderView(
       view: view,
       configuration: ViewConfiguration(
@@ -110,12 +114,12 @@ Future<Uint8List> documentPdf(
         ),
         devicePixelRatio: 1,
       ),
-      child: RenderPositionedBox(alignment: Alignment.topLeft, child: boundary),
+      child: topLeft,
     );
     final pipeline = PipelineOwner()..rootNode = renderView;
     renderView.prepareInitialFrame();
     final buildOwner = BuildOwner(focusManager: focusManager);
-    var root = RenderObjectToWidgetAdapter<RenderBox>(
+    final root = RenderObjectToWidgetAdapter<RenderBox>(
       container: boundary,
       child: editor,
     ).attachToRenderTree(buildOwner);
@@ -181,12 +185,20 @@ Future<Uint8List> documentPdf(
       }
       return pdf.build(title: session.baseName);
     } finally {
-      root = RenderObjectToWidgetAdapter<RenderBox>(
+      // Rebuilt with no child, the root unmounts the editor, whose states let
+      // go of the pictures and the table cells.
+      RenderObjectToWidgetAdapter<RenderBox>(
         container: boundary,
-        child: const SizedBox.shrink(),
       ).attachToRenderTree(buildOwner, root);
-      buildOwner.finalizeTree();
-      pipeline.rootNode = null;
+      buildOwner
+        ..buildScope(root)
+        ..finalizeTree();
+      pipeline
+        ..rootNode = null
+        ..dispose();
+      for (final node in [renderView, topLeft, boundary]) {
+        node.dispose();
+      }
     }
   } finally {
     decorations.dispose();
