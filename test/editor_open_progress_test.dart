@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart'
-    show CircularProgressIndicator, FocusManager;
+    show CircularProgressIndicator, FocusManager, SnackBar, TextButton;
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -105,7 +105,30 @@ Future<void> _waitUntil(WidgetTester tester, bool Function() done) async {
 
 Finder _opening(String name) => find.text('Opening “$name”…');
 
+final _cancel = find.widgetWithText(TextButton, 'Cancel');
+
 bool _gone(Finder finder) => finder.evaluate().isEmpty;
+
+/// Markdown that takes about a second to read in debug mode, so it is still
+/// opening when the test cancels it.
+Uint8List _slowMarkdown() => _bytes(
+  List.generate(
+    50000,
+    (index) => 'Paragraph $index with **bold** text.\n',
+  ).join('\n'),
+);
+
+Future<void> _openAndWait(
+  WidgetTester tester,
+  EditorSession session,
+  String name,
+  String text,
+) async {
+  final generation = session.generation;
+  await _openWith(tester, {name: _bytes(text)});
+  await _waitUntil(tester, () => session.generation > generation);
+  await tester.pumpAndSettle();
+}
 
 String? get _focused => FocusManager.instance.primaryFocus?.debugLabel;
 
@@ -170,6 +193,89 @@ void main() {
     await tester.pumpAndSettle();
     expect(session.name, 'short.html');
     expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('Cancel stops the open and keeps the document that was open', (
+    tester,
+  ) async {
+    final session = await _pumpApp(tester);
+    await _openAndWait(tester, session, 'page.html', '<p>The opened page</p>');
+    final generation = session.generation;
+
+    await _openWith(tester, {'long.md': _slowMarkdown()});
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(_opening('long.md'), findsOneWidget);
+    await tester.tap(_cancel);
+    await _waitUntil(tester, () => _gone(_opening('long.md')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(SnackBar), findsNothing);
+    expect(session.generation, generation);
+    expect(session.name, 'page.html');
+    expect(session.dirty, isFalse);
+    expect(session.controller.document.toPlainText(), 'The opened page\n');
+    expect(_focused, 'document');
+  });
+
+  testWidgets('the back button cancels the open too', (tester) async {
+    final session = await _pumpApp(tester);
+
+    await _openWith(tester, {'long.md': _slowMarkdown()});
+    expect(_opening('long.md'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await _waitUntil(tester, () => _gone(_opening('long.md')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SnackBar), findsNothing);
+    expect(session.isUntitled, isTrue);
+    expect(session.controller.document.toPlainText(), '\n');
+  });
+
+  testWidgets('files asked for after a canceled one still open', (
+    tester,
+  ) async {
+    final session = await _pumpApp(tester);
+    final generation = session.generation;
+
+    await _openWith(tester, {
+      'long.md': _slowMarkdown(),
+      'short.html': _bytes('<p>Short</p>'),
+    });
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(_cancel);
+    await _waitUntil(tester, () => session.generation > generation);
+    await tester.pumpAndSettle();
+
+    expect(session.generation, generation + 1);
+    expect(session.name, 'short.html');
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('a canceled recovery keeps the copy to offer it again', (
+    tester,
+  ) async {
+    final snapshot = RecoverySnapshot(
+      name: 'long.md',
+      format: DocumentFormat.markdown,
+      bytes: _slowMarkdown(),
+      savedAt: DateTime(2026, 10, 30, 9),
+    );
+    final recovery = _MemoryRecovery(snapshot);
+    final session = await _pumpApp(tester, recovery: recovery);
+    await tester.tap(find.text('Recover'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(_opening('long.md'), findsOneWidget);
+
+    await tester.tap(_cancel);
+    await _waitUntil(tester, () => _gone(_opening('long.md')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SnackBar), findsNothing);
+    expect(session.isUntitled, isTrue);
+    expect(session.dirty, isFalse);
+    expect(recovery.stored, same(snapshot));
   });
 
   testWidgets('the recovery copy is restored with the progress up', (

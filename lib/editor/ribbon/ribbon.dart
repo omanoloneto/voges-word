@@ -59,18 +59,6 @@ enum RibbonTab {
   };
 }
 
-const zoomLevels = [
-  smallestZoom,
-  0.75,
-  0.9,
-  1.0,
-  1.1,
-  1.25,
-  1.5,
-  1.75,
-  largestZoom,
-];
-
 const _sizes = <num>[
   8,
   9,
@@ -715,9 +703,8 @@ class _RibbonState extends State<Ribbon> {
   Widget _viewTab() {
     final l10n = context.l10n;
     final zoom = widget.actions.zoom;
-    final index = zoomLevels.indexWhere(
-      (level) => (level - zoom).abs() < 0.001,
-    );
+    final zoomOut = nextZoomLevel(zoom, -1);
+    final zoomIn = nextZoomLevel(zoom, 1);
     return Row(
       children: [
         RibbonGroup(
@@ -751,9 +738,9 @@ class _RibbonState extends State<Ribbon> {
               RibbonIconButton(
                 icon: Icons.zoom_out,
                 tooltip: '${l10n.zoomOut} ($_mod-)',
-                onPressed: index > 0
-                    ? () => widget.actions.onZoom(zoomLevels[index - 1])
-                    : null,
+                onPressed: zoomOut == null
+                    ? null
+                    : () => widget.actions.onZoom(zoomOut),
               ),
               SizedBox(
                 width: 52,
@@ -766,9 +753,9 @@ class _RibbonState extends State<Ribbon> {
               RibbonIconButton(
                 icon: Icons.zoom_in,
                 tooltip: '${l10n.zoomIn} ($_mod=)',
-                onPressed: index < zoomLevels.length - 1
-                    ? () => widget.actions.onZoom(zoomLevels[index + 1])
-                    : null,
+                onPressed: zoomIn == null
+                    ? null
+                    : () => widget.actions.onZoom(zoomIn),
               ),
               const SizedBox(width: 8),
               RibbonBigButton(

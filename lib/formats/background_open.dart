@@ -26,8 +26,9 @@ Future<PreparedFile> prepareFileInBackground(
 /// [DocumentCodecs.prepare] on another isolate. Failures are
 /// [DocumentProblemException]s, as on the UI isolate; a file whose
 /// preparation takes longer than [timeLimit] is refused as
-/// [DocumentProblem.tooLarge]. On the web, which has no isolates, it runs
-/// here with no limit.
+/// [DocumentProblem.tooLarge], and one canceled with its [CancelScope]
+/// throws [BackgroundWorkCanceled]. On the web, which has no isolates, it
+/// runs here with no limit.
 Future<PreparedDocument> prepareInBackground(
   DocumentFormat format,
   Uint8List bytes, {
@@ -56,6 +57,8 @@ Future<T> _withProblems<T>(Future<T> Function() prepare) async {
     return await prepare();
   } on DocumentProblemException {
     rethrow;
+  } on BackgroundWorkCanceled {
+    rethrow;
   } on TimeoutException {
     throw DocumentProblemException(DocumentProblem.tooLarge);
   } catch (_) {
@@ -64,16 +67,43 @@ Future<T> _withProblems<T>(Future<T> Function() prepare) async {
   }
 }
 
+/// Thrown by [runWithTimeLimit] when its [CancelScope] is canceled.
+final class BackgroundWorkCanceled implements Exception {
+  const BackgroundWorkCanceled();
+}
+
+/// Lets the user stop background work: [runWithTimeLimit] calls made inside
+/// [run], however deep, kill their isolate as soon as [cancel] is called and
+/// throw [BackgroundWorkCanceled]. The scope rides on the zone, so the code
+/// between, such as the editor session, needn't pass it along.
+final class CancelScope {
+  final _canceled = Completer<void>();
+
+  Future<T> run<T>(Future<T> Function() body) =>
+      runZoned(body, zoneValues: {_scopeKey: this});
+
+  void cancel() {
+    if (!_canceled.isCompleted) _canceled.complete();
+  }
+
+  static final _scopeKey = Object();
+
+  static CancelScope? get _current => Zone.current[_scopeKey] as CancelScope?;
+}
+
 /// Runs [work] on [message] in a new isolate and returns or throws what it
-/// does. Past [limit] the isolate is killed, whatever it is doing, and
-/// [TimeoutException] is thrown. [work] must be a top-level or static
-/// function. On the web, which has no isolates, it runs here with no limit.
+/// does. Past [limit], or when the [CancelScope] it runs in is canceled, the
+/// isolate is killed, whatever it is doing, and [TimeoutException] or
+/// [BackgroundWorkCanceled] is thrown. [work] must be a top-level or static
+/// function. On the web, which has no isolates, it runs here with no limit
+/// and can't be canceled.
 Future<R> runWithTimeLimit<M, R>(
   R Function(M message) work,
   M message,
   Duration limit,
 ) async {
   if (kIsWeb) return compute(work, message);
+  final scope = CancelScope._current;
   final reply = Completer<Object?>();
   final port = RawReceivePort();
   port.handler = (Object? response) {
@@ -92,11 +122,14 @@ Future<R> runWithTimeLimit<M, R>(
     port.close();
     rethrow;
   }
-  final timer = Timer(limit, () {
+  void stop(Object error) {
     isolate.kill(priority: Isolate.immediate);
     port.close();
-    if (!reply.isCompleted) reply.completeError(TimeoutException(null, limit));
-  });
+    if (!reply.isCompleted) reply.completeError(error);
+  }
+
+  final timer = Timer(limit, () => stop(TimeoutException(null, limit)));
+  scope?._canceled.future.then((_) => stop(const BackgroundWorkCanceled()));
   try {
     return switch (await reply.future) {
       [final result] => result as R,

@@ -18,6 +18,7 @@ import '../files/recent_files.dart';
 import '../files/recovery.dart';
 import '../files/system_open.dart';
 import '../fonts/font_catalog.dart';
+import '../formats/background_open.dart';
 import '../l10n/app_language.dart';
 import '../l10n/l10n.dart';
 import '../print/page_renderer.dart';
@@ -36,6 +37,7 @@ import 'ribbon/ribbon_style.dart';
 import 'status_bar.dart';
 import 'title_bar.dart';
 import 'window_buttons.dart';
+import 'zoom.dart';
 
 class EditorScreen extends StatefulWidget {
   const EditorScreen({
@@ -179,6 +181,9 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
           keepPath: defaultTargetPlatform != TargetPlatform.macOS,
         ),
       );
+    } on BackgroundWorkCanceled {
+      // The copy stays, to be offered again until other work replaces it.
+      return;
     } catch (_) {
       _showError((l10n) => l10n.recoverFailed);
       await store.clear();
@@ -361,6 +366,8 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   Future<void> _load(OpenedFile file) async {
     try {
       await _openInTurn(file.name, () => session.openInBackground(file));
+    } on BackgroundWorkCanceled {
+      return;
     } on DocumentProblemException catch (error) {
       _showError((l10n) => _problemMessage(l10n, error.problem, file.name));
       return;
@@ -404,16 +411,21 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   }
 
   /// The format's work runs on another isolate, so the window stays
-  /// responsive under the progress meanwhile.
+  /// responsive under the progress meanwhile, and Cancel stops it at once
+  /// with [BackgroundWorkCanceled].
   Future<void> _withProgress(String name, Future<void> Function() open) async {
     if (!mounted) return open();
     final navigator = Navigator.of(context, rootNavigator: true);
+    final scope = CancelScope();
     final progress = _ProgressRoute(
       context: context,
       themes: InheritedTheme.capture(from: context, to: navigator.context),
       barrierColor: DialogTheme.of(context).barrierColor ?? Colors.black54,
       builder: (context) => PopScope(
         canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) scope.cancel();
+        },
         child: AlertDialog(
           content: Row(
             children: [
@@ -425,12 +437,18 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
               Expanded(child: Text(context.l10n.openingDocument(name))),
             ],
           ),
+          actions: [
+            TextButton(
+              onPressed: scope.cancel,
+              child: Text(context.l10n.cancel),
+            ),
+          ],
         ),
       ),
     );
     navigator.push(progress);
     try {
-      await open();
+      await scope.run(open);
     } finally {
       if (navigator.mounted && progress.isActive) {
         navigator.removeRoute(progress);
@@ -630,11 +648,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   }
 
   void _stepZoom(int direction) {
-    final index = zoomLevels.indexWhere(
-      (level) => (level - _zoom).abs() < 0.001,
-    );
-    final next = (index < 0 ? zoomLevels.indexOf(1.0) : index) + direction;
-    if (next >= 0 && next < zoomLevels.length) _setZoom(zoomLevels[next]);
+    if (nextZoomLevel(_zoom, direction) case final zoom?) _setZoom(zoom);
   }
 
   void _showFilePanel() => showFilePanel(
