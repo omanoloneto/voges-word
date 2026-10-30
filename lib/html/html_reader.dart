@@ -45,7 +45,9 @@ const _cellMargins = 10.8;
 const _maxPictureBytes = 32 * 1024 * 1024;
 const _maxPicturesBytes = 256 * 1024 * 1024;
 const _maxPicturePixels = 100000000;
-const _maxPicturesPixels = 100000000;
+
+/// About forty photos from a phone camera.
+const _maxPicturesPixels = 500000000;
 
 /// Selector checks, weighted by their classes, in all.
 const _maxSelectorWork = 20000000;
@@ -198,6 +200,9 @@ class _Style {
   double indentRight = 0;
   bool? rightToLeft;
   String? link;
+
+  /// Inside a link whose target was left out for safety, like `/x`.
+  var lostLink = false;
   int? heading;
   _ListContext? list;
   _ListItem? item;
@@ -247,6 +252,7 @@ class _Style {
     ..indentRight = indentRight
     ..rightToLeft = rightToLeft
     ..link = link
+    ..lostLink = lostLink
     ..heading = heading
     ..list = list
     ..item = item
@@ -495,6 +501,9 @@ class _Reader {
   /// The `html` element's font size, which `rem` refers to.
   double _rootSize = 12;
 
+  /// The page's background, which the document leaves out.
+  String? _pageBackdrop;
+
   final _fonts = <String?, int>{};
   final _sizes = <double?, int>{};
   final _colors = <String?, int>{};
@@ -689,6 +698,7 @@ class _Reader {
       return null;
     }
     final style = _styleOf(element, name, parent);
+    if (name == 'body') _pageBackdrop = style.backdrop;
     if (style.hidden || element.attributes.containsKey('hidden')) {
       if (style.breakBefore || style.breakAfter) _pageBreak();
       return null;
@@ -712,7 +722,12 @@ class _Reader {
         return null;
       case 'hr':
         _closeParagraph();
-        if (style.breakBefore || style.breakAfter) _pageBreak();
+        if (style.breakBefore || style.breakAfter) {
+          _pageBreak();
+        } else {
+          // The editor has no rule.
+          notices.add(DocumentNotice.contentNotImported);
+        }
         return null;
       case 'col':
         _column(element, style);
@@ -891,7 +906,9 @@ class _Reader {
           ..heading = int.parse(name.substring(1))
           ..size = null;
       case 'a' when attributes.containsKey('href'):
-        style.link = _linkOf(attributes['href']!);
+        final href = attributes['href']!.trim();
+        style.link = _linkOf(href);
+        style.lostLink = style.link == null && href.isNotEmpty && href != '#';
         // Links have their own look in browsers; Word's hyperlink style gives
         // it unless the page styles the link.
         if (style.link != null) {
@@ -1794,8 +1811,9 @@ class _Reader {
       _ => text,
     });
     paragraph.atLineStart = false;
-    if (paragraph.blank && text.trim().isNotEmpty) {
+    if ((paragraph.blank || style.lostLink) && text.trim().isNotEmpty) {
       paragraph.blank = false;
+      if (style.lostLink) notices.add(DocumentNotice.contentNotImported);
     }
   }
 
@@ -2198,17 +2216,15 @@ class _Reader {
     );
   }
 
-  /// A row of no height and empty cells, like the one Word ends tables
-  /// whose rows don't line up with, to give browsers the columns.
+  /// A row of no height whose cells hold nothing, like the one Word ends
+  /// tables whose rows don't line up with, to give browsers the columns.
+  /// Google Docs gives every row no height, and blank cells an empty
+  /// paragraph.
   static bool _isSpacer(_Row row) {
     final height = row.style.height?.trim().toLowerCase();
     return height != null &&
         _zeroLength.hasMatch(height) &&
-        row.cells.every(
-          (cell) => cell.blocks.every(
-            (block) => block is ParagraphSpec && block.inlines.isEmpty,
-          ),
-        );
+        row.cells.every((cell) => cell.blocks.isEmpty);
   }
 
   /// Shrinks the tables in cells that came out wider than their cell.
@@ -2427,7 +2443,7 @@ class _Reader {
             italic: style.italic ?? level >= 5,
             underline: style.underline,
             allCaps: style.allCaps,
-            color: _readableColor(style.color, box.background),
+            color: _readableColor(style.color, box.background ?? _pageBackdrop),
           ),
           paragraph: ParagraphFormat(
             keepNext: true,

@@ -179,6 +179,51 @@ void main() {
     );
     expect(dark.look.body.color.toARGB32(), 0xFF000000);
     expect(_run(dark.delta, 'Dark mode'), isEmpty);
+
+    // Heading styles of a dark page too.
+    final headings = _read(
+      '<style>body { background: #121212; color: #e0e0e0 } '
+      'h1, h2 { color: #ffffff } h3 { color: #c00000 }</style>'
+      '<h1>Release notes</h1><p>This version fixes several bugs.</p>'
+      '<h2>Changes</h2><h3>Fixes</h3>',
+    );
+    for (final level in [1, 2]) {
+      expect(
+        headings.look.headings[level]?.color.toARGB32(),
+        isNot(0xFFFFFFFF),
+        reason: 'h$level',
+      );
+    }
+    expect(headings.look.headings[3]?.color.toARGB32(), 0xFFC00000);
+  });
+
+  test('transparent colors are no colors, and translucent ones blend in', () {
+    expect(cssColor('#0000'), isNull);
+    expect(cssColor('#00000000'), isNull);
+    expect(cssColor('rgba(0, 0, 0, 0)'), isNull);
+    expect(cssColor('rgb(0 0 0 / 0%)'), isNull);
+    expect(cssColor('rgba(0, 0, 0, 0.5)'), '808080');
+    expect(cssColor('#ff000080'), 'FF7F7F');
+    expect(cssColor('rgba(255, 0, 0, 1)'), 'FF0000');
+    expect(cssColor('rgb(100%, 50%, 0%)'), 'FF8000');
+    expect(attributeColor('#00000000'), '000000');
+
+    final tables = TableStore();
+    for (final fill in ['#0000', 'rgba(0, 0, 0, 0)']) {
+      final loaded = _read(
+        '<table border="1" style="background-color: $fill">'
+        '<tr><td>Name</td></tr></table>',
+        tables,
+      );
+      final table = _tables(loaded.delta, tables).single;
+      expect(table.rows.single.cells.single.fill, isNull, reason: fill);
+    }
+    final byline = _read(
+      '<div style="background-color: rgba(0,0,0,0); color: #999999">'
+      'Posted on 3 May by Ana</div>'
+      '<p>The article itself, which is much longer than its byline.</p>',
+    );
+    expect(_run(byline.delta, 'Posted')['color'], '#999999');
   });
 
   test('Google Docs lists number their levels as one list', () {
@@ -255,6 +300,30 @@ void main() {
       ]),
     );
     expect(_plain(mislabeled.delta), 'Café “a”\n');
+
+    // Western letters before quotes or a no-break space can make a valid
+    // character by chance; the bytes that aren't UTF-8 still tell.
+    List<int> western(String text) => [
+      for (final char in text.runes)
+        switch (char) {
+          0x201E => 0x84,
+          0x201C => 0x93,
+          _ => char,
+        },
+    ];
+    for (final text in [
+      'Viel „Spaß“ beim Lesen. Grüße aus München.',
+      'CAFÉ\u00A0! Le café est délicieux, à bientôt.',
+    ]) {
+      final page = _decode(
+        Uint8List.fromList([
+          ...latin1.encode('<meta charset="utf-8"><p>'),
+          ...western(text),
+          ...latin1.encode('</p>'),
+        ]),
+      );
+      expect(_plain(page.delta), '$text\n');
+    }
   });
 
   test('XHTML elements written empty with /> keep what follows', () {
@@ -403,6 +472,91 @@ h1 { font-size: 3.2rem } .meta { font-size: 1.2rem; margin-left: 2rem }</style>
     expect(table.columnWidths, [2400, 3600]);
   });
 
+  test('blank rows of Google Docs tables are kept', () {
+    // Google Docs gives rows of automatic height no height at all, and
+    // blank cells an empty paragraph.
+    final tables = TableStore();
+    const blank =
+        '<tr class="c3"><td class="c5"><p class="c2 c6"><span class="c1"></span></p></td>'
+        '<td class="c5"><p class="c2 c6"><span class="c1"></span></p></td></tr>';
+    final loaded = _read('''
+<style>.c3{height:0pt}.c5{border:1pt solid #000000}.c2{padding-top:0pt}.c6{margin:0}</style>
+<table><tr class="c3"><td class="c5"><p class="c2 c6"><span class="c1">Name</span></p></td>
+<td class="c5"><p class="c2 c6"><span class="c1">Phone</span></p></td></tr>
+$blank$blank</table>''', tables);
+    final table = _tables(loaded.delta, tables).single;
+    expect(table.rows, hasLength(3));
+    expect(table.rows.first.cells.map(_cellText), ['Name', 'Phone']);
+    expect(table.rows.last.cells.map(_cellText), ['', '']);
+  });
+
+  test('Google Docs list markers leave room for the rules of the text', () {
+    // Each list writes its levels' rules before the classes of the text.
+    final rules = StringBuffer();
+    final lists = StringBuffer();
+    for (var list = 0; list < 1200; list++) {
+      for (var level = 0; level < 9; level++) {
+        rules.write(
+          'ul.lst-kix_l$list-$level{list-style-type:none}'
+          '.lst-kix_l$list-$level>li:before{content:"\\0025cf   "}\n',
+        );
+      }
+      lists.write(
+        '<ul class="lst-kix_l$list-0 start"><li>Item $list</li></ul>',
+      );
+    }
+    final page =
+        '<style>$rules.c1{font-weight:700;color:#cc0000;font-family:"Georgia"}'
+        '</style>$lists<p><span class="c1">Important</span></p>';
+    final important = _format(page, 'Important');
+    expect(
+      (important.bold, important.color, important.font),
+      (true, 'CC0000', 'Georgia'),
+    );
+  });
+
+  test('links left out for safety and rules are reported', () {
+    for (final link in [
+      '<a href="/docs/install">Install guide</a>',
+      '<a href="//cdn.example.com/x">Mirror</a>',
+      '<a href="javascript:alert(1)">Click</a>',
+    ]) {
+      final loaded = _read('<p>See the $link.</p>');
+      expect(loaded.notices, contains(DocumentNotice.contentNotImported));
+      expect(_plain(loaded.delta), contains(RegExp(r'^See the \w')));
+    }
+    for (final link in [
+      '<a href="#">Top</a>',
+      '<a href="">Empty</a>',
+      '<a href=" ">Blank</a>',
+      '<a href="/home"></a>',
+      '<a href="/home"> </a>',
+      '<a href="#install">Install</a>',
+      '<a href="https://example.com/x">Web</a>',
+      '<a href="docs/guide.md">Guide</a>',
+    ]) {
+      expect(_read('<p>See $link.</p>').notices, isEmpty, reason: link);
+    }
+
+    final rule = _read('<p>Before</p><hr><p>After</p>');
+    expect(rule.notices, contains(DocumentNotice.contentNotImported));
+    expect(_plain(rule.delta), 'Before\nAfter\n');
+    // Google Docs writes its page breaks as hidden rules.
+    final pageBreak = _read(
+      '<p>Before</p><hr style="page-break-before:always;display:none;">'
+      '<p>After</p>',
+    );
+    expect(pageBreak.notices, isEmpty);
+    expect(
+      pageBreak.delta.toList().any(
+        (operation) =>
+            operation.data is Map &&
+            (operation.data as Map).containsKey(EmbedTypes.pageBreak),
+      ),
+      isTrue,
+    );
+  });
+
   test('a self-closing svg or math element keeps the text after it', () {
     final svg = _read(
       '<p><svg class="icon" width="16" height="16"/> The installer is signed.'
@@ -512,6 +666,52 @@ h1 { font-size: 3.2rem } .meta { font-size: 1.2rem; margin-left: 2rem }</style>
       expect(_plain(loaded.delta), contains('stray'));
     });
 
+    test('a column group does not hide content moved out of its table', () {
+      final watch = Stopwatch()..start();
+      expect(
+        () => _read('<table><colgroup>${'x<br>' * 20000}</table>'),
+        _tooLarge(),
+      );
+      expect(
+        () => _read('<table><colgroup> <col>${'<b>x</b>' * 20000}</table>'),
+        _tooLarge(),
+      );
+      expect(watch.elapsed, lessThan(const Duration(seconds: 5)));
+
+      final tables = TableStore();
+      final loaded = _read('''
+<table><colgroup><col width="100"> <col width="200"></colgroup>
+<tr><td>a</td><td>b</td></tr></table>''', tables);
+      final table = _tables(loaded.delta, tables).single;
+      expect(table.rows.single.cells.map(_cellText), ['a', 'b']);
+      expect(table.columnWidths, [1500, 3000]);
+    });
+
+    test('hidden inputs and stray text in tables are not moved content', () {
+      // The parser leaves hidden inputs where they are and joins the text
+      // it moves in front of a table.
+      final inputs = StringBuffer();
+      final spaces = StringBuffer();
+      for (var row = 0; row < 12000; row++) {
+        inputs.write(
+          '<tr><input type="hidden" name="id" value="$row">'
+          '<td>Row $row</td><td>Value</td></tr>',
+        );
+        spaces.write('<tr><td>Row $row</td>&nbsp;<td>Value</td></tr>');
+      }
+      for (final page in ['<table>$inputs</table>', '<table>$spaces</table>']) {
+        final table = readHtml(page).spec.body.whereType<TableSpec>().single;
+        expect(table.rows, hasLength(12000));
+      }
+      // Other inputs and elements still are.
+      expect(
+        () => readHtml(
+          '<table>${'<tr><input type="text"><td>a</td></tr>' * 12000}</table>',
+        ),
+        _tooLarge(),
+      );
+    });
+
     test('long selectors and failed matches are budgeted', () {
       final repeated = StringBuffer();
       for (var key = 0; key < 16; key++) {
@@ -571,20 +771,87 @@ h1 { font-size: 3.2rem } .meta { font-size: 1.2rem; margin-left: 2rem }</style>
       expect(_plain(sloppy.delta), contains('a < b'));
     });
 
+    test('parse errors in tags and character references are budgeted', () {
+      final watch = Stopwatch()..start();
+      for (final page in [
+        // Repeated attributes, in start and end tags.
+        '<p${' a' * 300000}>x',
+        '<p>x</p${' a' * 300000}>',
+        // References the parser reports, in text and in values.
+        '<p>${'&#1' * 300000}',
+        '<p>${'&#;' * 300000}',
+        '<p>${'&x' * 300000}',
+        '<p>${'&a;' * 300000}',
+        '<p>${'&lt' * 300000}',
+        '<p title="${'&#1' * 300000}">x',
+        '<p title="${'&lt' * 300000}">x',
+        '<p title=${'&#x0;' * 300000}>x',
+        // Start tags the parser ignores.
+        '<p>${'<body>' * 300000}',
+        '<p>${'<html>' * 300000}',
+        '<p>${'<td>' * 300000}',
+        // Characters out of place in tags.
+        '<p ${'"' * 300000}>x',
+        '<p ${'/ ' * 300000}>x',
+        '<p a=x${'`' * 300000}>x',
+        '<p ${'a="x"' * 300000}>x',
+        // Attributes and references in all.
+        '<p ${List.generate(1100000, (index) => 'a$index').join(' ')}>x',
+        '<p title="${'&amp;' * 4100000}">x',
+      ]) {
+        expect(
+          () => readHtml(page),
+          _tooLarge(),
+          reason: page.substring(0, 12),
+        );
+      }
+      expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+
+      // References written right cost nothing, and sloppy ones read as in
+      // browsers.
+      final references = _read(
+        '<p>${'&amp;' * 300000}</p>'
+        '<p title="&notit; &amp;">AT&T &copy; R&D &#8217;s &nbsp;x &#65 &lt</p>'
+        '<p><a href="?a=1&b=2&amp;c=3&copy=4">link</a></p>',
+      );
+      expect(
+        _plain(references.delta),
+        '${'&' * 300000}\nAT&T © R&D ’s \u00A0x A <\nlink\n',
+      );
+      final link = references.delta.toList().firstWhere(
+        (operation) => operation.data == 'link',
+      );
+      expect(link.attributes?['link'], '?a=1&b=2&c=3&copy=4');
+    });
+
     test('pictures are budgeted by their pixels', () {
       final loaded = _read(
-        '<p>${[for (var index = 0; index < 4; index++) '<img src="${_pngOf(10000, 6000, index)}" alt="big $index">'].join()}'
-        '<img src="${_pngOf(0xFFFFFFFF, 0xFFFFFFFF, 9)}" alt="huge"></p>',
+        '<p>${[for (var index = 0; index < 10; index++) '<img src="${_pngOf(10000, 6000, index)}" alt="big $index">'].join()}'
+        '<img src="${_pngOf(0xFFFFFFFF, 0xFFFFFFFF, 99)}" alt="huge"></p>',
       );
       final pictures = loaded.delta.toList().where(
         (operation) =>
             operation.data is Map &&
             (operation.data as Map).containsKey(EmbedTypes.image),
       );
-      expect(pictures, hasLength(1));
-      expect(_plain(loaded.delta), contains('big 1'));
+      expect(pictures, hasLength(8));
+      expect(_plain(loaded.delta), contains('big 8'));
       expect(_plain(loaded.delta), contains('huge'));
       expect(loaded.notices, contains(DocumentNotice.contentNotImported));
+
+      // Photos of a self-contained page stay well within it.
+      final photos = _read(
+        '<p>${[for (var index = 1; index <= 10; index++) '<img src="${_pngOf(4032, 3024, index)}" alt="Photo $index">'].join()}</p>',
+      );
+      expect(
+        photos.delta.toList().where(
+          (operation) =>
+              operation.data is Map &&
+              (operation.data as Map).containsKey(EmbedTypes.image),
+        ),
+        hasLength(10),
+      );
+      expect(photos.notices, isEmpty);
     });
 
     test('numeric references past the last code point read as U+FFFD', () {

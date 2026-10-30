@@ -12,6 +12,9 @@ const _maxDeclarations = 128;
 const _maxRules = 20000;
 const _maxRulesPerKey = 32;
 
+/// Markers of the nine levels of 5000 Google Docs lists.
+const _maxListMarkers = 45000;
+
 /// Classes of an element that rules are looked up for, and the most a
 /// selector may have; longer selectors are left out.
 const maxClasses = 16;
@@ -229,15 +232,20 @@ class StyleSheet {
     for (final text in splitCss(prelude, 0x2C)) {
       // Longer than any selector of [maxClasses] classes a page needs.
       if (text.length > 1024) continue;
+      // Google Docs writes these before the rules of its text, so they
+      // don't count as rules.
       if (_listMarker.firstMatch(text.trim()) case final marker?) {
+        final key = '${marker[1]!.toLowerCase()}-${marker[2]}';
+        if (listMarkers.length >= _maxListMarkers &&
+            !listMarkers.containsKey(key)) {
+          continue;
+        }
         declarations ??= parseDeclarations(block);
         for (final declaration in declarations) {
           if (declaration.property == 'content') {
-            listMarkers['${marker[1]!.toLowerCase()}-${marker[2]}'] =
-                declaration.value;
+            listMarkers[key] = declaration.value;
           }
         }
-        if (++_rules >= _maxRules) return;
         continue;
       }
       final selector = CssSelector.parse(text);
@@ -532,10 +540,19 @@ String? safeFontName(String name) {
 
 final _hex = RegExp(r'^[0-9a-f]+$');
 
-/// `RRGGBB` of a CSS color; null for colors it doesn't know or `transparent`.
+/// `RRGGBB` of a CSS color, translucent ones as they look on white paper;
+/// null for colors it doesn't know and transparent ones.
 String? cssColor(String value) {
   final text = value.trim().toLowerCase();
-  if (text.startsWith('#')) return _hexColor(text.substring(1));
+  if (text.startsWith('#')) {
+    final hex = text.substring(1);
+    final color = _hexColor(hex);
+    if (color == null || hex.length == 3 || hex.length == 6) return color;
+    final alpha = hex.length == 4
+        ? int.parse(hex.substring(3), radix: 16) / 15
+        : int.parse(hex.substring(6), radix: 16) / 255;
+    return _onWhite(int.parse(color, radix: 16), alpha);
+  }
   if (text.startsWith('rgb')) {
     final open = text.indexOf('(');
     final close = text.lastIndexOf(')');
@@ -546,24 +563,50 @@ String? cssColor(String value) {
         .where((part) => part.isNotEmpty)
         .toList();
     if (parts.length < 3) return null;
-    final out = StringBuffer();
-    for (final part in parts.take(3)) {
-      final percent = part.endsWith('%');
-      final number = double.tryParse(
-        percent ? part.substring(0, part.length - 1) : part,
-      );
-      if (number == null || !number.isFinite) return null;
-      final channel = (percent ? number * 2.55 : number).round().clamp(0, 255);
-      out.write(channel.toRadixString(16).padLeft(2, '0'));
+    final numbers = [
+      for (final (index, part) in parts.take(4).indexed)
+        _colorNumber(part, index == 3 ? 1 : 255),
+    ];
+    if (numbers.contains(null)) return null;
+    var rgb = 0;
+    for (final number in numbers.take(3)) {
+      rgb = rgb << 8 | number!.round().clamp(0, 255);
     }
-    return out.toString().toUpperCase();
+    return _onWhite(rgb, numbers.length > 3 ? numbers[3]! : 1);
   }
   return _namedColors[text];
 }
 
-/// Colors of attributes like `bgcolor`, which may leave out the `#`.
-String? attributeColor(String value) =>
-    cssColor(value) ?? _hexColor(value.trim().toLowerCase());
+/// A channel or the alpha of `rgb()`: a number, or a percentage of [whole].
+double? _colorNumber(String part, double whole) {
+  final percent = part.endsWith('%');
+  final number = double.tryParse(
+    percent ? part.substring(0, part.length - 1) : part,
+  );
+  if (number == null || !number.isFinite) return null;
+  return percent ? number * whole / 100 : number;
+}
+
+/// [rgb] at [alpha] over white; null when transparent.
+String? _onWhite(int rgb, double alpha) {
+  if (alpha <= 0) return null;
+  final opacity = alpha >= 1 ? 1.0 : alpha;
+  var out = 0;
+  for (final shift in const [16, 8, 0]) {
+    final channel = rgb >> shift & 0xFF;
+    out = out << 8 | (channel * opacity + 255 * (1 - opacity)).round();
+  }
+  return out.toRadixString(16).padLeft(6, '0').toUpperCase();
+}
+
+/// Colors of attributes like `bgcolor`, which may leave out the `#` and have
+/// no alpha.
+String? attributeColor(String value) {
+  final text = value.trim().toLowerCase();
+  return text.startsWith('#')
+      ? _hexColor(text.substring(1))
+      : cssColor(text) ?? _hexColor(text);
+}
 
 String? _hexColor(String hex) {
   if (!_hex.hasMatch(hex)) return null;

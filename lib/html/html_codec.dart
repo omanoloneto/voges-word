@@ -119,16 +119,23 @@ T guardParse<T>(T Function() parse) {
 }
 
 /// As in browsers, a stray byte is one U+FFFD, not a reason to read the whole
-/// page as Western text; a page without any UTF-8 is Western text with the
-/// wrong label.
+/// page as Western text; a page with more bytes that aren't UTF-8 than
+/// characters that are is Western text with the wrong label, whose accented
+/// letters may happen to make a few.
 String _declaredUtf8(Uint8List bytes) {
   try {
     return utf8.decode(bytes);
   } on FormatException {
     final text = utf8.decode(bytes, allowMalformed: true);
-    return text.runes.any((rune) => rune >= 0x80 && rune != 0xFFFD)
-        ? text
-        : decodeCodePage(bytes, 1252);
+    var balance = 0;
+    for (final rune in text.runes) {
+      if (rune == 0xFFFD) {
+        balance--;
+      } else if (rune >= 0x80) {
+        balance++;
+      }
+    }
+    return balance > 0 ? text : decodeCodePage(bytes, 1252);
   }
 }
 
