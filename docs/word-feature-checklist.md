@@ -32,7 +32,7 @@ Status as of October 29, 2026, after version 1.2.0:
 ## 1. The core: the most used commands
 
 - [x] **Paste** (Ctrl+V). It is Word's most used command. Pastes text with formatting from other programs (bold, colors, size, font, links) and pastes images.
-- [x] **Save** (Ctrl+S), in the format of the file: `.docx` (default), `.docm`, `.odt`, `.rtf`, `.html`, `.md` or `.txt`. A Word 97–2003 `.doc` is saved as a `.docx` copy.
+- [x] **Save** (Ctrl+S), in the format of the file: `.docx` (default), `.docm`, `.odt`, `.rtf`, `.html`, `.md` or `.txt`. A Word 97–2003 `.doc` is saved as a `.docx` copy, and so is any file named `.doc`, whatever its content.
 - [x] **Copy** (Ctrl+C).
 - [x] **Undo and Redo** (Ctrl+Z and Ctrl+Y).
 - [x] **Bold** (Ctrl+B).
@@ -131,7 +131,7 @@ Status as of October 29, 2026, after version 1.2.0:
 - [x] **Recovery**: if the app closes without saving, it offers to recover the document the next time it opens.
 - [ ] **Partial: Share** as `.docx`, PDF or the format of the file. Works on every system except Linux.
 - [x] **Open `.doc`** (Word 97–2003), **`.odt`** and **`.rtf`**, as well as HTML, Markdown, `.docm` (macros kept, never run) and the templates `.dotx`, `.dotm`, `.dot` and `.ott`, which open as new documents. A file opens by its content, even with the wrong extension.
-- [x] Save as `.odt`, `.rtf`, HTML, Markdown or `.txt`. The status bar warns when the format keeps less than a `.docx`.
+- [x] Save as `.odt`, `.rtf`, HTML, Markdown or `.txt`. The status bar warns when the format keeps less than a `.docx`, such as an `.odt` or `.rtf` with Word's equations or charts.
 - [ ] AutoSave to the file itself. Today the app only keeps a recovery copy and never writes to the user's file on its own, by design.
 - [ ] Protect the document with a password.
 - [ ] Cloud and collaborative editing, such as OneDrive and co-authoring.

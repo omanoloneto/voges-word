@@ -9,6 +9,7 @@ import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/plain_text_codec.dart';
 import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/docx/docx_codec.dart';
+import 'package:voges_word/docx/docx_package.dart';
 import 'package:voges_word/editor/editor_session.dart';
 import 'package:voges_word/files/document_files.dart';
 import 'package:voges_word/files/recovery.dart';
@@ -52,6 +53,36 @@ EditorSession _session(DocumentFiles files) {
 
 Uint8List _docx(String text) =>
     DocxCodec(TableStore()).encode(Delta()..insert('$text\n'));
+
+/// A Word document with macros, as a .docm holds them.
+Uint8List _docm(String text) {
+  final package = DocxPackage.decode(
+    DocxCodec(
+      TableStore(),
+      flavor: DocxFlavor.macroEnabled,
+    ).encode(Delta()..insert('$text\n')),
+  );
+  package.parts['word/vbaProject.bin'] = Uint8List.fromList([1, 2, 3]);
+  package.addRelationships(package.mainDocumentPath, const [
+    Relationship(
+      id: 'rIdVba',
+      type: 'http://schemas.microsoft.com/office/2006/relationships/vbaProject',
+      target: 'vbaProject.bin',
+    ),
+  ]);
+  package.ensureContentTypes(
+    defaults: {'bin': 'application/vnd.ms-office.vbaProject'},
+  );
+  return package.encode();
+}
+
+bool _keepsMacros(Uint8List bytes) {
+  final package = DocxPackage.decode(bytes);
+  return package.parts.containsKey('word/vbaProject.bin') &&
+      package
+          .relationships(package.mainDocumentPath)
+          .any((relationship) => relationship.hasType('vbaProject'));
+}
 
 Uint8List _zip(Map<String, String> files) {
   final archive = Archive();
@@ -110,6 +141,36 @@ void main() {
         )?.format,
         DocumentFormat.html,
       );
+    });
+
+    test('a Word document with macros is a .docm whatever its name', () {
+      final macros = _docm('x');
+      expect(detect('m.docx', macros)?.format, DocumentFormat.docm);
+      expect(detect('m.doc', macros)?.format, DocumentFormat.docm);
+      expect(detect('m.docm', macros)?.format, DocumentFormat.docm);
+      expect(detect('m.docx', _docx('x'))?.format, DocumentFormat.docx);
+      expect(
+        detect('m.docx', _zip({'[Content_Types].xml': '<Types'}))?.format,
+        DocumentFormat.docx,
+      );
+      final types = DocxPackage.decode(macros).text('[Content_Types].xml')!;
+      expect(
+        detect('m.docx', _zip({'[Content_Types].xml': types}))?.format,
+        DocumentFormat.docm,
+      );
+      final oversized = types.replaceFirst(
+        '<Types',
+        '<!--${' ' * (1024 * 1024)}--><Types',
+      );
+      expect(
+        detect('m.docx', _zip({'[Content_Types].xml': oversized}))?.format,
+        DocumentFormat.docx,
+      );
+      // Documents made from a template don't take its macros.
+      expect(detect('m.dotm', macros), (
+        format: DocumentFormat.docx,
+        template: true,
+      ));
     });
 
     test('keeps the name when the content says nothing', () {
@@ -179,11 +240,113 @@ void main() {
     test('a misnamed file opens by its content and keeps its name', () {
       final session = _session(_Files(null));
       session.open(
-        OpenedFile(name: 'old.doc', bytes: _docx('Hi'), path: '/t/old.doc'),
+        OpenedFile(name: 'old.rtf', bytes: _docx('Hi'), path: '/t/old.rtf'),
       );
       expect(session.format, DocumentFormat.docx);
-      expect(session.name, 'old.doc');
+      expect(session.name, 'old.rtf');
       expect(session.notices, isEmpty);
+      expect(session.controller.document.toPlainText(), 'Hi\n');
+    });
+
+    test('a file named .doc is never written, whatever its content', () async {
+      final contents = {
+        'RTF': _ascii(r'{\rtf1\ansi{\fonttbl{\f0 Arial;}}\f0 Body\par}'),
+        '.docx': _docx('Body'),
+        '.docm': _docm('Body'),
+        'web page': _ascii('<!DOCTYPE html><html><body><p>Body</p></html>'),
+      };
+      for (final MapEntry(key: kind, value: bytes) in contents.entries) {
+        final files = _Files('/t/report.docx');
+        final session = _session(files)
+          ..open(
+            OpenedFile(name: 'report.doc', bytes: bytes, path: '/t/report.doc'),
+          );
+        expect(
+          session.controller.document.toPlainText(),
+          'Body\n',
+          reason: kind,
+        );
+        expect(session.format, DocumentFormat.doc, reason: kind);
+        expect(
+          session.notices,
+          contains(DocumentNotice.savesAsDocx),
+          reason: kind,
+        );
+
+        session.controller.document.insert(0, 'Edited ');
+        expect(await session.save(), isTrue);
+        expect(files.suggested, 'report.docx', reason: kind);
+        expect(files.written.keys, ['/t/report.docx'], reason: kind);
+        expect(session.format, DocumentFormat.docx);
+      }
+    });
+
+    test(
+      'the macros of a document named .docx are kept when it is saved',
+      () async {
+        final files = _Files(null);
+        final session = _session(files)
+          ..open(
+            OpenedFile(name: 'm.docx', bytes: _docm('Hi'), path: '/t/m.docx'),
+          );
+        expect(session.format, DocumentFormat.docm);
+
+        session.controller.document.insert(0, 'Edited ');
+        expect(await session.save(), isTrue);
+        expect(files.written.keys, ['/t/m.docx']);
+        expect(_keepsMacros(files.written['/t/m.docx']!), isTrue);
+      },
+    );
+
+    test('web pages and Markdown open', () {
+      const page = '<!DOCTYPE html><html><body><h1>Title</h1><p>Body</p>';
+      final files = {
+        'page.html': (page, DocumentFormat.html),
+        'page.htm': (page, DocumentFormat.html),
+        'page.xhtml': (
+          '<?xml version="1.0" encoding="UTF-8"?>'
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+              '<h1>Title</h1><p>Body</p></body></html>',
+          DocumentFormat.html,
+        ),
+        'notes.md': ('# Title\n\nBody\n', DocumentFormat.markdown),
+        'notes.markdown': ('# Title\n\nBody\n', DocumentFormat.markdown),
+      };
+      for (final MapEntry(key: name, value: (text, format)) in files.entries) {
+        final session = _session(_Files(null))
+          ..open(OpenedFile(name: name, bytes: _ascii(text), path: '/t/$name'));
+        expect(session.format, format, reason: name);
+        expect(session.name, name);
+        expect(
+          session.controller.document.toPlainText(),
+          'Title\nBody\n',
+          reason: name,
+        );
+      }
+    });
+
+    test('web pages and Markdown are saved and open again', () async {
+      for (final (format, path) in [
+        (DocumentFormat.html, '/t/report.html'),
+        (DocumentFormat.markdown, '/t/report.md'),
+      ]) {
+        final files = _Files(path);
+        final session = _session(files)
+          ..open(OpenedFile(name: 'report.docx', bytes: _docx('Body')));
+        expect(await session.saveAs(format), isTrue);
+        expect(files.written.keys, [path]);
+        expect(session.format, format);
+
+        final reopened = _session(_Files(null))
+          ..open(
+            OpenedFile(
+              name: path.split('/').last,
+              bytes: files.written[path]!,
+              path: path,
+            ),
+          );
+        expect(reopened.controller.document.toPlainText(), 'Body\n');
+      }
     });
 
     test('unknown names and broken files report the problem', () {

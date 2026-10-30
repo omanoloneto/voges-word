@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
+
 import '../doc/doc_codec.dart';
 import '../document/document_codec.dart';
 import '../document/plain_text_codec.dart';
@@ -75,9 +77,11 @@ class DocumentCodecs {
   ])) {
     format = DocumentFormat.doc;
   } else if (_startsWith(bytes, const [0x50, 0x4B, 0x03, 0x04])) {
+    // Documents made from a template don't take its macros.
     format = named.format == DocumentFormat.odt || _isOpenDocumentText(bytes)
         ? DocumentFormat.odt
-        : named.format == DocumentFormat.docm
+        : named.format == DocumentFormat.docm ||
+              !named.template && _hasMacros(bytes)
         ? DocumentFormat.docm
         : DocumentFormat.docx;
   } else if (_head(bytes).startsWith(r'{\rtf')) {
@@ -111,6 +115,43 @@ bool _looksLikeHtml(String head) =>
     (head.contains('<html') ||
         head.contains('<!doctype html') ||
         head.contains('<body'));
+
+/// Whether the main part of a Word package is of the kind that keeps macros,
+/// as in a .docm.
+bool _hasMacros(Uint8List bytes) {
+  try {
+    final archive = ZipDecoder().decodeBytes(bytes);
+    final parts = <String, Uint8List>{};
+    for (final name in const ['[Content_Types].xml', '_rels/.rels']) {
+      final file = archive.find(name);
+      if (file == null || !file.isFile) continue;
+      if (file.size > _maxPackageInfoBytes) return false;
+      parts[name] = file.content;
+    }
+    final package = DocxPackage(parts);
+    final main = '/${package.mainDocumentPath}'.toLowerCase();
+    final types = package.xml('[Content_Types].xml');
+    if (types == null) return false;
+    return types.rootElement.childElements.any(
+      (element) =>
+          element.name.local == 'Override' &&
+          element.getAttribute('PartName')?.toLowerCase() == main &&
+          _macroEnabledTypes.contains(
+            element.getAttribute('ContentType')?.toLowerCase(),
+          ),
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+/// [Content_Types].xml and the package relationships take a few kilobytes.
+const _maxPackageInfoBytes = 1024 * 1024;
+
+const _macroEnabledTypes = {
+  'application/vnd.ms-word.document.macroenabled.main+xml',
+  'application/vnd.ms-word.template.macroenabledtemplate.main+xml',
+};
 
 /// OpenDocument files start with a stored `mimetype` entry.
 bool _isOpenDocumentText(Uint8List bytes) {

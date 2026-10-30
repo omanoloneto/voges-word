@@ -35,6 +35,7 @@ class _StatusBarState extends State<StatusBar> {
   Timer? _debounce;
   var _words = 0;
   var _characters = 0;
+  var _protectedContent = false;
   StreamSubscription<void>? _changes;
   StreamSubscription<void>? _tableChanges;
 
@@ -69,16 +70,21 @@ class _StatusBarState extends State<StatusBar> {
   }
 
   void _count() {
-    final text = widget.session.plainTextContent();
+    final session = widget.session;
+    final text = session.plainTextContent();
     final words = RegExp(
       r'[\p{L}\p{N}]+(?:[-’\x27][\p{L}\p{N}]+)*',
       unicode: true,
     ).allMatches(text).length;
     final characters = text.replaceAll(RegExp(r'[\n\uFFFC]'), '').length;
+    final protectedContent =
+        _FormatNote.dependsOnProtectedContent.contains(session.format) &&
+        session.hasProtectedContent();
     if (!mounted) return;
     setState(() {
       _words = words;
       _characters = characters;
+      _protectedContent = protectedContent;
     });
   }
 
@@ -117,7 +123,12 @@ class _StatusBarState extends State<StatusBar> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (_FormatNote.of(l10n, session.format) case final note?) ...[
+              if (_FormatNote.of(
+                    l10n,
+                    session.format,
+                    protectedContent: _protectedContent,
+                  )
+                  case final note?) ...[
                 const SizedBox(width: 12),
                 _FormatChip(note),
               ],
@@ -169,36 +180,56 @@ class _StatusBarState extends State<StatusBar> {
 class _FormatNote {
   const _FormatNote(this.label, this.message, {required this.losesContent});
 
+  /// Formats that don't keep Word's equations, charts and other protected
+  /// content as they are; their note shows only when the document has some.
+  static const dependsOnProtectedContent = {
+    DocumentFormat.odt,
+    DocumentFormat.rtf,
+  };
+
   /// Null for the formats that keep what the editor shows.
-  static _FormatNote? of(AppLocalizations l10n, DocumentFormat format) =>
-      switch (format) {
-        DocumentFormat.plainText => _FormatNote(
-          l10n.plainText,
-          l10n.plainTextWarning,
-          losesContent: true,
-        ),
-        DocumentFormat.markdown => _FormatNote(
-          l10n.markdown,
-          l10n.markdownWarning,
-          losesContent: true,
-        ),
-        DocumentFormat.html => _FormatNote(
-          l10n.webPage,
-          l10n.webPageWarning,
-          losesContent: true,
-        ),
-        DocumentFormat.doc => _FormatNote(
-          l10n.word97,
-          l10n.word97Warning,
-          losesContent: false,
-        ),
-        DocumentFormat.docm => _FormatNote(
-          l10n.wordMacros,
-          l10n.wordMacrosWarning,
-          losesContent: false,
-        ),
-        DocumentFormat.docx || DocumentFormat.odt || DocumentFormat.rtf => null,
-      };
+  static _FormatNote? of(
+    AppLocalizations l10n,
+    DocumentFormat format, {
+    required bool protectedContent,
+  }) => switch (format) {
+    DocumentFormat.plainText => _FormatNote(
+      l10n.plainText,
+      l10n.plainTextWarning,
+      losesContent: true,
+    ),
+    DocumentFormat.markdown => _FormatNote(
+      l10n.markdown,
+      l10n.markdownWarning,
+      losesContent: true,
+    ),
+    DocumentFormat.html => _FormatNote(
+      l10n.webPage,
+      l10n.webPageWarning,
+      losesContent: true,
+    ),
+    DocumentFormat.doc => _FormatNote(
+      l10n.word97,
+      l10n.word97Warning,
+      losesContent: false,
+    ),
+    DocumentFormat.docm => _FormatNote(
+      l10n.wordMacros,
+      l10n.wordMacrosWarning,
+      losesContent: false,
+    ),
+    DocumentFormat.odt when protectedContent => _FormatNote(
+      l10n.openDocumentText,
+      l10n.openDocumentTextWarning,
+      losesContent: true,
+    ),
+    DocumentFormat.rtf when protectedContent => _FormatNote(
+      l10n.richText,
+      l10n.richTextWarning,
+      losesContent: true,
+    ),
+    DocumentFormat.docx || DocumentFormat.odt || DocumentFormat.rtf => null,
+  };
 
   final String label;
   final String message;

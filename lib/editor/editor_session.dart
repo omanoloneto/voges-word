@@ -14,6 +14,7 @@ import '../docx/docx_template.dart';
 import '../docx/image_formats.dart';
 import '../document/document_codec.dart';
 import '../document/document_look.dart';
+import '../document/embeds.dart';
 import '../document/headers_footers.dart';
 import '../document/plain_text_codec.dart';
 import '../document/tables.dart';
@@ -156,7 +157,8 @@ class EditorSession extends ChangeNotifier {
       );
 
   /// Templates open as new documents; formats that aren't saved will be
-  /// saved as .docx.
+  /// saved as .docx. A file named in one of them, like a .doc that is really
+  /// RTF, is never written either.
   void open(OpenedFile file) {
     final detected = detectFormat(file.name, file.bytes);
     if (detected == null) {
@@ -180,13 +182,15 @@ class EditorSession extends ChangeNotifier {
       );
       return;
     }
+    final named = DocumentFormat.fromFileName(file.name) ?? format;
+    final saved = named.writable ? format : named;
     _load(
-      format.writable
+      saved.writable
           ? loaded
           : loaded.withNotices([DocumentNotice.savesAsDocx]),
       name: file.name,
       path: file.path,
-      format: format,
+      format: saved,
     );
   }
 
@@ -274,6 +278,70 @@ class EditorSession extends ChangeNotifier {
 
   String plainTextContent() =>
       plainText.plainTextOf(controller.document.toDelta());
+
+  /// Whether the document, with its tables, headers and footers, has
+  /// equations, charts or other protected Word content that only .docx and
+  /// .docm keep as it is.
+  bool hasProtectedContent() {
+    final tablesSeen = <String>{};
+    return [
+      controller.document.toDelta(),
+      for (final story in [
+        ...headersFooters.headers.values,
+        ...headersFooters.footers.values,
+      ])
+        story.delta,
+    ].any((delta) => _hasProtectedContent(delta, tablesSeen));
+  }
+
+  bool _hasProtectedContent(Delta delta, Set<String> tablesSeen) =>
+      delta.operations.any(
+        (operation) => switch (operation.data) {
+          {EmbedTypes.opaqueBlock: final Object value} => _isProtected(
+            value,
+            block: true,
+          ),
+          {EmbedTypes.opaqueInline: final Object value} => _isProtected(
+            value,
+            block: false,
+          ),
+          {EmbedTypes.table: final Object value} => _tableHasProtectedContent(
+            value,
+            tablesSeen,
+          ),
+          _ => false,
+        },
+      );
+
+  bool _tableHasProtectedContent(Object value, Set<String> tablesSeen) {
+    final TableModel? table;
+    try {
+      table = tables[tableIdOf(value)];
+    } catch (_) {
+      return false;
+    }
+    if (table == null || !tablesSeen.add(table.id)) return false;
+    return table.rows.any(
+      (row) => row.cells.any(
+        (cell) => _hasProtectedContent(
+          cell.controller.document.toDelta(),
+          tablesSeen,
+        ),
+      ),
+    );
+  }
+
+  /// Notes and fields don't count: .odt and .rtf write them as their own.
+  static bool _isProtected(Object value, {required bool block}) {
+    final OpaqueContent content;
+    try {
+      content = OpaqueContent.decode(value);
+    } catch (_) {
+      return false;
+    }
+    if (content.hidden || content.label == OpaqueLabels.note) return false;
+    return block || content.label != null || fieldNameOf(content.xml) == null;
+  }
 
   Set<String> fontsInUse() => {
     ?_look.body.fontFamily,

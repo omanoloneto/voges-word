@@ -1498,6 +1498,30 @@ abstract class AppLocalizations {
   /// **'Word with macros'**
   String get wordMacros;
 
+  /// No description provided for @openDocumentTextWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'.odt files don’t keep equations, charts and other Word content as they are. Use “Save as” to keep them.'**
+  String get openDocumentTextWarning;
+
+  /// No description provided for @openDocumentText.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenDocument'**
+  String get openDocumentText;
+
+  /// No description provided for @richTextWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'.rtf files don’t keep equations, charts and other Word content as they are. Use “Save as” to keep them.'**
+  String get richTextWarning;
+
+  /// No description provided for @richText.
+  ///
+  /// In en, this message translates to:
+  /// **'RTF'**
+  String get richText;
+
   /// No description provided for @minimize.
   ///
   /// In en, this message translates to:

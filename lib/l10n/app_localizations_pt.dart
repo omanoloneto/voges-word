@@ -796,6 +796,20 @@ class AppLocalizationsPt extends AppLocalizations {
   String get wordMacros => 'Word com macros';
 
   @override
+  String get openDocumentTextWarning =>
+      'Arquivos .odt não guardam equações, gráficos e outros conteúdos do Word do jeito que estão. Use “Salvar como” para mantê-los.';
+
+  @override
+  String get openDocumentText => 'OpenDocument';
+
+  @override
+  String get richTextWarning =>
+      'Arquivos .rtf não guardam equações, gráficos e outros conteúdos do Word do jeito que estão. Use “Salvar como” para mantê-los.';
+
+  @override
+  String get richText => 'RTF';
+
+  @override
   String get minimize => 'Minimizar';
 
   @override

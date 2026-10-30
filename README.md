@@ -54,18 +54,18 @@ What already exists and what is missing compared to Word's most used features is
 | Word document | `.docx`; templates `.dotx` and `.dotm` | Yes | Yes, the default |
 | Word document with macros | `.docm` | Yes | Yes; the macros are kept but never run |
 | Word 97–2003 document | `.doc`; template `.dot` | Yes | No: saving creates a `.docx` copy |
-| OpenDocument Text | `.odt`; template `.ott` | Yes | Yes |
-| Rich Text Format | `.rtf` | Yes | Yes |
+| OpenDocument Text | `.odt`; template `.ott` | Yes | Yes, but Word's equations, charts and other protected content aren't kept as they are |
+| Rich Text Format | `.rtf` | Yes | Yes, but Word's equations, charts and other protected content aren't kept as they are |
 | Web page | `.html`, `.htm`, `.xhtml` | Yes | Yes, without the page setup, headers and footers |
 | Markdown | `.md`, `.markdown` | Yes | Yes, with basic formatting only |
 | Plain text | `.txt` | Yes | Yes, only the text |
 | PDF | `.pdf` | No | Export only |
 
-- **Save** keeps the format of the file. **Save as** creates a `.docx`, which keeps everything; **Other formats**, next to it in the File menu, saves as `.odt`, `.rtf`, `.html`, `.md` or `.txt`. When the document's format keeps less than a `.docx` or saves differently, the status bar says so and its tooltip explains why.
+- **Save** keeps the format of the file. **Save as** creates a `.docx`, which keeps everything; **Other formats**, next to it in the File menu, saves as `.odt`, `.rtf`, `.html`, `.md` or `.txt`. When the document's format keeps less than a `.docx` or saves differently, the status bar says so and its tooltip explains why; for `.odt` and `.rtf`, it does so when the document has equations, charts or other protected Word content.
 - Templates open as new, untitled documents, as in Word.
-- `.doc` files are never written, so the original can't be damaged: saving one creates a `.docx` copy and leaves the original untouched.
+- Files named `.doc` are never written, whatever their content, so the original can't be damaged: saving one creates a `.docx` copy and leaves the original untouched.
 - The macros of a `.docm` are kept when it is saved and are never run. **Save as** leaves them out, because Word refuses a `.docx` with macros.
-- A file opens by its content, not by its name: a `.doc` that is really RTF or a web page opens as one.
+- A file opens by its content, not by its name: a `.doc` that is really RTF or a web page opens as one, and a Word document with macros named `.docx` opens as a `.docm`, so saving keeps them.
 - Text files are read as UTF-8, UTF-16 or Windows' Western code page, and saved as UTF-8.
 - Share sends a `.docx`, a PDF or, when the format of the file is one Voges Word saves, the document in that format.
 
@@ -73,7 +73,7 @@ What already exists and what is missing compared to Word's most used features is
 
 In `.docx` and `.docm` files, Voges Word rewrites only the document body. Headers, footers, styles, theme, numbering, footnotes, images and page settings stay in the file as they came. What the editor shows but does not edit (table of contents, fields such as page numbers, equations, charts, text boxes, notes) is protected and goes back into the file exactly as it was.
 
-The other formats are converted when they open, and saving in them writes what the editor has. When a file has parts the editor can't show, a notice says so as it opens; those parts are left out when the file is saved.
+The other formats are converted when they open, and saving in them writes what the editor has. When a file has parts the editor can't show, a notice says so as it opens; those parts are left out when the file is saved. Protected content goes back exactly as it was only into `.docx` and `.docm` files; the other formats keep what they can of it, such as its text.
 
 Known limitations:
 

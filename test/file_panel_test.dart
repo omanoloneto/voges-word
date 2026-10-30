@@ -9,8 +9,10 @@ import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/plain_text_codec.dart';
 import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/docx/docx_codec.dart';
+import 'package:voges_word/docx/docx_package.dart';
 import 'package:voges_word/editor/dialogs.dart';
 import 'package:voges_word/editor/editor_session.dart';
+import 'package:voges_word/editor/status_bar.dart';
 import 'package:voges_word/files/document_files.dart';
 import 'package:voges_word/files/recent_files.dart';
 import 'package:voges_word/files/system_open.dart';
@@ -104,6 +106,32 @@ Future<void> _openOtherFormats(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// A .docx with an equation and a chart, as Word writes them.
+Uint8List _paperWithEquationAndChart() {
+  final package = DocxPackage.decode(
+    DocxCodec(TableStore()).encode(Delta()..insert('Results\n')),
+  );
+  final main = package.mainDocumentPath;
+  package.setText(
+    main,
+    package
+        .text(main)!
+        .replaceFirst(
+          '<w:body>',
+          '<w:body><w:p><m:oMathPara><m:oMath><m:r><m:t>E=mc2</m:t></m:r>'
+              '</m:oMath></m:oMathPara></w:p>'
+              '<w:p><w:r><w:drawing><wp:inline>'
+              '<wp:extent cx="5486400" cy="3200400"/>'
+              '<wp:docPr id="1" name="Chart 1"/><a:graphic><a:graphicData '
+              'uri="http://schemas.openxmlformats.org/drawingml/2006/chart">'
+              '<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/'
+              '2006/chart" r:id="rId99"/></a:graphicData></a:graphic>'
+              '</wp:inline></w:drawing></w:r></w:p>',
+        ),
+  );
+  return package.encode();
+}
+
 const _otherFormats = [
   ('OpenDocument Text (.odt)', DocumentFormat.odt),
   ('Rich Text Format (.rtf)', DocumentFormat.rtf),
@@ -188,6 +216,61 @@ void main() {
     expect(session.format, DocumentFormat.plainText);
     expect(session.name, 'report.txt');
     expect(find.text('Plain text'), findsOneWidget);
+  });
+
+  testWidgets('web pages and Markdown are written in their format', (
+    tester,
+  ) async {
+    final (session, files) = await _pumpApp(tester);
+
+    for (final (label, format, path) in [
+      ('Web page (.html)', DocumentFormat.html, '/documents/report.html'),
+      ('Markdown (.md)', DocumentFormat.markdown, '/documents/report.md'),
+    ]) {
+      files.chosen = path;
+      await _openOtherFormats(tester);
+      await tester.tap(find.text(label));
+      await tester.pumpAndSettle();
+
+      expect(files.written.keys, contains(path));
+      expect(String.fromCharCodes(files.written[path]!), contains('Body'));
+      expect(session.format, format);
+      expect(find.text('Saved as ${path.split('/').last}'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+    }
+    expect(
+      find.text(
+        'Couldn’t save. Check whether the file is open in another program.',
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('saving equations and charts as .odt or .rtf warns of it', (
+    tester,
+  ) async {
+    final (session, files) = await _pumpApp(
+      tester,
+      file: OpenedFile(name: 'paper.docx', bytes: _paperWithEquationAndChart()),
+    );
+    Finder chip(String label) =>
+        find.descendant(of: find.byType(StatusBar), matching: find.text(label));
+    expect(chip('OpenDocument'), findsNothing);
+
+    for (final (label, path, note) in [
+      ('OpenDocument Text (.odt)', '/documents/paper.odt', 'OpenDocument'),
+      ('Rich Text Format (.rtf)', '/documents/paper.rtf', 'RTF'),
+    ]) {
+      files.chosen = path;
+      await _openOtherFormats(tester);
+      await tester.tap(find.text(label));
+      await tester.pumpAndSettle();
+
+      expect(files.written, contains(path));
+      expect(chip(note), findsOneWidget, reason: label);
+    }
+    expect(session.format, DocumentFormat.rtf);
   });
 
   testWidgets('the formats can be chosen with the keyboard', (tester) async {
