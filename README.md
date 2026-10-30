@@ -91,6 +91,7 @@ Known limitations:
 - Web pages and Markdown files keep only the pictures stored inside them. Voges Word never downloads anything from a file it opens, so a picture that is a link shows its description instead, with a notice.
 - Horizontal lines (`<hr>` in web pages, `---` in Markdown) aren't kept. Markdown has no page break: it is saved as a `---` line, which doesn't come back as a page break.
 - RTF files and web pages saved in a Chinese, Japanese or Korean code page instead of Unicode open with that text replaced, and a notice says so.
+- Pictures over 100 megapixels, and animations over 4096 pixels on a side, show a placeholder instead of being drawn; saving as `.docx` keeps them.
 - Pages (`.pages`) and WordPerfect (`.wpd`) files don't open, and PDF is only exported.
 
 ## Shortcuts

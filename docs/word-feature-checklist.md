@@ -89,8 +89,8 @@ Status as of October 29, 2026, after version 1.2.0:
 - [ ] **Resize and position the picture**, including text wrapping around it.
 - [ ] **Symbols and special characters.**
 - [ ] Date & Time.
-- [ ] Text Box, Shapes, WordArt, SmartArt and Charts. The ones that come from Word are kept when saving, but cannot be edited.
-- [ ] Equations. The ones that come from Word are kept.
+- [ ] Text Box, Shapes, WordArt, SmartArt and Charts. The ones that come from Word are kept when saving as `.docx`, but cannot be edited.
+- [ ] Equations. The ones that come from Word are kept when saving as `.docx`.
 
 ## 6. Review
 
@@ -105,8 +105,8 @@ Status as of October 29, 2026, after version 1.2.0:
 
 ## 7. References
 
-- [ ] **Partial: Table of Contents.** A table of contents that comes from Word is shown and kept, but it cannot be created or updated.
-- [ ] **Partial: Footnotes.** The ones that come from Word are kept, but they cannot be inserted or edited.
+- [ ] **Partial: Table of Contents.** A table of contents that comes from Word is shown and kept when saving as `.docx`, but it cannot be created or updated.
+- [ ] **Partial: Footnotes.** The ones that come from Word are kept when saving as `.docx`, but they cannot be inserted or edited.
 - [ ] Citations and bibliography following ABNT.
 
 ## 8. Page layout
@@ -114,7 +114,7 @@ Status as of October 29, 2026, after version 1.2.0:
 - [x] Margins: Normal, ABNT, Narrow, Moderate and Wide.
 - [x] Orientation: Portrait or Landscape.
 - [x] Paper size: A4, Letter, Legal and A5.
-- [ ] Columns and section breaks. The ones from Word are kept.
+- [ ] Columns and section breaks. The ones from Word are kept when saving as `.docx`.
 - [ ] Hyphenation.
 - [ ] Watermark, Page Color and Page Borders.
 
