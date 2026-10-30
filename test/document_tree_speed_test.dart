@@ -1,3 +1,6 @@
+// ignore_for_file: experimental_member_use
+
+import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,12 +12,40 @@ import 'package:voges_word/document/tables.dart';
 const _bound = Duration(seconds: 10);
 const _timeout = Timeout(Duration(minutes: 4));
 
-T _timed<T>(String what, T Function() work) {
+// Commands on everything take under a second in debug mode on a laptop.
+const _commandBound = Duration(seconds: 20);
+
+T _timed<T>(String what, T Function() work, {Duration bound = _bound}) {
   final watch = Stopwatch()..start();
   final result = work();
-  expect(watch.elapsed, lessThan(_bound), reason: what);
+  expect(watch.elapsed, lessThan(bound), reason: what);
   return result;
 }
+
+T _command<T>(String what, T Function() work) =>
+    _timed(what, work, bound: _commandBound);
+
+/// Paragraphs as a long .txt opens.
+Delta _plainLines(int count) {
+  final text = StringBuffer();
+  for (var index = 0; index < count; index++) {
+    text.write('Line $index of the document.\n');
+  }
+  return Delta()..insert(text.toString());
+}
+
+/// A controller with all of [delta] selected, as after Ctrl+A.
+QuillController _allSelected(Delta delta) {
+  final document = Document.fromDelta(delta);
+  return QuillController(
+    document: document,
+    selection: TextSelection(baseOffset: 0, extentOffset: document.length - 1),
+  );
+}
+
+/// Each command is undone on its own, as when the user pauses between them.
+void _pause(QuillController controller) =>
+    controller.document.history.lastRecorded = 0;
 
 /// Lines as the readers make them: formatted text, then a line break with
 /// list, heading, alignment or hidden paragraph attributes.
@@ -38,6 +69,8 @@ Delta _formattedLines(int count) {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('40k formatted lines load quickly', () {
     final delta = _formattedLines(40000);
     expect(delta.length, greaterThan(100000));
@@ -104,6 +137,80 @@ void main() {
     },
     timeout: _timeout,
   );
+
+  // Quill recursed once per line, out of stack from 50k lines, and changed
+  // each line after searching the tree from the first one: minutes.
+  group('with 100k lines selected', () {
+    test('the ribbon reads the style and Copy takes the text', () {
+      for (final delta in [_plainLines(100000), _formattedLines(100000)]) {
+        final controller = _allSelected(delta);
+        final style = _command('style', controller.getSelectionStyle);
+        expect(style.containsKey(Attribute.bold.key), isFalse);
+        _command('copy', () => controller.clipboardSelection(true));
+        expect(
+          controller.pastePlainText,
+          controller.document.toPlainText().substring(
+            0,
+            controller.document.length - 1,
+          ),
+        );
+        _command('styles', controller.getAllSelectionStyles);
+        _command(
+          'styles with offsets',
+          () => controller.document.collectAllStylesWithOffset(
+            0,
+            controller.selection.end,
+          ),
+        );
+      }
+    }, timeout: _timeout);
+
+    test('Bold and Bold again', () {
+      final delta = _plainLines(100000);
+      final controller = _allSelected(delta);
+      _command('bold', () => controller.formatSelection(Attribute.bold));
+      expect(controller.getSelectionStyle().attributes, {
+        Attribute.bold.key: Attribute.bold,
+      });
+      _pause(controller);
+      _command(
+        'bold again',
+        () => controller.formatSelection(Attribute.clone(Attribute.bold, null)),
+      );
+      expect(controller.document.toDelta(), delta);
+      _pause(controller);
+      _command('undo', controller.undo);
+      expect(controller.document.toDelta().length, 200000);
+    }, timeout: _timeout);
+
+    test('Delete and Undo', () {
+      for (final delta in [_plainLines(100000), _formattedLines(100000)]) {
+        final controller = _allSelected(delta);
+        _command(
+          'delete',
+          () => controller.replaceText(
+            0,
+            controller.selection.end,
+            '',
+            const TextSelection.collapsed(offset: 0),
+          ),
+        );
+        expect(controller.document.length, 1);
+        _pause(controller);
+        _command('undo', controller.undo);
+        expect(controller.document.toDelta(), delta);
+      }
+    }, timeout: _timeout);
+
+    test('a list on every paragraph', () {
+      final controller = _allSelected(_formattedLines(100000));
+      _command('list', () => controller.formatSelection(Attribute.ul));
+      expect(
+        controller.getSelectionStyle().attributes[Attribute.list.key],
+        Attribute.ul,
+      );
+    }, timeout: _timeout);
+  });
 
   test('a paragraph of 100k runs gives its delta quickly', () {
     final delta = Delta();

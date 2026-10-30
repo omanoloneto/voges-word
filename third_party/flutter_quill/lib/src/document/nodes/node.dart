@@ -1,5 +1,7 @@
 import 'dart:collection';
 
+import 'package:meta/meta.dart';
+
 import '../../../../quill_delta.dart';
 import '../../editor/embed/embed_editor_builder.dart';
 import '../attribute.dart';
@@ -100,8 +102,12 @@ abstract base class Node extends LinkedListEntry<Node> {
 
   void clearOffsetCache() {
     // Voges Word: a loop, since a long document has more lines than the
-    // stack has room for calls.
+    // stack has room for calls. Lines and blocks know their offsets from the
+    // first one on, so the first unknown one ends the walk; an edit of every
+    // line from the top no longer walks every line below each one.
+    final fromFirst = parent is! Line;
     for (Node? node = this; node != null; node = node.next) {
+      if (fromFirst && node._offset == null) return;
       node._offset = null;
     }
   }
@@ -145,9 +151,11 @@ abstract base class Node extends LinkedListEntry<Node> {
   @override
   void insertAfter(Node entry) {
     assert(entry.parent == null && parent != null);
+    // Voges Word: the offsets after this node are cleared before [entry],
+    // whose offset is unknown, goes between them; see [clearOffsetCache].
+    clearLengthCache();
     entry.parent = parent;
     super.insertAfter(entry);
-    clearLengthCache();
   }
 
   @override
@@ -184,6 +192,13 @@ abstract base class Node extends LinkedListEntry<Node> {
 
 /// Root node of document tree.
 base class Root extends QuillContainer<QuillContainer<Node?>> {
+  /// Voges Word: the lines of this tree query and edit it with Quill
+  /// 11.5.0's algorithms, which recurse once per line, and Document.compose
+  /// searches it from the first line for each operation. Set only in
+  /// documents made by Document.fromDeltaByInserts, so tests can compare.
+  @internal
+  bool quillAlgorithms = false;
+
   @override
   Node newInstance() => Root();
 

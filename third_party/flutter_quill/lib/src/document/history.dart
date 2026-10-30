@@ -48,7 +48,7 @@ class History {
   void record(Delta change, Delta before) {
     if (change.isEmpty) return;
     stack.redo.clear();
-    var undoDelta = change.invert(before);
+    var undoDelta = _invert(change, before);
     final timeStamp = DateTime.now().millisecondsSinceEpoch;
 
     if (lastRecorded + interval > timeStamp && stack.undo.isNotEmpty) {
@@ -100,7 +100,7 @@ class History {
       }
     }
     final base = Delta.from(doc.toDelta());
-    final inverseDelta = delta.invert(base);
+    final inverseDelta = _invert(delta, base);
     dest.add(inverseDelta);
     lastRecorded = 0;
     ignoreChange = true;
@@ -111,6 +111,48 @@ class History {
 
   HistoryChanged undo(Document doc) {
     return _change(doc, stack.undo, stack.redo);
+  }
+
+  /// Voges Word: [Delta.invert] in one pass over [base]. Quill's sliced
+  /// [base] from its start for every formatted or deleted run, so a change
+  /// to every line of a long document took quadratic time to record or
+  /// undo. Tests check that both give the same delta.
+  static Delta _invert(Delta change, Delta base) {
+    final inverted = Delta();
+    if (base.isEmpty) return inverted;
+
+    final rest = DeltaIterator(base);
+    for (final op in change.operations) {
+      if (op.isInsert) {
+        inverted.delete(op.length!);
+      } else if (op.isRetain && op.isPlain) {
+        inverted.retain(op.length!);
+        rest.skip(op.length!);
+      } else if (op.isDelete || (op.isRetain && op.isNotPlain)) {
+        // What base.slice gave, read on from where the last run ended.
+        final length = op.length!;
+        final slice = Delta();
+        for (var taken = 0; taken < length && rest.hasNext;) {
+          final baseOp = rest.next(length - taken);
+          slice.push(baseOp);
+          taken += baseOp.length!;
+        }
+        for (final baseOp in slice.toList()) {
+          if (op.isDelete) {
+            inverted.push(baseOp);
+          } else {
+            final invertAttr =
+                Delta.invertAttributes(op.attributes, baseOp.attributes);
+            inverted.retain(
+                baseOp.length!, invertAttr.isEmpty ? null : invertAttr);
+          }
+        }
+      } else {
+        throw StateError('Unreachable');
+      }
+    }
+    inverted.trim();
+    return inverted;
   }
 
   HistoryChanged redo(Document doc) {

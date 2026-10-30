@@ -3,6 +3,7 @@ import 'dart:collection' show LinkedList;
 import 'package:meta/meta.dart';
 
 import '../../../../quill_delta.dart';
+import '../../delta/delta_writer.dart';
 import '../../editor/embed/embed_editor_builder.dart';
 import '../style.dart';
 import 'leaf.dart';
@@ -113,19 +114,21 @@ abstract base class QuillContainer<T extends Node?> extends Node {
   }
 
   /// Voges Word: the children's deltas joined as folding them with
-  /// [Delta.concat] did, without copying the result once per child.
+  /// [Delta.concat] did, without copying the result once per child, nor the
+  /// text of lines of the same style once per line.
   @protected
   Delta childrenDelta() {
-    final delta = Delta();
+    final delta = DeltaWriter();
     for (final child in children) {
       final operations = child.toDelta().operations;
       if (operations.isEmpty) {
         continue;
       }
-      delta.push(operations.first);
-      delta.operations.addAll(operations.skip(1));
+      delta
+        ..push(operations.first)
+        ..addAll(operations.skip(1));
     }
-    return delta;
+    return delta.toDelta();
   }
 
   @override

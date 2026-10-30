@@ -1,6 +1,9 @@
+// ignore_for_file: experimental_member_use
+
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -346,7 +349,307 @@ Delta _ops(List<Object> items) => Delta.fromOperations([
   for (final item in items) item is Operation ? item : Operation.insert(item),
 ]);
 
+/// What the ribbon and the shortcuts apply to a selection.
+final _formats = <Attribute>[
+  Attribute.bold,
+  Attribute.clone(Attribute.bold, null),
+  Attribute.italic,
+  Attribute.clone(Attribute.italic, null),
+  Attribute.underline,
+  const LinkAttribute('https://example.com/b'),
+  Attribute.clone(Attribute.link, null),
+  const ColorAttribute('#00FF00'),
+  Attribute.ul,
+  Attribute.ol,
+  Attribute.unchecked,
+  Attribute.clone(Attribute.list, null),
+  Attribute.centerAlignment,
+  Attribute.rightAlignment,
+  Attribute.clone(Attribute.align, null),
+  Attribute.indentL1,
+  Attribute.indentL2,
+  Attribute.clone(Attribute.indent, null),
+  Attribute.h1,
+  Attribute.h2,
+  Attribute.header,
+  Attribute.blockQuote,
+  Attribute.codeBlock,
+  Attribute.clone(Attribute.codeBlock, null),
+  Attribute.rtl,
+  LineHeightAttribute.lineHeightOneAndHalf,
+];
+
+/// Lists, styles and embeds as JSON, to compare what the twins return.
+Object? _plain(Object? value) => switch (value) {
+  Style() => _styleJson(value),
+  Embeddable() => value.toJson(),
+  OffsetValue() => [value.offset, value.length, _plain(value.value)],
+  Delta() => value.toJson(),
+  Iterable() => [for (final item in value) _plain(item)],
+  _ => value,
+};
+
+/// What the editor reads from the selection: the ribbon's style, the text,
+/// styles and slice that Copy takes, the styles indenting each line reads and
+/// the style at the caret.
+String _readings(QuillController controller) {
+  final start = controller.selection.start;
+  final length = controller.selection.end - start;
+  try {
+    controller.clipboardSelection(true);
+    return jsonEncode(
+      _plain([
+        controller.getSelectionStyle(),
+        controller.getPlainText(),
+        controller.getAllIndividualSelectionStylesAndEmbed(),
+        controller.getAllSelectionStyles(),
+        controller.document.collectAllStylesWithOffset(start, length),
+        controller.document.collectStyle(start, 0),
+        controller.pastePlainText,
+        controller.pasteStyleAndEmbed,
+        controller.pasteDelta,
+      ]),
+    );
+  } catch (error) {
+    return '${error.runtimeType}';
+  }
+}
+
+/// Select All, a caret, a selection to the end, or any other.
+TextSelection _selection(Random random, Document document) {
+  final end = document.length - 1;
+  final offset = random.nextInt(end + 1);
+  return switch (random.nextInt(5)) {
+    0 => TextSelection(baseOffset: 0, extentOffset: end),
+    1 => TextSelection.collapsed(offset: offset),
+    2 => TextSelection(baseOffset: offset, extentOffset: end),
+    _ => TextSelection(
+      baseOffset: offset,
+      extentOffset: random.nextInt(end + 1),
+    ),
+  };
+}
+
+/// One editing command, the same for both twins.
+void Function(QuillController) _command(Random random, TextSelection at) {
+  final start = at.start;
+  final length = at.end - start;
+  final collapsed = TextSelection.collapsed(offset: start);
+  switch (random.nextInt(12)) {
+    case 0 || 1 || 2:
+      final format = _formats[random.nextInt(_formats.length)];
+      return (controller) => controller.formatSelection(format);
+    case 3:
+      return (controller) =>
+          controller.replaceText(start, length, '', collapsed);
+    case 4:
+      final text = [
+        for (var i = 1 + random.nextInt(4); i > 0; i--)
+          ['word', 'two words', '\n', '\n\n', 'ção', ' ', ' '][random.nextInt(
+            7,
+          )],
+      ].join();
+      return (controller) => controller.replaceText(
+        start,
+        length,
+        text,
+        TextSelection.collapsed(offset: start + text.length),
+      );
+    case 5:
+      return (controller) => controller.replaceText(
+        start,
+        length,
+        '\n',
+        TextSelection.collapsed(offset: start + 1),
+      );
+    case 6:
+      final increase = random.nextBool();
+      return (controller) => controller.indentSelection(increase);
+    case 7:
+      return (controller) => controller.clipboardSelection(false);
+    case 8:
+      return (controller) => controller.undo();
+    case 9:
+      return (controller) => controller.redo();
+    case 10:
+      final embed = random.nextBool()
+          ? BlockEmbed.image('a.png')
+          : const Embeddable(EmbedTypes.pageBreak, 'page');
+      return (controller) => controller.replaceText(start, length, embed, null);
+    default:
+      return (controller) => controller.compose(
+        Delta()
+          ..retain(start)
+          ..delete(length)
+          ..insert({EmbedTypes.pageBreak: 'page'})
+          ..insert('\n'),
+        TextSelection.collapsed(offset: start + 2),
+        ChangeSource.local,
+      );
+  }
+}
+
+/// A change of a document [length] long: retains with and without
+/// attributes, inserts and deletes, sometimes past the end.
+Delta _change(_Deltas attributes, Random random, int length) {
+  final operations = <Operation>[];
+  for (var position = 0; position <= length && random.nextInt(8) > 0;) {
+    final count = 1 + random.nextInt(1 + length ~/ 3);
+    switch (random.nextInt(5)) {
+      case 0:
+        operations.add(Operation.retain(count));
+        position += count;
+      case 1 || 2:
+        final style = attributes._attributes([
+          ..._Deltas._inline,
+          ..._Deltas._block,
+        ]);
+        operations.add(Operation.retain(count, style ?? const {}));
+        position += count;
+      case 3:
+        operations.add(Operation.delete(count));
+        position += count;
+      default:
+        operations.add(
+          random.nextBool()
+              ? Operation.insert(
+                  'xy\n',
+                  attributes._attributes(_Deltas._inline),
+                )
+              : Operation.insert({EmbedTypes.image: 'b.png'}),
+        );
+    }
+  }
+  if (random.nextBool()) return Delta.fromOperations(operations);
+  final delta = Delta();
+  operations.forEach(delta.push);
+  return delta;
+}
+
+/// What the history records to undo [change], with a history of its own.
+Delta _recordedUndo(Delta change, Delta before) {
+  final history = Document().history..record(change, before);
+  return history.stack.undo.isEmpty ? Delta() : history.stack.undo.single;
+}
+
+/// A document with [delta], edited by Quill's algorithms and by ours with
+/// the same commands, compared after every one: trees, offsets against
+/// counted values, deltas, selections, what the editor reads, and what the
+/// history records for each change.
+Future<void> _expectSameEditing(
+  Delta delta, {
+  required int seed,
+  required int steps,
+}) async {
+  final Document original;
+  try {
+    original = Document.fromDeltaByInserts(delta);
+  } catch (_) {
+    return;
+  }
+  const start = TextSelection.collapsed(offset: 0);
+  final quill = QuillController(document: original, selection: start);
+  final ours = QuillController(
+    document: Document.fromDelta(delta),
+    selection: start,
+  );
+  final changes = <DocChange>[];
+  final subscription = ours.document.changes.listen(changes.add);
+  final random = Random(seed);
+  try {
+    for (var step = 0; step < steps; step++) {
+      final reason = 'seed $seed step $step';
+      _readSomeOffsets(ours.document, Random(seed * 31 + step));
+      _readSomeOffsets(quill.document, Random(seed * 31 + step));
+      final selection = _selection(random, quill.document);
+      quill.updateSelection(selection, ChangeSource.local);
+      ours.updateSelection(selection, ChangeSource.local);
+      expect(_readings(ours), _readings(quill), reason: '$reason $selection');
+
+      final command = _command(random, selection);
+      Object? expectedError;
+      quill.document.history.lastRecorded = 0;
+      try {
+        command(quill);
+      } catch (error) {
+        expectedError = error.runtimeType;
+      }
+      Object? actualError;
+      ours.document.history.lastRecorded = 0;
+      try {
+        command(ours);
+      } catch (error) {
+        actualError = error.runtimeType;
+      }
+      expect(actualError, expectedError, reason: reason);
+      expect(
+        _difference(ours.document.root, quill.document.root),
+        isNull,
+        reason: reason,
+      );
+      // A failed command can leave a half-made tree; stop there.
+      if (expectedError != null) break;
+      expect(
+        _staleCache(ours.document.root, leaves: false),
+        isNull,
+        reason: reason,
+      );
+      expect(
+        _staleCache(quill.document.root, leaves: false),
+        isNull,
+        reason: reason,
+      );
+      expect(
+        _deltaJson(ours.document.toDelta()),
+        _deltaJson(quill.document.toDelta()),
+        reason: reason,
+      );
+      expect(
+        _deltaJson(ours.document.root.toDelta()),
+        _deltaJson(_concatenated(ours.document.root)),
+        reason: reason,
+      );
+      expect(ours.selection, quill.selection, reason: reason);
+      expect(
+        _styleJson(ours.toggledStyle),
+        _styleJson(quill.toggledStyle),
+        reason: reason,
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      for (final change in changes) {
+        expect(
+          _deltaJson(_recordedUndo(change.change, change.before)),
+          _deltaJson(change.change.invert(change.before)),
+          reason: '$reason: undo of ${_deltaJson(change.change)}',
+        );
+      }
+      changes.clear();
+      // The history joins changes less than 400 ms apart, so a command that
+      // makes many, like indenting, can be split into other undo steps on
+      // each twin; then neither twin undoes it.
+      if (_history(ours) != _history(quill)) {
+        ours.document.history.clear();
+        quill.document.history.clear();
+      }
+    }
+  } finally {
+    await subscription.cancel();
+  }
+}
+
+String _history(QuillController controller) {
+  final stack = controller.document.history.stack;
+  return jsonEncode([
+    for (final delta in stack.undo) delta.toJson(),
+    for (final delta in stack.redo) delta.toJson(),
+    stack.undo.length,
+  ]);
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('Document.fromDelta builds the tree Quill built', () {
     test('for thousands of random documents', () {
       for (var seed = 0; seed < 4000; seed++) {
@@ -596,6 +899,51 @@ void main() {
             reason: reason,
           );
         }
+      }
+    });
+  });
+
+  group('Editing gives what Quill gave', () {
+    test('for thousands of commands on random documents', () async {
+      for (var seed = 0; seed < 1000; seed++) {
+        final delta = _Deltas(300000 + seed).next(seed.isEven ? 20 : 60);
+        await _expectSameEditing(delta, seed: seed, steps: 16);
+      }
+    });
+
+    test('on long documents with long blocks and blank lines', () async {
+      for (var seed = 0; seed < 16; seed++) {
+        final generator = _Deltas(400000 + seed);
+        final delta = Delta();
+        for (var line = 0; line < 300; line++) {
+          if (line % 9 == 4) {
+            delta.insert('\n\n');
+          }
+          delta
+            ..insert('Line $line ', line.isEven ? {'bold': true} : null)
+            ..insert(
+              '\n',
+              (line ~/ 25).isEven
+                  ? {'list': line % 50 < 40 ? 'bullet' : 'ordered'}
+                  : generator._attributes(_Deltas._block),
+            );
+        }
+        delta.insert('\n');
+        await _expectSameEditing(delta, seed: 2000 + seed, steps: 25);
+      }
+    });
+
+    test('and the history records the undo Delta.invert gives', () {
+      for (var seed = 0; seed < 3000; seed++) {
+        final generator = _Deltas(500000 + seed);
+        final base = generator.next(seed % 10 == 0 ? 60 : 12);
+        final length = base.toList().fold(0, (sum, op) => sum + op.length!);
+        final change = _change(generator, Random(seed), length);
+        expect(
+          _deltaJson(_recordedUndo(change, base)),
+          _deltaJson(change.invert(base)),
+          reason: 'seed $seed: ${_deltaJson(change)} on ${_deltaJson(base)}',
+        );
       }
     });
   });
