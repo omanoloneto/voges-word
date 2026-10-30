@@ -529,8 +529,7 @@ class AppLocalizationsEs extends AppLocalizations {
       'Voges Word abre archivos .docx, .doc, .odt, .rtf, .html, .md y .txt.';
 
   @override
-  String get problemNotWordDocument =>
-      'El archivo no es un documento de Word válido.';
+  String get problemNotWordDocument => 'El archivo no es un documento válido.';
 
   @override
   String get problemPasswordProtected =>

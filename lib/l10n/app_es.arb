@@ -163,7 +163,7 @@
   "export": "Exportar",
   "problemLegacyDoc": "Los archivos de Word 95 o anteriores no son compatibles. Ábrelo en Word y guárdalo como .docx.",
   "problemUnsupportedFormat": "Voges Word abre archivos .docx, .doc, .odt, .rtf, .html, .md y .txt.",
-  "problemNotWordDocument": "El archivo no es un documento de Word válido.",
+  "problemNotWordDocument": "El archivo no es un documento válido.",
   "problemPasswordProtected": "El archivo está protegido con contraseña. Quita la contraseña en el programa que lo creó e inténtalo de nuevo.",
   "problemTooLarge": "El archivo es demasiado grande para abrirlo.",
   "problemDamaged": "No se pudo abrir “{name}”. Puede que el archivo esté dañado.",

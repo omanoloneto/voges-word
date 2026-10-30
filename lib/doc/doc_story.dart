@@ -13,30 +13,6 @@ const _maxFieldDepth = 32;
 /// Tables nested deeper join the cells of the deepest one kept.
 const _maxTableDepth = 16;
 
-/// Fields kept as fields; the others keep only their result.
-const _liveFields = {
-  'PAGE',
-  'NUMPAGES',
-  'SECTIONPAGES',
-  'SECTION',
-  'DATE',
-  'TIME',
-  'CREATEDATE',
-  'SAVEDATE',
-  'PRINTDATE',
-  'AUTHOR',
-  'TITLE',
-  'SUBJECT',
-  'KEYWORDS',
-  'NUMWORDS',
-  'NUMCHARS',
-  'REF',
-  'PAGEREF',
-  'NOTEREF',
-  'SEQ',
-  'STYLEREF',
-};
-
 /// Fields that hold an embedded or linked object; only its picture stays.
 const _objectFields = {'EMBED', 'LINK'};
 
@@ -273,7 +249,7 @@ class StoryReader {
       field.mode = target == null ? _FieldMode.passThrough : _FieldMode.link;
       field.target = target ?? '';
     } else {
-      field.mode = _liveFields.contains(name) || instruction.startsWith('=')
+      field.mode = isSafeField(instruction)
           ? _FieldMode.live
           : _FieldMode.passThrough;
     }
@@ -289,8 +265,7 @@ class StoryReader {
     final field = _fields.removeLast();
     final instruction = field.instruction.toString().trim();
     switch (field.mode) {
-      case _FieldMode.instruction
-          when _liveFields.contains(_fieldName(instruction)):
+      case _FieldMode.instruction when isSafeField(instruction):
         _inline(FieldSpec(instruction, format: field.format));
       case _FieldMode.link when field.result.isNotEmpty:
         _inline(LinkSpec(field.target, field.result));

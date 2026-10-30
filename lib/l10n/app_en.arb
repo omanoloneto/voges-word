@@ -274,7 +274,7 @@
   "export": "Export",
   "problemLegacyDoc": "Files from Word 95 and older aren’t supported. Open the file in Word and save it as .docx.",
   "problemUnsupportedFormat": "Voges Word opens .docx, .doc, .odt, .rtf, .html, .md and .txt files.",
-  "problemNotWordDocument": "The file isn’t a valid Word document.",
+  "problemNotWordDocument": "The file isn’t a valid document.",
   "problemPasswordProtected": "The file is protected with a password. Remove the password in the app that created it and try again.",
   "problemTooLarge": "The file is too large to open.",
   "problemDamaged": "Couldn’t open “{name}”. The file may be damaged.",

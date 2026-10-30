@@ -558,8 +558,6 @@ String? safeLinkTarget(String target) {
       : null;
 }
 
-// Only fields that show the document's own data; the others (DDE,
-// INCLUDEPICTURE, INCLUDETEXT...) fetch content or run something.
 const _safeFields = {
   'PAGE',
   'NUMPAGES',
@@ -583,6 +581,14 @@ const _safeFields = {
   'STYLEREF',
   '=',
 };
+
+/// Whether a field only shows the document's own data; the others (DDE,
+/// INCLUDEPICTURE, INCLUDETEXT...) fetch content or run something.
+bool isSafeField(String instruction) {
+  final trimmed = instruction.trim();
+  return trimmed.startsWith('=') ||
+      _safeFields.contains(trimmed.split(RegExp(r'\s+')).first.toUpperCase());
+}
 
 const _declaration = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const _main = 'application/vnd.openxmlformats-officedocument.wordprocessingml';
@@ -1115,8 +1121,7 @@ class DocxBuilder {
   String _field(FieldSpec field, RunFormat base) {
     final format = base.merge(field.format);
     final instruction = stripInvalidXmlChars(field.instruction).trim();
-    final name = instruction.split(RegExp(r'\s+')).first.toUpperCase();
-    if (!_safeFields.contains(name) && !instruction.startsWith('=')) {
+    if (!isSafeField(instruction)) {
       return _text(field.result, format);
     }
     final properties = _runPropertiesElement(format);

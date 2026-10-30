@@ -24,31 +24,6 @@ class RtfWriter {
   static const _maxTableDepth = 32;
   static const _hyperlinkColor = '0563C1';
 
-  // Fields that show the document's own data; the others could fetch
-  // something or run a program.
-  static const _safeFields = {
-    'PAGE',
-    'NUMPAGES',
-    'SECTIONPAGES',
-    'SECTION',
-    'DATE',
-    'TIME',
-    'CREATEDATE',
-    'SAVEDATE',
-    'PRINTDATE',
-    'AUTHOR',
-    'TITLE',
-    'SUBJECT',
-    'KEYWORDS',
-    'NUMWORDS',
-    'NUMCHARS',
-    'REF',
-    'PAGEREF',
-    'NOTEREF',
-    'SEQ',
-    'STYLEREF',
-  };
-
   final TableStore _tables;
   final _fonts = <String>[];
   final _colors = <String>[];
@@ -618,8 +593,7 @@ class RtfWriter {
         }
       }
       final instruction = parts.join().trim();
-      final name = instruction.split(RegExp(r'\s+')).first.toUpperCase();
-      return _safeFields.contains(name) ? instruction : null;
+      return isSafeField(instruction) ? instruction : null;
     } on XmlException {
       return null;
     }

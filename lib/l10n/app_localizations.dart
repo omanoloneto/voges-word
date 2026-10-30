@@ -1081,7 +1081,7 @@ abstract class AppLocalizations {
   /// No description provided for @problemNotWordDocument.
   ///
   /// In en, this message translates to:
-  /// **'The file isn’t a valid Word document.'**
+  /// **'The file isn’t a valid document.'**
   String get problemNotWordDocument;
 
   /// No description provided for @problemPasswordProtected.
