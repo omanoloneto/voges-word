@@ -490,7 +490,7 @@ void main() {
       );
       LineBlock unnumbered(int level) => LineBlock(const [], {
         HiddenAttributes.numbering: 1,
-        unnumberedLevelAttribute: level,
+        HiddenAttributes.unnumberedLevel: level,
       });
       final counter = WordListCounter(numbering);
       final labels = <String?>[];
@@ -553,7 +553,7 @@ void main() {
     // The editor shows the parts as paragraphs.
     expect(line('A').list, isNull);
     expect(line('A').attributes[HiddenAttributes.numbering], 1);
-    expect(line('A').attributes[unnumberedLevelAttribute], 0);
+    expect(line('A').attributes[HiddenAttributes.unnumberedLevel], 0);
     expect(line('z').list, 'ordered');
 
     String saved(DocumentCodec codec, [Encoding encoding = utf8]) =>
@@ -606,7 +606,7 @@ void main() {
     expect(
       reopened
           .firstWhere((line) => line.plainText == 'B')
-          .attributes[unnumberedLevelAttribute],
+          .attributes[HiddenAttributes.unnumberedLevel],
       0,
     );
   });

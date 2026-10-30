@@ -4,6 +4,7 @@ import 'package:flutter/painting.dart' show EdgeInsets;
 
 import '../document/document_codec.dart';
 import '../docx/docx_builder.dart';
+import '../docx/docx_numbering.dart' show wordListLevels;
 import 'doc_file.dart';
 import 'doc_form_fields.dart';
 import 'doc_lists.dart';
@@ -209,8 +210,7 @@ class DocContext {
       // Without a list of its own, the paragraph is out of its style's.
       list: sameList
           ? null
-          : _listRef(to) ??
-                (file.lists[from.listOverride] == null ? null : ListRef.none),
+          : _listRef(to) ?? (_listOf(from) == null ? null : ListRef.none),
       tabs: sameTabs ? const [] : _tabChanges(from.tabs, to.tabs),
     );
   }
@@ -252,8 +252,13 @@ class DocContext {
         : LineSpacing.exactly(-props.line / 20);
   }
 
+  /// The list a paragraph with [props] is in: none from level 9, Word's body
+  /// text, as Word numbers levels 0 to 8 only.
+  DocList? _listOf(ParaProps props) =>
+      props.listLevel < wordListLevels ? file.lists[props.listOverride] : null;
+
   ListRef? _listRef(ParaProps props) {
-    final list = file.lists[props.listOverride];
+    final list = _listOf(props);
     if (list == null) return null;
     final key = list.overridden ? ('override', props.listOverride) : list.id;
     final id = _listIds[key] ??= spec.addList(

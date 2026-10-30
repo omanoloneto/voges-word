@@ -1322,7 +1322,7 @@ void main() {
     ).whereType<LineBlock>().toList();
     final second = reopened.firstWhere((line) => line.plainText == 'Second');
     expect(second.list, isNull);
-    expect(second.attributes[unnumberedLevelAttribute], 0);
+    expect(second.attributes[HiddenAttributes.unnumberedLevel], 0);
     expect(
       second.attributes[HiddenAttributes.numbering],
       reopened

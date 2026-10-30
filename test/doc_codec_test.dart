@@ -307,6 +307,64 @@ void main() {
     expect(document, contains('<w:numId w:val="0"/>'));
   });
 
+  test('levels from 9, Word\'s body text, put a paragraph in no list', () {
+    final doc = DocWriter();
+    final list = doc.addList([
+      for (var level = 0; level < 8; level++)
+        (
+          format: 0,
+          text: [
+            for (var shown = 1; shown <= level + 1; shown++) '%$shown.',
+          ].join(),
+          start: 1,
+          left: 720 * (level + 1),
+          hanging: 360,
+          font: null,
+        ),
+      (format: 255, text: '', start: 1, left: 0, hanging: 0, font: null),
+    ]);
+    doc
+      ..styles[1] = StyleFixture.paragraph(
+        'heading 1',
+        builtIn: 1,
+        base: 0,
+        paragraph: DocWriter.listParagraph(list),
+      )
+      ..styles[2] = StyleFixture.paragraph(
+        'Body Level',
+        base: 0,
+        paragraph: DocWriter.listParagraph(list, 9),
+      )
+      ..line('One', sprms: DocWriter.listParagraph(list))
+      ..line('Body', sprms: DocWriter.listParagraph(list, 9))
+      // MS-DOC's value for a paragraph its list skips.
+      ..line('Skipped', sprms: DocWriter.listParagraph(list, 0x0C))
+      ..line('Two', sprms: DocWriter.listParagraph(list, 1))
+      ..line('Heading', style: 1, sprms: sprm(Sprm.pIlvl, [9]))
+      ..line('Styled', style: 2)
+      ..line('Styled item', style: 2, sprms: sprm(Sprm.pIlvl, [1]));
+    final loaded = _decode(doc.build());
+    final counter = WordListCounter(DocxNumbering.of(loaded.source));
+    final labels = <String, String?>{};
+    for (final line in documentBlocks(loaded.delta).whereType<LineBlock>()) {
+      counter.count(line);
+      labels[line.plainText] = counter.textOf(line);
+    }
+
+    // They don't count, so 'Two' is the first item of its level.
+    expect(labels, {
+      'One': '1.',
+      'Body': null,
+      'Skipped': null,
+      'Two': '1.1.',
+      'Heading': null,
+      'Styled': null,
+      'Styled item': '1.2.',
+    });
+    expect(_line(loaded.delta, 'Heading')?['header'], 1);
+    expect(_line(loaded.delta, 'Styled item')?['indent'], 1);
+  });
+
   test('list levels keep what follows their number', () {
     final doc = DocWriter();
     final list = doc.addList([

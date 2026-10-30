@@ -680,7 +680,7 @@ class _BlockReader {
           (props.lineSpacing - c.normalParagraph.lineSpacing).abs() > 0.01)
         'line-height': (props.lineSpacing * 100).round() / 100,
       if (list != null || unnumbered) HiddenAttributes.numbering: numId,
-      if (unnumbered) unnumberedLevelAttribute: props.level,
+      if (unnumbered) HiddenAttributes.unnumberedLevel: props.level,
       if (list == null) ...{
         if (differs(props.spaceBefore, base.spaceBefore))
           HiddenAttributes.spaceBefore: props.spaceBefore,

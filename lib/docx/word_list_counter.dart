@@ -27,7 +27,7 @@ class WordListCounter {
           .clamp(0, wordListLevels - 1);
 
   static int? _unnumberedLevel(LineBlock line) {
-    final value = line.attributes[unnumberedLevelAttribute];
+    final value = line.attributes[HiddenAttributes.unnumberedLevel];
     return value is num && value.isFinite ? value.toInt() : null;
   }
 

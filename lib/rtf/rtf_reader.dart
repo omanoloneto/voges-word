@@ -8,6 +8,7 @@ import '../document/headers_footers.dart';
 import '../document/picture_crop.dart';
 import '../document/text_encodings.dart';
 import '../docx/docx_builder.dart';
+import '../docx/docx_numbering.dart' show wordListLevels;
 import '../docx/image_formats.dart';
 import 'rtf_languages.dart';
 import 'rtf_pictures.dart';
@@ -770,7 +771,7 @@ class RtfReader {
       case 'ls':
         para.listOverride = parameter;
       case 'ilvl':
-        para.listLevel = (parameter ?? 0).clamp(0, 8);
+        para.listLevel = math.max(parameter ?? 0, 0);
       case 'outlinelevel':
         para.outlineLevel = parameter;
       case 'dropcapli':
@@ -1403,6 +1404,8 @@ class RtfReader {
         override > 0 &&
         (pn == null || _hasList(override))) {
       story?.numbering = null;
+      // Word's body text level: in no list, not even its style's.
+      if (para.listLevel >= wordListLevels) return ListRef.none;
       final id = _listIds[override] ??= _wordList(override);
       return ListRef(id, para.listLevel);
     }

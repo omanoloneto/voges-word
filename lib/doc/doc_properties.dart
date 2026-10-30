@@ -177,6 +177,8 @@ class ParaProps {
   bool rightToLeft = false;
   List<DocTab> tabs = const [];
   int listOverride = 0;
+
+  /// From 0; 9 (Word's body text) and above leave the paragraph in no list.
   int listLevel = 0;
   bool inTable = false;
   bool rowEnd = false;
@@ -229,7 +231,7 @@ class ParaProps {
         case Sprm.pFPageBreakBefore:
           pageBreakBefore = data.u8(at) != 0;
         case Sprm.pIlvl:
-          listLevel = math.min(data.u8(at), 8);
+          listLevel = data.u8(at);
         case Sprm.pIlfo:
           listOverride = data.i16(at);
         case Sprm.pChgTabsPapx:

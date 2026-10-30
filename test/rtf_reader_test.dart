@@ -782,6 +782,31 @@ void main() {
       expect(_shownNumbers(document), ['1.', '2.', '3.', '1.', '2.']);
     });
 
+    test(r"\ilvl9, Word's body text, and above put a paragraph in no list", () {
+      final numbered = [
+        for (var level = 0; level < 8; level++)
+          r'{\listlevel\levelnfc0\levelstartat1'
+              "{\\leveltext\\'02\\'0$level.;}}",
+      ].join();
+      final document = _read(
+        r'{\rtf1{\stylesheet{\s1\ls1 Listed;}}{\*\listtable{\list'
+        '$numbered'
+        r"{\listlevel\levelnfc255\levelstartat1{\leveltext\'00;}}\listid1}}"
+        r'{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}}'
+        r'\pard\ls1 one\par\pard\ls1\ilvl9 body\par'
+        r'\pard\ls1\ilvl12 skipped\par\pard\ls1\ilvl1 two\par'
+        r'\pard\s1\ls1\ilvl9 styled\par\pard\s1 listed\par}',
+      );
+
+      for (final text in ['body', 'skipped', 'styled']) {
+        final line = _line(document.delta, text);
+        expect(line['list'], isNull, reason: text);
+        expect(line[HiddenAttributes.numbering], isNull, reason: text);
+      }
+      // They don't count, so 'two' is the first item of its level.
+      expect(_shownNumbers(document), ['1.', '1.', '2.']);
+    });
+
     test('headers for left and right pages', () {
       final document = _read(
         r'{\rtf1\facingp {\headerr odd\par}{\headerl even\par}body\par}',

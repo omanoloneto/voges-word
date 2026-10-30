@@ -13,12 +13,6 @@ const _checkboxFont = 'Segoe UI Symbol';
 /// Word numbers levels 0 to 8 only.
 const wordListLevels = 9;
 
-/// The hidden line attribute with the Word level of a paragraph at a level
-/// of its list without numbers (w:numFmt none), which the editor shows as a
-/// plain paragraph; the attribute with its list is
-/// `HiddenAttributes.numbering`.
-const unnumberedLevelAttribute = 'vw-nlvl';
-
 /// Word keeps list ids in 32 bits.
 const _maxWordId = 0x7FFFFFFF;
 
