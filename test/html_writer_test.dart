@@ -85,6 +85,32 @@ ParagraphSpec _item(String text, int list, [int level = 0]) => ParagraphSpec([
   TextSpec(text),
 ], format: ParagraphFormat(list: ListRef(list, level)));
 
+/// [loaded] saved as a page after giving the list item with [text] other
+/// [attributes], as the editor's list buttons do.
+String _saveChanged(
+  LoadedDocument loaded,
+  String text,
+  Map<String, dynamic> attributes,
+) {
+  final delta = Delta();
+  var found = false;
+  for (final operation in loaded.delta.toList()) {
+    final data = operation.data;
+    if (data is String && data.contains(text)) found = true;
+    if (found && data == '\n') {
+      delta.insert('\n', {...?operation.attributes, ...attributes});
+      found = false;
+    } else {
+      delta.push(operation);
+    }
+  }
+  return utf8.decode(
+    HtmlCodec(
+      DocxCodec(_tables),
+    ).encode(delta, source: loaded.source, look: loaded.look),
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -191,6 +217,59 @@ void main() {
 
       expect(html, contains('<li>Bullet A<ol><li>A1</li><li>A2</li></ol>'));
       expect(html, contains('<li>Bullet B<ol><li>B1</li></ol>'));
+    });
+
+    test('items switched to another kind leave their Word list, as in '
+        '.docx', () {
+      final spec = DocumentSpec();
+      final numbered = spec.addList(ListSpec.numbered());
+      final bullets = spec.addList(ListSpec.bullets());
+      spec.body.addAll([
+        _item('Apples', numbered),
+        _item('A1', numbered, 1),
+        _item('Bananas', numbered),
+        _item('A2', numbered, 1),
+        _item('Cherries', numbered),
+        const ParagraphSpec([TextSpec('Between')]),
+        _item('Milk', bullets),
+        _item('Eggs', bullets),
+        _item('Bread', bullets),
+      ]);
+      final loaded = _open(spec);
+
+      final bullet = _saveChanged(loaded, 'Bananas', {'list': 'bullet'});
+      expect(bullet, contains('<ul><li>Bananas<ol start="2" type="a">'));
+      expect(bullet, contains('<ol start="2"><li>Cherries</li></ol>'));
+      final task = _saveChanged(loaded, 'Bananas', {'list': 'unchecked'});
+      expect(task, contains('<ol start="2" type="a"><li>A2</li></ol>'));
+      expect(task, contains('<ol start="2"><li>Cherries</li></ol>'));
+      expect(
+        _saveChanged(loaded, 'Eggs', {'list': 'ordered'}),
+        contains('<ol><li>Eggs</li></ol>'),
+      );
+
+      // The .docx writer starts a new list of its own after a number of a
+      // Word list.
+      final numId = _line(
+        loaded.delta,
+        'Apples',
+      ).attributes[HiddenAttributes.numbering];
+      final html = utf8.decode(
+        HtmlCodec(DocxCodec(_tables)).encode(
+          Delta()
+            ..insert('Mine')
+            ..insert('\n', {'list': 'ordered'})
+            ..insert('Word')
+            ..insert('\n', {
+              'list': 'ordered',
+              HiddenAttributes.numbering: numId,
+            })
+            ..insert('Mine again')
+            ..insert('\n', {'list': 'ordered'}),
+          source: loaded.source,
+        ),
+      );
+      expect(html, contains('<ol><li>Mine again</li></ol>'));
     });
 
     test('checklists show only their boxes and open without a space', () {
@@ -542,6 +621,251 @@ void main() {
         reason: text,
       );
     }
+  });
+
+  test('right-to-left numbered headings have their number beside them', () {
+    final spec = DocumentSpec(language: 'ar-SA');
+    final chapters = spec.addList(ListSpec.numbered());
+    final items = spec.addList(ListSpec.numbered());
+    ParagraphSpec rightToLeft(String text, int list, {int? heading}) =>
+        ParagraphSpec(
+          [TextSpec(text)],
+          heading: heading,
+          format: ParagraphFormat(list: ListRef(list), rightToLeft: true),
+        );
+    spec.body.addAll([
+      rightToLeft('مقدمة البحث', chapters, heading: 1),
+      rightToLeft('المنهجية', chapters, heading: 1),
+      rightToLeft('البند الأول', items),
+    ]);
+    final html = _save(_open(spec));
+
+    expect(
+      html,
+      contains(
+        '<ol><li dir="rtl"><h1 dir="rtl">مقدمة البحث</h1></li>\n'
+        '<li dir="rtl"><h1 dir="rtl">المنهجية</h1></li></ol>',
+      ),
+    );
+    expect(html, contains('<li dir="rtl">البند الأول</li>'));
+    final again = _read(html).delta;
+    expect(_visible(_line(again, 'المنهجية').attributes), {
+      'header': 1,
+      'list': 'ordered',
+    });
+    expect(
+      _line(again, 'المنهجية').attributes[HiddenAttributes.paragraphProperties],
+      contains('<w:bidi/>'),
+    );
+  });
+
+  test('sections that start a page break it', () {
+    final odt = OdtCodec(DocxCodec(_tables)).decode(
+      odtFile(
+        automatic:
+            '<style:style style:name="P1" style:family="paragraph" '
+            'style:master-page-name="Standard"><style:paragraph-properties '
+            'style:page-number="1"/></style:style>',
+        body:
+            '<text:p>Front matter</text:p>'
+            '<text:p text:style-name="P1">Chapter one starts on page 1'
+            '</text:p>',
+      ),
+    );
+    expect(
+      _save(odt),
+      contains(
+        '<p>Front matter</p>\n'
+        '<div style="break-after:page;page-break-after:always"></div>\n'
+        '<p>Chapter one starts on page 1</p>',
+      ),
+    );
+
+    final spec = DocumentSpec()
+      ..body.addAll(const [
+        ParagraphSpec([TextSpec('Portrait')]),
+        SectionBreakSpec(PageSpec()),
+        ParagraphSpec([TextSpec('Two columns')]),
+        SectionBreakSpec(PageSpec(), kind: SectionKind.continuous),
+        ParagraphSpec([TextSpec('Same page')]),
+      ]);
+    final html = _save(_open(spec));
+    expect(
+      html,
+      contains(
+        '<p>Portrait</p>\n'
+        '<div style="break-after:page;page-break-after:always"></div>\n'
+        '<p>Two columns</p>\n<p>Same page</p>',
+      ),
+    );
+    expect(_lines(_read(html).delta).map((line) => line.first), [
+      'Portrait',
+      '',
+      'Two columns',
+      'Same page',
+    ]);
+  });
+
+  group('Word lists show their own numbers', () {
+    DocumentSpec articles({String levelOne = '%1.%2.', int start = 1}) {
+      final spec = DocumentSpec();
+      final list = spec.addList(
+        ListSpec([
+          ListLevelSpec(
+            format: NumberFormat.upperRoman,
+            text: 'Article %1.',
+            start: start,
+          ),
+          ListLevelSpec(format: NumberFormat.decimal, text: levelOne),
+          const ListLevelSpec(format: NumberFormat.lowerLetter, text: '(%3)'),
+          const ListLevelSpec(format: NumberFormat.decimalZero, text: '%4.'),
+          for (var level = 4; level < 9; level++)
+            ListLevelSpec(format: NumberFormat.decimal, text: '%${level + 1}.'),
+        ]),
+      );
+      return spec
+        ..body.addAll([
+          ParagraphSpec(
+            [const TextSpec('Scope')],
+            heading: 1,
+            format: ParagraphFormat(list: ListRef(list)),
+          ),
+          _item('Terms', list, 1),
+          _item('Deep', list, 2),
+          _item('Deeper', list, 2),
+          _item('Zero', list, 3),
+          _item('More terms', list, 1),
+          ParagraphSpec(
+            [const TextSpec('Method')],
+            heading: 1,
+            format: ParagraphFormat(list: ListRef(list)),
+          ),
+          _item('Sub', list, 1),
+          const ParagraphSpec([TextSpec('Text.')]),
+          _item('Back in the list', list, 2),
+        ]);
+    }
+
+    test('levels that show other levels or more text', () {
+      final loaded = _open(articles());
+      final html = _save(loaded);
+
+      expect(
+        html,
+        contains('li[data-marker]::marker { content: attr(data-marker) " "; }'),
+      );
+      expect(
+        html,
+        contains(
+          '<ol type="I"><li data-marker="Article I."><h1>Scope</h1>'
+          '<ol><li data-marker="I.1.">Terms<ol type="a">'
+          '<li data-marker="(a)">Deep</li><li data-marker="(b)">Deeper'
+          '<ol><li data-marker="01.">Zero</li></ol></li></ol></li>'
+          '<li data-marker="I.2.">More terms</li></ol></li>\n'
+          '<li data-marker="Article II."><h1>Method</h1>'
+          '<ol><li data-marker="II.1.">Sub</li></ol></li></ol>',
+        ),
+      );
+      expect(html, contains('<li data-marker="(a)">Back in the list</li>'));
+      expect(() => XmlDocument.parse(html), returnsNormally);
+      expect(_lines(_read(html).delta), _lines(loaded.delta));
+    });
+
+    test('legal numbering, letters past z and long texts', () {
+      final package = DocxBuilder(articles(start: 27)).build();
+      final numbering = package.text('word/numbering.xml')!;
+      final legal = numbering.replaceFirst(
+        '<w:lvl w:ilvl="1">',
+        '<w:lvl w:ilvl="1"><w:isLgl/>',
+      );
+      expect(legal, isNot(numbering));
+      package.setText('word/numbering.xml', legal);
+      expect(
+        _save(DocxCodec(_tables).read(package)),
+        allOf(
+          contains('<li data-marker="Article XXVII."><h1>Scope</h1>'),
+          contains('<li data-marker="27.1.">Terms'),
+        ),
+      );
+
+      final spec = DocumentSpec();
+      final list = spec.addList(
+        ListSpec([
+          for (var level = 0; level < 9; level++)
+            ListLevelSpec(
+              format: NumberFormat.lowerLetter,
+              text: '%${level + 1})',
+              start: 26,
+            ),
+        ]),
+      );
+      spec.body.addAll([
+        _item('z', list),
+        _item('aa', list),
+        _item('bb', list),
+      ]);
+      expect(
+        _save(_open(spec)),
+        contains(
+          '<li data-marker="z)">z</li>\n<li data-marker="aa)">aa</li>\n'
+          '<li data-marker="bb)">bb</li>',
+        ),
+      );
+
+      final long = _save(_open(articles(levelOne: '${'x' * 70}%2')));
+      expect(long, contains('<li>Terms'));
+      expect(long, contains('<li data-marker="Article I.">'));
+
+      final hostile = DocxBuilder(articles(levelOne: '%1' * 32)).build();
+      final definitions = hostile.text('word/numbering.xml')!;
+      hostile.setText(
+        'word/numbering.xml',
+        definitions.replaceFirst(
+          '<w:start w:val="1"/>',
+          '<w:start w:val="4611686018427387904"/>',
+        ),
+      );
+      final huge = _save(DocxCodec(_tables).read(hostile));
+      expect(huge, contains('<li data-marker="Article 4611686018427387904.">'));
+      expect(huge, contains('<li>Terms'));
+    });
+
+    test('plain levels are left to the browser', () {
+      final spec = DocumentSpec();
+      final list = spec.addList(ListSpec.numbered());
+      spec.body.addAll([_item('One', list), _item('One.a', list, 1)]);
+      final html = _save(_open(spec));
+
+      expect(html, contains('<ol><li>One<ol type="a"><li>One.a</li>'));
+      expect(html, isNot(contains('marker')));
+    });
+
+    test('tables Markdown writes as HTML, without a style sheet, leave them '
+        'out', () {
+      final spec = DocumentSpec();
+      final list = spec.addList(
+        ListSpec([
+          for (var level = 0; level < 9; level++)
+            ListLevelSpec(format: NumberFormat.upperRoman, text: 'Part %1'),
+        ]),
+      );
+      spec.body.add(
+        TableSpec([
+          RowSpec([
+            CellSpec([_item('First', list), _item('Second', list)]),
+          ]),
+        ]),
+      );
+      final loaded = _open(spec);
+      final markdown = utf8.decode(
+        MarkdownCodec(
+          DocxCodec(_tables),
+        ).encode(loaded.delta, source: loaded.source),
+      );
+
+      expect(markdown, contains('<ol type="I"><li>First</li>'));
+      expect(markdown, isNot(contains('marker')));
+    });
   });
 
   test('bookmarks of a line that starts with a page break are kept', () {

@@ -17,7 +17,7 @@ import 'writing.dart';
 /// Writes the editor's content as a standalone page that reads the same as
 /// HTML5 and as XHTML, so .xhtml files stay valid. Headers and footers have
 /// no place in a web page and are left out; footnotes and endnotes follow the
-/// text.
+/// text, and sections that start a page break it.
 class HtmlWriter {
   HtmlWriter(
     this.tables, {
@@ -43,6 +43,11 @@ class HtmlWriter {
   final _footnotes = <_Note>[];
   final _endnotes = <_Note>[];
   var _inNotes = false;
+
+  /// Whether items show Word's numbers, like `1.1.`, through the page's
+  /// style sheet; the tables Markdown takes come without one.
+  var _markers = true;
+  var _markersShown = false;
 
   /// Tables nested deeper are written as their paragraphs.
   static const _maxTableDepth = 16;
@@ -74,6 +79,7 @@ class HtmlWriter {
   /// A table as HTML on its own, with its borders inline, for Markdown.
   String table(TableModel table) {
     final out = StringBuffer();
+    _markers = false;
     _table(table, out, 0, tables, inlineBorders: true);
     return out.toString();
   }
@@ -109,6 +115,11 @@ class HtmlWriter {
       ..writeln(
         'table.grid td, table.grid th { border: 0.5pt solid #000000; }',
       );
+    if (_markersShown) {
+      out.writeln(
+        'li[data-marker]::marker { content: attr(data-marker) " "; }',
+      );
+    }
     return out.toString();
   }
 
@@ -220,12 +231,21 @@ class HtmlWriter {
           for (final line in content.text.split('\n')) {
             out.writeln('<p>${_text(line)}</p>');
           }
+        case EmbedBlock(type: EmbedTypes.sectionBreak):
+          if (depth == 0 && !_inNotes && _startsPage(block.value)) {
+            out.writeln('<div style="$_breakAfter"></div>');
+          }
         case EmbedBlock():
           break;
       }
     }
     _closeLists(lists, out);
   }
+
+  /// Whether a Word section break starts a new page, as all but continuous
+  /// ones do.
+  static bool _startsPage(Object? section) =>
+      _val(_properties(sectionXmlOf(section))['type']) != 'continuous';
 
   void _paragraph(LineBlock line, StringBuffer out) {
     final level = line.heading?.clamp(1, 6);
@@ -377,22 +397,30 @@ class HtmlWriter {
         if (piece is! EmbedPiece || piece.type != EmbedTypes.pageBreak) piece,
     ];
     final heading = line.heading?.clamp(1, 6);
+    final kept = _paragraphProperties(line);
     final attributes = _paragraphAttributes(
       line,
-      _paragraphProperties(line),
+      kept,
       inList: true,
       breakBefore: true,
       extra: [if (checklist && heading == null) 'list-style-type:none'],
     );
+    final marker = ordered && _markers ? _counter.markerOf(line) : null;
+    _markersShown |= marker != null;
+    final shown = marker == null
+        ? ''
+        : ' data-marker="${escapeHtmlAttribute(marker)}"';
     final content = '$anchors$checkbox${_inlines(pieces)}';
     if (heading == null) {
-      out.write('<li$id$attributes>$content');
+      out.write('<li$id$shown$attributes>$content');
       return;
     }
-    // A numbered heading, like Word's chapters.
+    // A numbered heading, like Word's chapters; its number goes on the side
+    // the heading starts.
     _headingTitle(line);
     out.write(
-      '<li${checklist ? ' style="list-style-type:none"' : ''}>'
+      '<li${_isOn(kept['bidi']) ? ' dir="rtl"' : ''}$shown'
+      '${checklist ? ' style="list-style-type:none"' : ''}>'
       '<h$heading$id$attributes>$content</h$heading>',
     );
   }
@@ -609,7 +637,7 @@ class HtmlWriter {
     final note = _Note(
       body,
       // Word's own marks: 1, 2, 3 for footnotes and i, ii, iii for endnotes.
-      mark: endnote ? _roman(number) : '$number',
+      mark: endnote ? romanNumeral(number) : '$number',
       id: _uniqueId('$prefix-$number'),
       referenceId: _uniqueId('${prefix}ref-$number'),
     );
@@ -677,31 +705,6 @@ class HtmlWriter {
       id = '$base-$copy';
     }
     return id;
-  }
-
-  static String _roman(int number) {
-    final out = StringBuffer();
-    var rest = number;
-    for (final (value, letters) in const [
-      (1000, 'm'),
-      (900, 'cm'),
-      (500, 'd'),
-      (400, 'cd'),
-      (100, 'c'),
-      (90, 'xc'),
-      (50, 'l'),
-      (40, 'xl'),
-      (10, 'x'),
-      (9, 'ix'),
-      (5, 'v'),
-      (4, 'iv'),
-      (1, 'i'),
-    ]) {
-      for (; rest >= value; rest -= value) {
-        out.write(letters);
-      }
-    }
-    return out.toString();
   }
 
   // Tables
