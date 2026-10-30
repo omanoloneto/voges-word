@@ -39,9 +39,16 @@ const _maxLists = 5000;
 const _maxBookmarks = 10000;
 const _maxTableDepth = 8;
 const _maxColumns = 63;
+
+/// Points Word keeps clear on the left and right of a cell's content.
+const _cellMargins = 10.8;
 const _maxPictureBytes = 32 * 1024 * 1024;
 const _maxPicturesBytes = 256 * 1024 * 1024;
 const _maxPicturePixels = 100000000;
+const _maxPicturesPixels = 100000000;
+
+/// Selector checks, weighted by their classes, in all.
+const _maxSelectorWork = 20000000;
 
 /// Declarations applied to elements in all; legitimate pages stay far below.
 const _maxStyleWork = 20000000;
@@ -175,6 +182,9 @@ class _Style {
   String? background;
   VerticalPosition? position;
 
+  /// A block's background behind the text, which the document can't show.
+  String? backdrop;
+
   /// `lowercase` or `capitalize`; uppercase is [allCaps].
   String? transform;
   var whiteSpace = _WhiteSpace.normal;
@@ -225,6 +235,7 @@ class _Style {
     ..smallCaps = smallCaps
     ..color = color
     ..background = background
+    ..backdrop = backdrop
     ..position = position
     ..transform = transform
     ..whiteSpace = whiteSpace
@@ -250,10 +261,37 @@ class _Style {
     strike: strike,
     allCaps: allCaps,
     smallCaps: smallCaps,
-    color: color,
+    color: background == null ? _readableColor(color, backdrop) : color,
     background: background,
     position: position,
   );
+}
+
+/// [color] unless it is light text on a dark [backdrop] the document leaves
+/// out, which would vanish on white paper.
+String? _readableColor(String? color, String? backdrop) {
+  if (color == null || backdrop == null) return color;
+  final onWhite = _contrast(color, 'FFFFFF');
+  return onWhite < 3 && _contrast(color, backdrop) > onWhite ? null : color;
+}
+
+/// WCAG contrast ratio of two `RRGGBB` colors.
+double _contrast(String a, String b) {
+  final first = _luminance(a);
+  final second = _luminance(b);
+  return (math.max(first, second) + 0.05) / (math.min(first, second) + 0.05);
+}
+
+double _luminance(String color) {
+  final value = int.tryParse(color, radix: 16) ?? 0;
+  double channel(int shift) {
+    final level = (value >> shift & 0xFF) / 255;
+    return level <= 0.03928
+        ? level / 12.92
+        : math.pow((level + 0.055) / 1.055, 2.4).toDouble();
+  }
+
+  return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
 }
 
 /// Margins and paddings an element sets for itself, in points.
@@ -270,13 +308,61 @@ class _Box {
 }
 
 class _ListContext {
-  _ListContext(this.level, this.format, {this.start = 1, this.bullet = '•'});
+  _ListContext(
+    this.level,
+    this.format, {
+    this.start = 1,
+    this.bullet = '•',
+    this.shared,
+  });
 
   final int level;
   final NumberFormat format;
   final String bullet;
   int start;
   int? numId;
+
+  /// The Google Docs list the level belongs to.
+  final _SharedList? shared;
+}
+
+/// A Google Docs list, whose levels come in separate `<ol>` or `<ul>`
+/// elements numbered as one Word list.
+class _SharedList {
+  _SharedList(this.levels);
+
+  final List<ListLevelSpec> levels;
+  int? numId;
+
+  /// Starts of the Word list made next.
+  late final starts = [for (final level in levels) level.start];
+
+  /// Number of the last item of each level, as Word counts them.
+  final counts = List<int?>.filled(9, null);
+
+  /// An `<ol>` that starts [level] at [start]: when Word's numbering would
+  /// give another number, the items go on in a new Word list.
+  void startAt(int level, int start) {
+    final next = counts[level] == null ? starts[level] : counts[level]! + 1;
+    if (start == next) return;
+    if (numId != null) {
+      for (var upper = 0; upper < level; upper++) {
+        if (counts[upper] case final count?) starts[upper] = count + 1;
+      }
+      for (var deeper = level + 1; deeper < 9; deeper++) {
+        starts[deeper] = levels[deeper].start;
+      }
+      counts.fillRange(0, 9, null);
+      numId = null;
+    }
+    starts[level] = start;
+  }
+
+  /// Counts an item of [level] as Word does: deeper levels start over.
+  void count(int level) {
+    counts[level] = counts[level] == null ? starts[level] : counts[level]! + 1;
+    counts.fillRange(level + 1, 9, null);
+  }
 }
 
 class _ListItem {
@@ -285,6 +371,9 @@ class _ListItem {
   final _ListContext list;
   final int? value;
   var used = false;
+
+  /// A task list item's checkbox: checked or not.
+  bool? checkbox;
 }
 
 class _Paragraph {
@@ -324,7 +413,8 @@ class _Frame {
   final List<dom.Node> nodes;
   var next = 0;
   _TableBuilder? table;
-  ({List<BlockSpec> sink, List<InlineSpec>? last})? saved;
+  ({List<BlockSpec> sink, List<InlineSpec>? last, double width})? saved;
+  var quote = false;
 }
 
 class _Cell {
@@ -337,21 +427,36 @@ class _Cell {
 }
 
 class _Row {
-  _Row(this.header, this.style);
+  _Row(this.header, this.style, {required this.footer});
 
   final bool header;
+
+  /// From a `<tfoot>`, which browsers show last wherever it is.
+  final bool footer;
   final _Style style;
   final cells = <_Cell>[];
+
+  /// Columns the cells read so far take.
+  var columns = 0;
+
+  /// Columns all of the row's cells take, from the page.
+  int? span;
 }
 
 class _TableBuilder {
-  _TableBuilder(this.style, {required this.bordered});
+  _TableBuilder(this.style, {required this.bordered, required this.width});
 
   final _Style style;
   bool bordered;
+
+  /// Points that percentages of cells refer to.
+  final double width;
   final rows = <_Row>[];
   final columns = <String?>[];
   var header = false;
+  var footer = false;
+
+  _Row newRow(_Style style) => _Row(header, style, footer: footer);
 }
 
 class _Reader {
@@ -365,8 +470,9 @@ class _Reader {
   final _frames = <_Frame>[];
   final _tables = <_TableBuilder?>[];
   final _pendingBookmarks = <String>[];
-  final _sharedLists = <String, _ListContext>{};
+  final _googleLists = <String, _SharedList>{};
   final _wordLists = <String, int>{};
+  final _checkboxLists = <bool, int>{};
 
   /// Where blocks go: the body, or the cell being read.
   late List<BlockSpec> _sink = spec.body;
@@ -377,10 +483,17 @@ class _Reader {
   var _cells = 0;
   var _bookmarks = 0;
   var _pictureBytes = 0;
+  var _picturePixels = 0;
   var _cellDepth = 0;
   var _tableDepth = 0;
   var _styleWork = 0;
+  var _quotes = 0;
+
+  /// Points of the width text has: the page's, or the cell's being read.
   double _textWidth = const PageSpec().textWidth;
+
+  /// The `html` element's font size, which `rem` refers to.
+  double _rootSize = 12;
 
   final _fonts = <String?, int>{};
   final _sizes = <double?, int>{};
@@ -395,7 +508,9 @@ class _Reader {
     if (root == null) return;
     _scan(root);
     _page();
-    final body = _Frame(root, _styleOf(root, 'html', _Style()), _Kind.block, 0);
+    final rootStyle = _styleOf(root, 'html', _Style());
+    _rootSize = rootStyle.size ?? 12;
+    final body = _Frame(root, rootStyle, _Kind.block, 0);
     _frames.add(body);
     _walk();
     _closeParagraph();
@@ -570,6 +685,7 @@ class _Reader {
       if (_embedded.contains(name)) {
         notices.add(DocumentNotice.contentNotImported);
       }
+      if (name == 'input') _checkbox(element, parent);
       return null;
     }
     final style = _styleOf(element, name, parent);
@@ -610,7 +726,12 @@ class _Reader {
     final kind = _kindOf(name, style);
     if (kind == _Kind.inline) {
       _bookmarksOf(element, name);
-      return _Frame(element, style, kind, _produced);
+      final frame = _Frame(element, style, kind, _produced);
+      if (name == 'q') {
+        frame.quote = true;
+        _text(_quotes++ == 0 ? '“' : '‘', style);
+      }
+      return frame;
     }
     _closeParagraph();
     if (style.breakBefore) _pageBreak();
@@ -618,14 +739,21 @@ class _Reader {
     final frame = _Frame(element, style, kind, _produced);
     switch (kind) {
       case _Kind.table:
-        final table = _TableBuilder(style, bordered: style.border);
+        final table = _TableBuilder(
+          style,
+          bordered: style.border,
+          width: _size(style.width, _textWidth) ?? _textWidth,
+        );
         frame.table = table;
         _tables.add(table);
         _tableDepth++;
       case _Kind.section:
-        _tables.last?.header = name == 'thead';
+        _tables.last
+          ?..header = name == 'thead'
+          ..footer = name == 'tfoot';
       case _Kind.row:
-        _tables.last?.rows.add(_Row(_tables.last?.header ?? false, style));
+        final table = _tables.last;
+        table?.rows.add(table.newRow(style));
       case _Kind.cell:
         _startCell(frame, name);
       case _Kind.inline || _Kind.block || _Kind.paragraph:
@@ -663,6 +791,7 @@ class _Reader {
   void _exit(_Frame frame) {
     switch (frame.kind) {
       case _Kind.inline:
+        if (frame.quote) _text(--_quotes == 0 ? '”' : '’', frame.style);
         return;
       case _Kind.paragraph:
         if (_paragraph != null) {
@@ -681,7 +810,9 @@ class _Reader {
         final table = _buildTable(frame.table!);
         if (table != null) _addBlock(table);
       case _Kind.section:
-        _tables.last?.header = false;
+        _tables.last
+          ?..header = false
+          ..footer = false;
       case _Kind.row:
         break;
       case _Kind.cell:
@@ -689,6 +820,7 @@ class _Reader {
         final saved = frame.saved!;
         _sink = saved.sink;
         _lastInlines = saved.last;
+        _textWidth = saved.width;
         _cellDepth--;
     }
     if (frame.style.breakAfter) {
@@ -834,6 +966,9 @@ class _Reader {
     if (_styleWork > _maxStyleWork) {
       throw const FormatException('The page\'s styles are too complex.');
     }
+    if (sheet.work > _maxSelectorWork) {
+      throw DocumentProblemException(DocumentProblem.tooLarge);
+    }
     for (final important in [false, true]) {
       for (final rule in rules) {
         for (final declaration in rule.declarations) {
@@ -869,7 +1004,14 @@ class _Reader {
       style
         ..fill = box.background
         ..marginLeft = box.marginLeft;
-    } else if (name != 'html' && name != 'body' && !_listTags.contains(name)) {
+      if (box.background != null) style.backdrop = null;
+    } else if (box.background != null) {
+      // Paragraphs have no shading: the text keeps the page's white.
+      style.backdrop = box.background;
+    }
+    if (!inlineBox &&
+        !const {'td', 'th', 'tr', 'table', 'html', 'body'}.contains(name) &&
+        !_listTags.contains(name)) {
       style
         ..indentLeft =
             (style.indentLeft + (box.marginLeft ?? 0) + (box.paddingLeft ?? 0))
@@ -896,13 +1038,17 @@ class _Reader {
     final value = declaration.value;
     final lower = value.toLowerCase();
     final em = s.size ?? parent;
-    double? length(String text) =>
-        cssLength(text, fontSize: em, percentOf: _textWidth);
+    double? length(String text) => cssLength(
+      text,
+      fontSize: em,
+      percentOf: _textWidth,
+      rootFontSize: _rootSize,
+    );
     switch (declaration.property) {
       case 'font-family':
         s.font = cssFontFamily(value) ?? s.font;
       case 'font-size':
-        s.size = cssFontSize(value, parent) ?? s.size;
+        s.size = cssFontSize(value, parent, rootFontSize: _rootSize) ?? s.size;
       case 'font-weight':
         s.bold = _bold(lower) ?? s.bold;
       case 'font-style':
@@ -1071,7 +1217,7 @@ class _Reader {
         _ => null,
       };
 
-  static LineSpacing? _lineHeight(String value, double fontSize) {
+  LineSpacing? _lineHeight(String value, double fontSize) {
     if (value == 'normal') return null;
     final number = double.tryParse(value);
     if (number != null) {
@@ -1085,18 +1231,27 @@ class _Reader {
           ? null
           : LineSpacing.multiple((percent / 100).clamp(0.5, 10).toDouble());
     }
-    final points = cssLength(value, fontSize: fontSize);
+    final points = cssLength(
+      value,
+      fontSize: fontSize,
+      rootFontSize: _rootSize,
+    );
     return points == null || points <= 0
         ? null
         : LineSpacing.atLeast(points.clamp(1, 1584).toDouble());
   }
 
   /// Top, right, bottom and left of a `margin` or `padding` shorthand.
-  static List<double?> _sides(String value, double em, double width) {
+  List<double?> _sides(String value, double em, double width) {
     final parts = value.trim().split(_whitespace);
     final lengths = [
       for (final part in parts.take(4))
-        cssLength(part, fontSize: em, percentOf: width),
+        cssLength(
+          part,
+          fontSize: em,
+          percentOf: width,
+          rootFontSize: _rootSize,
+        ),
     ];
     return switch (lengths.length) {
       1 => [lengths[0], lengths[0], lengths[0], lengths[0]],
@@ -1106,31 +1261,47 @@ class _Reader {
     };
   }
 
-  static final _fontShorthand = RegExp(
-    r'^((?:[a-z-]+\s+)*?)'
-    r'([\d.]+[a-z%]*|xx-small|x-small|small|medium|large|x-large|xx-large|smaller|larger)'
-    r'(?:\s*/\s*(\S+))?\s+(.+)$',
+  static final _fontToken = RegExp(r'''"[^"]*"?|'[^']*'?|[^\s"']+''');
+  static final _fontSizeWord = RegExp(
+    r'^([+-]?(?:\d+(?:\.\d*)?|\.\d+)[a-z%]+|[a-z-]*(?:small|medium|large|er))$',
   );
 
+  /// The `font` shorthand: style, variant and weight words, the size (a
+  /// unitless number before it is a weight), an optional line height and
+  /// the families. As in browsers, what it leaves out goes back to normal.
   void _font(_Style s, String value, double parent) {
-    final match = _fontShorthand.firstMatch(value.trim().toLowerCase());
-    if (match == null) return;
-    for (final word in match[1]!.split(_whitespace)) {
-      if (word == 'italic' || word == 'oblique') s.italic = true;
-      if (word == 'small-caps') s.smallCaps = true;
-      final bold = _bold(word);
-      if (bold != null) s.bold = bold;
+    final tokens = _fontToken.allMatches(value).toList();
+    for (var index = 0; index < tokens.length; index++) {
+      final token = tokens[index][0]!.toLowerCase();
+      final slash = token.indexOf('/');
+      final sizeText = slash < 0 ? token : token.substring(0, slash);
+      final size = _fontSizeWord.hasMatch(sizeText)
+          ? cssFontSize(sizeText, parent, rootFontSize: _rootSize)
+          : null;
+      if (size == null) continue;
+      var next = index + 1;
+      String? height = slash < 0 ? null : token.substring(slash + 1);
+      if (height == null &&
+          next < tokens.length &&
+          tokens[next][0]!.startsWith('/')) {
+        height = tokens[next++][0]!.substring(1).toLowerCase();
+      }
+      if (height != null && height.isEmpty && next < tokens.length) {
+        height = tokens[next++][0]!.toLowerCase();
+      }
+      if (next >= tokens.length) return;
+      final words = [
+        for (final word in tokens.take(index)) word[0]!.toLowerCase(),
+      ];
+      s
+        ..italic = words.contains('italic') || words.contains('oblique')
+        ..smallCaps = words.contains('small-caps')
+        ..bold = words.map(_bold).nonNulls.lastOrNull ?? false
+        ..size = size
+        ..lineSpacing = height == null ? null : _lineHeight(height, size)
+        ..font = cssFontFamily(value.substring(tokens[next].start)) ?? s.font;
+      return;
     }
-    s.size = cssFontSize(match[2]!, parent) ?? s.size;
-    if (match[3] != null) {
-      s.lineSpacing = _lineHeight(match[3]!, s.size ?? parent);
-    }
-    final familyStart = value.toLowerCase().lastIndexOf(match[4]!);
-    s.font =
-        cssFontFamily(
-          familyStart < 0 ? match[4]! : value.substring(familyStart),
-        ) ??
-        s.font;
   }
 
   /// Whether a border declaration draws a line; null when it says nothing.
@@ -1163,32 +1334,45 @@ class _Reader {
 
   // Lists
 
+  static final _googleListClass = RegExp(r'^lst-kix_(\w+)-(\d)$');
+  static final _googleCounter = RegExp(r'^lst-ctn-kix_\w+-(\d)$');
+
   void _startList(
     _Style style,
     String name,
     Map<Object, String> attributes,
     Set<String> classes,
   ) {
-    var level = math.min(style.listLevel + 1, 8);
-    String? shared;
-    for (final className in classes) {
-      final match = RegExp(r'^lst-kix_(\w+)-(\d)$').firstMatch(className);
-      if (match != null) {
-        level = int.parse(match[2]!).clamp(0, 8);
-        shared = 'g:${match[1]}:$level';
-        break;
-      }
-    }
-    style.listLevel = level;
     final ordered = name == 'ol';
-    // Google Docs hides the markers and draws its own: the tag tells the kind.
-    final type = shared == null
-        ? style.listStyle ?? attributes['type']
-        : attributes['type'];
-    final format = _numberFormat(type, ordered: ordered);
-    final context = _ListContext(
+    for (final className in classes) {
+      final match = _googleListClass.firstMatch(className);
+      if (match == null ||
+          (_googleLists.length >= _maxLists &&
+              !_googleLists.containsKey(match[1]))) {
+        continue;
+      }
+      final level = int.parse(match[2]!).clamp(0, 8);
+      final list = _googleLists.putIfAbsent(
+        match[1]!,
+        () => _SharedList(_googleLevels(match[1]!, ordered: ordered)),
+      );
+      // Google Docs restarts a level with the `start` class and writes the
+      // first item's number in `start`.
+      final start =
+          int.tryParse(attributes['start'] ?? '') ??
+          (classes.contains('start') ? 1 : null);
+      if (ordered && start != null) list.startAt(level, start);
+      style
+        ..listLevel = level
+        ..list = _ListContext(level, list.levels[level].format, shared: list);
+      return;
+    }
+    final level = math.min(style.listLevel + 1, 8);
+    style.listLevel = level;
+    final type = style.listStyle ?? attributes['type'];
+    style.list = _ListContext(
       level,
-      format,
+      _numberFormat(type, ordered: ordered),
       start: ordered ? int.tryParse(attributes['start'] ?? '') ?? 1 : 1,
       bullet: switch (type?.split(_whitespace).first) {
         'circle' => '◦',
@@ -1196,9 +1380,71 @@ class _Reader {
         _ => '•',
       },
     );
-    style.list = shared == null
-        ? context
-        : _sharedLists.putIfAbsent('$shared:${format.name}', () => context);
+  }
+
+  /// Levels of a Google Docs list from the markers its style sheet draws;
+  /// without them the first list's tag tells the kind.
+  List<ListLevelSpec> _googleLevels(String id, {required bool ordered}) => [
+    for (var level = 0; level < 9; level++)
+      _googleLevel(sheet.listMarkers['$id-$level'], level) ??
+          ListLevelSpec(
+            format: ordered ? NumberFormat.decimal : NumberFormat.bullet,
+            text: ordered ? '%${level + 1}.' : const ['•', '◦', '▪'][level % 3],
+          ),
+  ];
+
+  /// A level from its marker, like `"(" counter(lst-ctn-kix_x-1,lower-latin)
+  /// ") "`; markers without the level's counter are bullets.
+  static ListLevelSpec? _googleLevel(String? content, int level) {
+    if (content == null) return null;
+    final text = StringBuffer();
+    NumberFormat? format;
+    for (final part in cssContent(content)) {
+      switch (part) {
+        case String():
+          text.write(part);
+        case (String counter, String style):
+          final match = _googleCounter.firstMatch(counter);
+          final counterLevel = match == null ? null : int.parse(match[1]!);
+          if (counterLevel == null || counterLevel > level) continue;
+          text.write('%${counterLevel + 1}');
+          if (counterLevel == level) {
+            format = _numberFormat(style, ordered: true);
+          }
+      }
+    }
+    final marker = text.toString().trim();
+    if (format == null) {
+      return ListLevelSpec(
+        format: NumberFormat.bullet,
+        text: marker.isEmpty || marker.length > 4
+            ? const ['•', '◦', '▪'][level % 3]
+            : marker,
+      );
+    }
+    return ListLevelSpec(format: format, text: _levelText(marker, level));
+  }
+
+  /// Word's level text, without what Word can't show: placeholders of
+  /// deeper levels and control characters.
+  static String _levelText(String text, int level) {
+    final clean = text
+        .replaceAll(RegExp(r'[\u0000-\u001F]'), '')
+        .replaceAllMapped(RegExp(r'%(\d)'), (match) {
+          final number = int.parse(match[1]!);
+          return number >= 1 && number <= level + 1 ? match[0]! : '';
+        });
+    if (clean.isEmpty) return '%${level + 1}.';
+    return clean.length > 64 ? clean.substring(0, 64) : clean;
+  }
+
+  /// A checkbox that starts a list item makes it a task, as in GitHub's and
+  /// pandoc's task lists.
+  void _checkbox(dom.Element element, _Style parent) {
+    final item = parent.item;
+    if (item == null || item.used || _paragraph != null) return;
+    if (element.attributes['type']?.trim().toLowerCase() != 'checkbox') return;
+    item.checkbox = element.attributes.containsKey('checked');
   }
 
   static NumberFormat _numberFormat(String? type, {required bool ordered}) {
@@ -1218,7 +1464,36 @@ class _Reader {
 
   ListRef? _listRef(_ListItem item) {
     final list = item.list;
+    if (item.checkbox case final checked?) {
+      return ListRef(
+        _checkboxLists[checked] ??= _addList(
+          ListSpec([
+            for (var level = 0; level < 9; level++)
+              ListLevelSpec(
+                format: NumberFormat.bullet,
+                text: checked ? '☑' : '☐',
+                font: 'Segoe UI Symbol',
+              ),
+          ]),
+        ),
+        list.level,
+      );
+    }
     if (list.format == NumberFormat.none) return null;
+    if (list.shared case final shared?) {
+      shared.numId ??= _addList(
+        ListSpec([
+          for (final (level, definition) in shared.levels.indexed)
+            ListLevelSpec(
+              format: definition.format,
+              text: definition.text,
+              start: shared.starts[level].clamp(0, 32767),
+            ),
+        ]),
+      );
+      shared.count(list.level);
+      return ListRef(shared.numId!, list.level);
+    }
     if (item.value != null && list.format != NumberFormat.bullet) {
       list
         ..numId = null
@@ -1285,6 +1560,7 @@ class _Reader {
   ) {
     var format = NumberFormat.decimal;
     var start = 1;
+    String? text;
     if (declarations == null) {
       final text = (label ?? '').replaceAll(_whitespace, '');
       format = RegExp(r'^\(?([0-9]+|[a-zA-Z]{1,4})[.)]$').hasMatch(text)
@@ -1295,7 +1571,7 @@ class _Reader {
       switch (declaration.property) {
         case 'mso-level-number-format':
           format = switch (declaration.value.toLowerCase()) {
-            'bullet' => NumberFormat.bullet,
+            'bullet' || 'image' => NumberFormat.bullet,
             'alpha-lower' => NumberFormat.lowerLetter,
             'alpha-upper' => NumberFormat.upperLetter,
             'roman-lower' => NumberFormat.lowerRoman,
@@ -1306,13 +1582,18 @@ class _Reader {
           };
         case 'mso-level-start-at':
           start = int.tryParse(declaration.value) ?? 1;
+        case 'mso-level-text':
+          // Like `"%1\.%2\."`, the numbers of this level and those above.
+          text = cssUnescape(declaration.value);
       }
     }
     return ListLevelSpec(
       format: format,
       text: format == NumberFormat.bullet
           ? const ['•', '◦', '▪'][level % 3]
-          : '%${level + 1}.',
+          : text == null
+          ? '%${level + 1}.'
+          : _levelText(text.trim(), level),
       start: start.clamp(0, 32767),
     );
   }
@@ -1527,7 +1808,7 @@ class _Reader {
     if (paragraph.block.heading == null && style.font != monospaceFont) {
       _count(_fonts, style.font, text.length);
       _count(_sizes, style.size, text.length);
-      _count(_colors, style.color, text.length);
+      _count(_colors, style.run.color, text.length);
     }
     _add(paragraph, TextSpec(text, style.run), style.link);
   }
@@ -1639,9 +1920,9 @@ class _Reader {
   }
 
   /// Points of a `width` or `height` attribute or property.
-  static double? _size(String? value, double whole) {
+  double? _size(String? value, double whole) {
     if (value == null) return null;
-    final points = cssLength(value, percentOf: whole);
+    final points = cssLength(value, percentOf: whole, rootFontSize: _rootSize);
     return points != null && points > 0 ? math.min(points, 1584) : null;
   }
 
@@ -1669,13 +1950,17 @@ class _Reader {
       return null;
     }
     final pixels = imagePixelSize(bytes);
+    // The editor decodes every picture whole, so all of them count.
+    final area = pixels == null ? 0.0 : pixels.width.toDouble() * pixels.height;
     if (pixels != null &&
         (pixels.width <= 0 ||
             pixels.height <= 0 ||
-            pixels.width * pixels.height > _maxPicturePixels)) {
+            area > _maxPicturePixels ||
+            _picturePixels + area > _maxPicturesPixels)) {
       return null;
     }
     _pictureBytes += bytes.length;
+    _picturePixels += area.toInt();
     return (bytes: bytes, mime: mime);
   }
 
@@ -1712,21 +1997,68 @@ class _Reader {
 
   void _startCell(_Frame frame, String name) {
     final table = _tables.last!;
-    if (table.rows.isEmpty) table.rows.add(_Row(table.header, table.style));
+    if (table.rows.isEmpty) table.rows.add(table.newRow(table.style));
     final attributes = frame.element.attributes;
-    int span(String key, int max) =>
-        (int.tryParse(attributes[key]?.trim() ?? '') ?? 1).clamp(1, max);
     final cell = _Cell(
-      span('colspan', _maxColumns),
-      span('rowspan', 65534),
+      _span(attributes['colspan'], _maxColumns),
+      _span(attributes['rowspan'], 65534),
       frame.style,
     );
-    table.rows.last.cells.add(cell);
+    final row = table.rows.last;
+    final column = row.columns;
+    row
+      ..cells.add(cell)
+      ..columns += cell.colspan;
     if (frame.style.border) table.bordered = true;
-    frame.saved = (sink: _sink, last: _lastInlines);
+    frame.saved = (sink: _sink, last: _lastInlines, width: _textWidth);
     _sink = cell.blocks;
     _lastInlines = null;
+    _textWidth = _cellWidth(table, row, cell, column, frame.element);
     _cellDepth++;
+  }
+
+  static int _span(String? value, int max) =>
+      (int.tryParse(value?.trim() ?? '') ?? 1).clamp(1, max);
+
+  /// Points a cell's content has before the table's columns are known: the
+  /// cell's own width, its columns' or its share of the row, less Word's
+  /// cell margins.
+  double _cellWidth(
+    _TableBuilder table,
+    _Row row,
+    _Cell cell,
+    int column,
+    dom.Element element,
+  ) {
+    final whole = table.width;
+    var width = _size(cell.style.width, whole);
+    if (width == null && column + cell.colspan <= table.columns.length) {
+      final columns = [
+        for (var index = column; index < column + cell.colspan; index++)
+          _size(table.columns[index], whole),
+      ];
+      if (!columns.contains(null)) {
+        width = columns.fold<double>(0, (sum, each) => sum + each!);
+      }
+    }
+    if (width == null) {
+      // The whole row, as the page has it.
+      final span = row.span ??= _rowSpan(element);
+      width = whole * cell.colspan / math.max(span, cell.colspan);
+    }
+    return math.max(math.min(width, whole) - _cellMargins, 18.0);
+  }
+
+  /// Columns the cells of [cell]'s row take, counting spans.
+  static int _rowSpan(dom.Element cell) {
+    var span = 0;
+    var cells = 0;
+    for (final sibling in cell.parent?.children ?? const <dom.Element>[]) {
+      if (sibling.localName != 'td' && sibling.localName != 'th') continue;
+      span += _span(sibling.attributes['colspan'], _maxColumns);
+      if (++cells >= _maxColumns) break;
+    }
+    return span;
   }
 
   void _column(dom.Element element, _Style style) {
@@ -1751,7 +2083,31 @@ class _Reader {
     var columns = 0;
     final widths = <int, double>{};
     final tableWidth = _size(table.style.width, _textWidth);
-    for (final row in table.rows) {
+    var footer = false;
+    // Browsers show footer rows last, wherever the page has them, and cells
+    // span no rows in or out of them.
+    for (final row in [
+      for (final row in table.rows)
+        if (!row.footer) row,
+      for (final row in table.rows)
+        if (row.footer) row,
+    ]) {
+      if (row.footer != footer) {
+        footer = row.footer;
+        pending = {};
+      }
+      if (pending.isEmpty && _isSpacer(row)) {
+        var column = 0;
+        for (final source in row.cells) {
+          if (column >= _maxColumns) break;
+          if (source.colspan == 1) {
+            final width = _size(source.style.width, tableWidth ?? _textWidth);
+            if (width != null) widths.putIfAbsent(column, () => width);
+          }
+          column += source.colspan;
+        }
+        continue;
+      }
       final cells = <CellSpec>[];
       final next = <int, ({int rows, int span})>{};
       var column = 0;
@@ -1800,7 +2156,7 @@ class _Reader {
             source.blocks,
             span: span,
             merge: source.rowspan > 1 ? CellMerge.restart : CellMerge.none,
-            background: style.fill ?? row.style.fill,
+            background: style.fill ?? row.style.fill ?? table.style.fill,
             verticalAlign: style.verticalAlign ?? row.style.verticalAlign,
           ),
         );
@@ -1829,12 +2185,64 @@ class _Reader {
       );
     }
     if (rows.isEmpty) return null;
+    final columnWidths = _columnWidths(table, columns, widths, tableWidth);
+    _fitNested(
+      rows,
+      columnWidths ?? List.filled(columns, spec.page.textWidth / columns),
+    );
     return TableSpec(
       rows,
-      columnWidths: _columnWidths(table, columns, widths, tableWidth),
+      columnWidths: columnWidths,
       bordered: table.bordered,
       indent: _tableIndent(table.style),
     );
+  }
+
+  /// A row of no height and empty cells, like the one Word ends tables
+  /// whose rows don't line up with, to give browsers the columns.
+  static bool _isSpacer(_Row row) {
+    final height = row.style.height?.trim().toLowerCase();
+    return height != null &&
+        _zeroLength.hasMatch(height) &&
+        row.cells.every(
+          (cell) => cell.blocks.every(
+            (block) => block is ParagraphSpec && block.inlines.isEmpty,
+          ),
+        );
+  }
+
+  /// Shrinks the tables in cells that came out wider than their cell.
+  static void _fitNested(List<RowSpec> rows, List<double> widths) {
+    for (final row in rows) {
+      var column = 0;
+      for (final cell in row.cells) {
+        final room =
+            widths
+                .skip(column)
+                .take(cell.span)
+                .fold<double>(0, (a, b) => a + b) -
+            _cellMargins;
+        column += cell.span;
+        for (var index = 0; index < cell.blocks.length; index++) {
+          final block = cell.blocks[index];
+          final inner = block is TableSpec ? block.columnWidths : null;
+          if (block is! TableSpec || inner == null || room <= 0) continue;
+          final total =
+              inner.fold<double>(0, (a, b) => a + b) + (block.indent ?? 0);
+          if (total <= room) continue;
+          final scaled = [
+            for (final width in inner) math.max(width * room / total, 4.0),
+          ];
+          cell.blocks[index] = TableSpec(
+            block.rows,
+            columnWidths: scaled,
+            bordered: block.bordered,
+            indent: block.indent == null ? null : block.indent! * room / total,
+          );
+          _fitNested(block.rows, scaled);
+        }
+      }
+    }
   }
 
   double? _tableIndent(_Style style) {
@@ -1858,7 +2266,10 @@ class _Reader {
     );
     final known = widths.whereType<double>().fold<double>(0, (a, b) => a + b);
     final unknown = widths.where((width) => width == null).length;
-    if (unknown == columns && tableWidth == null) return null;
+    // Word would split the page's width; a table in a cell splits the cell's.
+    if (unknown == columns && tableWidth == null && _cellDepth == 0) {
+      return null;
+    }
     final total = math.max(tableWidth ?? _textWidth, known);
     final rest = unknown == 0
         ? 0.0
@@ -1910,10 +2321,18 @@ class _Reader {
     // Spacing equal to the defaults needn't be written on each paragraph.
     bool same(LineSpacing? a, LineSpacing? b) =>
         a?.rule == b?.rule && a?.value == b?.value;
+    final unstyledSize = size != null && size != 12;
+    final unstyledColor = color != null && color != '000000';
     final lists = <List<BlockSpec>>[spec.body];
     while (lists.isNotEmpty) {
       final blocks = lists.removeLast();
       for (var index = 0; index < blocks.length; index++) {
+        if (blocks[index] case ParagraphSpec(
+          :final inlines,
+          heading: null,
+        ) when unstyledSize || unstyledColor) {
+          _keepUnstyled(inlines, size: unstyledSize, color: unstyledColor);
+        }
         switch (blocks[index]) {
           case TableSpec(:final rows):
             for (final row in rows) {
@@ -1950,6 +2369,36 @@ class _Reader {
     }
   }
 
+  /// Text the page leaves unstyled keeps the browser's 12 points and black
+  /// when the page's most common size or color becomes the default; links
+  /// keep the color of Word's hyperlink style.
+  static void _keepUnstyled(
+    List<InlineSpec> inlines, {
+    required bool size,
+    required bool color,
+  }) {
+    for (var index = 0; index < inlines.length; index++) {
+      switch (inlines[index]) {
+        case TextSpec(:final text, :final format)
+            when (size && format.size == null) ||
+                (color && format.color == null):
+          inlines[index] = TextSpec(
+            text,
+            format.merge(
+              RunFormat(
+                size: size && format.size == null ? 12 : null,
+                color: color && format.color == null ? '000000' : null,
+              ),
+            ),
+          );
+        case LinkSpec(:final children):
+          _keepUnstyled(children, size: size, color: false);
+        default:
+          break;
+      }
+    }
+  }
+
   /// Heading styles from rules for bare `h1` to `h6`; levels the page doesn't
   /// style keep the app's.
   void _headingStyles(_Style root) {
@@ -1978,7 +2427,7 @@ class _Reader {
             italic: style.italic ?? level >= 5,
             underline: style.underline,
             allCaps: style.allCaps,
-            color: style.color,
+            color: _readableColor(style.color, box.background),
           ),
           paragraph: ParagraphFormat(
             keepNext: true,

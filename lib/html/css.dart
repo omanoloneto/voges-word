@@ -12,7 +12,8 @@ const _maxDeclarations = 128;
 const _maxRules = 20000;
 const _maxRulesPerKey = 32;
 
-/// Classes of an element that rules are looked up for.
+/// Classes of an element that rules are looked up for, and the most a
+/// selector may have; longer selectors are left out.
 const maxClasses = 16;
 final _important = RegExp(r'!\s*important\s*$', caseSensitive: false);
 final _whitespace = RegExp(r'\s+');
@@ -102,19 +103,23 @@ class CssSelector {
     final match = _pattern.firstMatch(text.trim());
     if (match == null || match[0]!.isEmpty) return null;
     final tag = match[1]?.toLowerCase();
-    final classes = <String>[];
+    final classes = <String>{};
     String? id;
     for (final part in _part.allMatches(match[2]!)) {
       final value = part[0]!.substring(1).toLowerCase();
       if (part[0]!.startsWith('.')) {
-        classes.add(value);
+        if (classes.add(value) && classes.length > maxClasses) return null;
       } else if (id == null) {
         id = value;
       } else {
         return null;
       }
     }
-    return CssSelector(tag: tag == '*' ? null : tag, classes: classes, id: id);
+    return CssSelector(
+      tag: tag == '*' ? null : tag,
+      classes: classes.toList(),
+      id: id,
+    );
   }
 
   int get specificity =>
@@ -158,6 +163,19 @@ class StyleSheet {
 
   /// Word's list definitions, such as `@list l0:level1`, by `l0:level1`.
   final listLevels = <String, List<CssDeclaration>>{};
+
+  /// The `content` Google Docs draws each list level's marker with, from
+  /// rules like `.lst-kix_abc-1>li:before`, by `abc-1`.
+  final listMarkers = <String, String>{};
+
+  /// Selector checks [rulesFor] has made, weighted by their classes.
+  int get work => _work;
+  var _work = 0;
+
+  static final _listMarker = RegExp(
+    r'^(?:ol|ul)?\.lst-kix_(\w+)-(\d)\s*>\s*li::?before$',
+    caseSensitive: false,
+  );
 
   bool get isEmpty => _rules == 0;
 
@@ -209,6 +227,19 @@ class StyleSheet {
   void _rule(String prelude, String block) {
     List<CssDeclaration>? declarations;
     for (final text in splitCss(prelude, 0x2C)) {
+      // Longer than any selector of [maxClasses] classes a page needs.
+      if (text.length > 1024) continue;
+      if (_listMarker.firstMatch(text.trim()) case final marker?) {
+        declarations ??= parseDeclarations(block);
+        for (final declaration in declarations) {
+          if (declaration.property == 'content') {
+            listMarkers['${marker[1]!.toLowerCase()}-${marker[2]}'] =
+                declaration.value;
+          }
+        }
+        if (++_rules >= _maxRules) return;
+        continue;
+      }
       final selector = CssSelector.parse(text);
       if (selector == null) continue;
       declarations ??= parseDeclarations(block);
@@ -239,6 +270,9 @@ class StyleSheet {
       if (id != null) ...?_byId[id],
     ];
     if (candidates.isEmpty) return const [];
+    for (final rule in candidates) {
+      _work += 1 + rule.selector.classes.length;
+    }
     final rules = [
       for (final rule in candidates)
         if (rule.selector.matches(tag, classes, id)) rule,
@@ -299,8 +333,14 @@ class StyleSheet {
 final _length = RegExp(r'^([+-]?(?:\d+(?:\.\d*)?|\.\d+))([a-z%]*)$');
 
 /// Points of a CSS length (unitless numbers are pixels, as in attributes);
-/// `em` refers to [fontSize] and `%` to [percentOf].
-double? cssLength(String value, {double fontSize = 12, double? percentOf}) {
+/// `em` refers to [fontSize], `rem` to the page's [rootFontSize] and `%` to
+/// [percentOf].
+double? cssLength(
+  String value, {
+  double fontSize = 12,
+  double? percentOf,
+  double rootFontSize = 12,
+}) {
   final match = _length.firstMatch(value.trim().toLowerCase());
   if (match == null) return null;
   final number = double.tryParse(match[1]!);
@@ -314,7 +354,7 @@ double? cssLength(String value, {double fontSize = 12, double? percentOf}) {
     'mm' => number * 72 / 25.4,
     'q' => number * 72 / 101.6,
     'em' => number * fontSize,
-    'rem' => number * 12,
+    'rem' => number * rootFontSize,
     'ex' || 'ch' => number * fontSize / 2,
     '%' when percentOf != null => number * percentOf / 100,
     _ => null,
@@ -323,7 +363,7 @@ double? cssLength(String value, {double fontSize = 12, double? percentOf}) {
 }
 
 /// Points of a `font-size`, relative to the parent's [parent] size.
-double? cssFontSize(String value, double parent) {
+double? cssFontSize(String value, double parent, {double rootFontSize = 12}) {
   final text = value.trim().toLowerCase();
   final size = switch (text) {
     'xx-small' => 6.75,
@@ -336,9 +376,100 @@ double? cssFontSize(String value, double parent) {
     'xxx-large' => 36.0,
     'smaller' => parent / 1.2,
     'larger' => parent * 1.2,
-    _ => cssLength(text, fontSize: parent, percentOf: parent),
+    _ => cssLength(
+      text,
+      fontSize: parent,
+      percentOf: parent,
+      rootFontSize: rootFontSize,
+    ),
   };
   return size != null && size > 0 ? size.clamp(1, 1638).toDouble() : null;
+}
+
+/// Text of a CSS string or keyword with its backslash escapes resolved, like
+/// Word's `"%1\.%2\."` or `\F0B7`; quotes around it are left out.
+String cssUnescape(String value) {
+  final text = value.trim();
+  return _unescape(
+    text.length >= 2 &&
+            (text.startsWith('"') || text.startsWith("'")) &&
+            text.endsWith(text[0])
+        ? text.substring(1, text.length - 1)
+        : text,
+  );
+}
+
+String _unescape(String text) {
+  if (!text.contains(r'\')) return text;
+  final out = StringBuffer();
+  var index = 0;
+  while (index < text.length) {
+    final char = text.codeUnitAt(index);
+    if (char != 0x5C || index + 1 >= text.length) {
+      out.writeCharCode(char);
+      index++;
+      continue;
+    }
+    var end = index + 1;
+    while (end < text.length &&
+        end < index + 7 &&
+        _isHex(text.codeUnitAt(end))) {
+      end++;
+    }
+    if (end == index + 1) {
+      if (text.codeUnitAt(end) != 0x0A) out.writeCharCode(text.codeUnitAt(end));
+      index = end + 1;
+      continue;
+    }
+    final code = int.parse(text.substring(index + 1, end), radix: 16);
+    out.writeCharCode(
+      code == 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)
+          ? 0xFFFD
+          : code,
+    );
+    final space =
+        end < text.length &&
+        const {0x20, 0x09, 0x0A}.contains(text.codeUnitAt(end));
+    index = space ? end + 1 : end;
+  }
+  return out.toString();
+}
+
+bool _isHex(int char) =>
+    (char >= 0x30 && char <= 0x39) ||
+    (char >= 0x41 && char <= 0x46) ||
+    (char >= 0x61 && char <= 0x66);
+
+/// The strings and `counter(name, style)` calls of a `content` value, in
+/// order; counters come as their lowercase name and style.
+List<Object> cssContent(String value) {
+  final parts = <Object>[];
+  var index = 0;
+  while (index < value.length) {
+    final char = value.codeUnitAt(index);
+    if (char == 0x22 || char == 0x27) {
+      var end = index + 1;
+      while (end < value.length && value.codeUnitAt(end) != char) {
+        end += value.codeUnitAt(end) == 0x5C ? 2 : 1;
+      }
+      end = end.clamp(index + 1, value.length);
+      parts.add(_unescape(value.substring(index + 1, end)));
+      index = end + 1;
+    } else if (index + 8 <= value.length &&
+        value.substring(index, index + 8).toLowerCase() == 'counter(') {
+      final close = value.indexOf(')', index);
+      if (close < 0) break;
+      final arguments = value.substring(index + 8, close).split(',');
+      parts.add((
+        arguments.first.trim().toLowerCase(),
+        arguments.length > 1 ? arguments[1].trim().toLowerCase() : 'decimal',
+      ));
+      index = close + 1;
+    } else {
+      index++;
+    }
+  }
+  return parts;
 }
 
 /// Points of the legacy `<font size>`, 1 to 7 or relative like `+1`.

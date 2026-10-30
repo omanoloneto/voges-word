@@ -42,6 +42,137 @@ String decodeCodePage(List<int> bytes, int codePage) {
 /// Whether [decodeCodePage] knows [codePage].
 bool isKnownCodePage(int codePage) => _codePages.containsKey(codePage);
 
+/// East Asian encodings without tables here.
+enum EastAsianEncoding { shiftJis, eucJp, eucKr, gbk, big5, iso2022, hz }
+
+/// [bytes] in [encoding] with its ASCII text kept and each other character
+/// read as U+FFFD, so markup survives; [lossy] tells whether any was.
+({String text, bool lossy}) decodeEastAsian(
+  Uint8List bytes,
+  EastAsianEncoding encoding,
+) {
+  final out = StringBuffer();
+  var lossy = false;
+  int at(int index) => index < bytes.length ? bytes[index] : -1;
+  void replace() {
+    out.write('\u{FFFD}');
+    lossy = true;
+  }
+
+  if (encoding == EastAsianEncoding.iso2022 ||
+      encoding == EastAsianEncoding.hz) {
+    // 7-bit encodings that shift into two-byte characters and back.
+    var twoByte = false;
+    var katakana = false;
+    for (var index = 0; index < bytes.length; index++) {
+      final byte = bytes[index];
+      if (encoding == EastAsianEncoding.iso2022 && byte == 0x1B) {
+        final kind = at(index + 1);
+        final set = at(index + 2);
+        if (kind == 0x24) {
+          // ESC $ ) C and the like only name a set that SO shifts to.
+          final designates = set == 0x29 || set == 0x2A || set == 0x2B;
+          twoByte = twoByte || !designates;
+          katakana = false;
+          index += set == 0x28 || designates ? 3 : 2;
+        } else if (kind == 0x28) {
+          twoByte = false;
+          katakana = set == 0x49;
+          index += 2;
+        } else {
+          replace();
+        }
+      } else if (encoding == EastAsianEncoding.iso2022 && byte == 0x0E) {
+        twoByte = true;
+      } else if (encoding == EastAsianEncoding.iso2022 && byte == 0x0F) {
+        twoByte = false;
+      } else if (encoding == EastAsianEncoding.hz && byte == 0x7E) {
+        switch (at(index + 1)) {
+          case 0x7B:
+            twoByte = true;
+            index++;
+          case 0x7D:
+            twoByte = false;
+            index++;
+          case 0x7E:
+            out.write('~');
+            index++;
+          case 0x0A:
+            index++;
+          default:
+            out.write('~');
+        }
+      } else if (byte == 0x0A || byte == 0x0D) {
+        twoByte = false;
+        katakana = false;
+        out.writeCharCode(byte);
+      } else if (twoByte && byte >= 0x21 && byte <= 0x7E) {
+        final next = at(index + 1);
+        if (next >= 0x21 && next <= 0x7E) index++;
+        replace();
+      } else if (katakana && byte >= 0x21 && byte <= 0x5F) {
+        out.writeCharCode(0xFF61 + byte - 0x21);
+      } else if (byte < 0x80) {
+        out.writeCharCode(byte);
+      } else {
+        replace();
+      }
+    }
+    return (text: out.toString(), lossy: lossy);
+  }
+
+  bool within(int byte, int low, int high) => byte >= low && byte <= high;
+  bool isTrail(int byte) => switch (encoding) {
+    EastAsianEncoding.shiftJis =>
+      within(byte, 0x40, 0x7E) || within(byte, 0x80, 0xFC),
+    EastAsianEncoding.eucJp => within(byte, 0xA1, 0xFE),
+    EastAsianEncoding.eucKr =>
+      within(byte, 0x41, 0x5A) ||
+          within(byte, 0x61, 0x7A) ||
+          within(byte, 0x81, 0xFE),
+    EastAsianEncoding.big5 =>
+      within(byte, 0x40, 0x7E) || within(byte, 0xA1, 0xFE),
+    _ => within(byte, 0x40, 0x7E) || within(byte, 0x80, 0xFE),
+  };
+  for (var index = 0; index < bytes.length; index++) {
+    final byte = bytes[index];
+    final next = at(index + 1);
+    if (byte < 0x80) {
+      out.writeCharCode(byte);
+    } else if (encoding == EastAsianEncoding.shiftJis &&
+        within(byte, 0xA1, 0xDF)) {
+      // Half-width katakana take one byte.
+      out.writeCharCode(0xFF61 + byte - 0xA1);
+    } else if (encoding == EastAsianEncoding.eucJp &&
+        byte == 0x8E &&
+        within(next, 0xA1, 0xDF)) {
+      out.writeCharCode(0xFF61 + next - 0xA1);
+      index++;
+    } else {
+      final lead = switch (encoding) {
+        EastAsianEncoding.shiftJis =>
+          within(byte, 0x81, 0x9F) || within(byte, 0xE0, 0xFC),
+        EastAsianEncoding.eucJp => byte == 0x8F || within(byte, 0xA1, 0xFE),
+        _ => within(byte, 0x81, 0xFE),
+      };
+      if (lead) {
+        if (encoding == EastAsianEncoding.gbk &&
+            within(next, 0x30, 0x39) &&
+            within(at(index + 2), 0x81, 0xFE) &&
+            within(at(index + 3), 0x30, 0x39)) {
+          index += 3;
+        } else if (encoding == EastAsianEncoding.eucJp && byte == 0x8F) {
+          if (isTrail(next) && isTrail(at(index + 2))) index += 2;
+        } else if (isTrail(next)) {
+          index++;
+        }
+      }
+      replace();
+    }
+  }
+  return (text: out.toString(), lossy: lossy);
+}
+
 /// Code page of a Windows font character set (RTF's \fcharset, the .doc font
 /// table); null for sets that aren't single-byte.
 int? codePageOfCharset(int charset) => switch (charset) {
@@ -61,7 +192,9 @@ int? codePageOfCharset(int charset) => switch (charset) {
   _ => null,
 };
 
-/// Characters 0x80 to 0xFF of each code page.
+/// Characters 0x80 to 0xFF of each code page, as browsers read them except
+/// for control characters. The ISO-8859 and KOI8 sets have Windows' numbers:
+/// 28592 is ISO-8859-2, 20866 KOI8-R, 21866 KOI8-U, 10007 Mac Cyrillic.
 const _codePages = <int, String>{
   437:
       'ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒ'
@@ -138,4 +271,79 @@ const _codePages = <int, String>{
       '†°¢£§•¶ß®©™´¨≠ÆØ∞±≤≥¥µ∂∑∏π∫ªºΩæø'
       '¿¡¬√ƒ≈∆«»…\u{a0}ÀÃÕŒœ–—“”‘’÷◊ÿŸ⁄€‹›ﬁﬂ'
       '‡·‚„‰ÂÊÁËÈÍÎÏÌÓÔÒÚÛÙıˆ˜¯˘˙˚¸˝˛ˇ',
+  28592:
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{a0}Ą˘Ł¤ĽŚ§¨ŠŞŤŹ\u{ad}ŽŻ°ą˛ł´ľśˇ¸šşťź˝žż'
+      'ŔÁÂĂÄĹĆÇČÉĘËĚÍÎĎĐŃŇÓÔŐÖ×ŘŮÚŰÜÝŢß'
+      'ŕáâăäĺćçčéęëěíîďđńňóôőö÷řůúűüýţ˙',
+  28593:
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{a0}Ħ˘£¤\u{fffd}Ĥ§¨İŞĞĴ\u{ad}\u{fffd}Ż°ħ²³´µĥ·¸ışğĵ½\u{fffd}ż'
+      'ÀÁÂ\u{fffd}ÄĊĈÇÈÉÊËÌÍÎÏ\u{fffd}ÑÒÓÔĠÖ×ĜÙÚÛÜŬŜß'
+      'àáâ\u{fffd}äċĉçèéêëìíîï\u{fffd}ñòóôġö÷ĝùúûüŭŝ˙',
+  28594:
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{a0}ĄĸŖ¤ĨĻ§¨ŠĒĢŦ\u{ad}Ž¯°ą˛ŗ´ĩļˇ¸šēģŧŊžŋ'
+      'ĀÁÂÃÄÅÆĮČÉĘËĖÍÎĪĐŅŌĶÔÕÖ×ØŲÚÛÜŨŪß'
+      'āáâãäåæįčéęëėíîīđņōķôõö÷øųúûüũū˙',
+  28595:
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{a0}ЁЂЃЄЅІЇЈЉЊЋЌ\u{ad}ЎЏАБВГДЕЖЗИЙКЛМНОП'
+      'РСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмноп'
+      'рстуфхцчшщъыьэюя№ёђѓєѕіїјљњћќ§ўџ',
+  28596:
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{a0}\u{fffd}\u{fffd}\u{fffd}¤\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{60c}\u{ad}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{61b}\u{fffd}\u{fffd}\u{fffd}\u{61f}'
+      '\u{fffd}\u{621}\u{622}\u{623}\u{624}\u{625}\u{626}\u{627}\u{628}\u{629}\u{62a}\u{62b}\u{62c}\u{62d}\u{62e}\u{62f}\u{630}\u{631}\u{632}\u{633}\u{634}\u{635}\u{636}\u{637}\u{638}\u{639}\u{63a}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{640}\u{641}\u{642}\u{643}\u{644}\u{645}\u{646}\u{647}\u{648}\u{649}\u{64a}\u{64b}\u{64c}\u{64d}\u{64e}\u{64f}\u{650}\u{651}\u{652}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}',
+  28597:
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{a0}‘’£€₯¦§¨©ͺ«¬\u{ad}\u{fffd}―°±²³΄΅Ά·ΈΉΊ»Ό½ΎΏ'
+      'ΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ\u{fffd}ΣΤΥΦΧΨΩΪΫάέήί'
+      'ΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ\u{fffd}',
+  28598:
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{a0}\u{fffd}¢£¤¥¦§¨©×«¬\u{ad}®¯°±²³´µ¶·¸¹÷»¼½¾\u{fffd}'
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}‗'
+      '\u{5d0}\u{5d1}\u{5d2}\u{5d3}\u{5d4}\u{5d5}\u{5d6}\u{5d7}\u{5d8}\u{5d9}\u{5da}\u{5db}\u{5dc}\u{5dd}\u{5de}\u{5df}\u{5e0}\u{5e1}\u{5e2}\u{5e3}\u{5e4}\u{5e5}\u{5e6}\u{5e7}\u{5e8}\u{5e9}\u{5ea}\u{fffd}\u{fffd}\u{200e}\u{200f}\u{fffd}',
+  28600:
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{a0}ĄĒĢĪĨĶ§ĻĐŠŦŽ\u{ad}ŪŊ°ąēģīĩķ·ļđšŧž―ūŋ'
+      'ĀÁÂÃÄÅÆĮČÉĘËĖÍÎÏÐŅŌÓÔÕÖŨØŲÚÛÜÝÞß'
+      'āáâãäåæįčéęëėíîïðņōóôõöũøųúûüýþĸ',
+  28603:
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{a0}”¢£¤„¦§Ø©Ŗ«¬\u{ad}®Æ°±²³“µ¶·ø¹ŗ»¼½¾æ'
+      'ĄĮĀĆÄÅĘĒČÉŹĖĢĶĪĻŠŃŅÓŌÕÖ×ŲŁŚŪÜŻŽß'
+      'ąįāćäåęēčéźėģķīļšńņóōõö÷ųłśūüżž’',
+  28604:
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{a0}Ḃḃ£ĊċḊ§Ẁ©ẂḋỲ\u{ad}®ŸḞḟĠġṀṁ¶ṖẁṗẃṠỳẄẅṡ'
+      'ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏŴÑÒÓÔÕÖṪØÙÚÛÜÝŶß'
+      'àáâãäåæçèéêëìíîïŵñòóôõöṫøùúûüýŷÿ',
+  28605:
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{a0}¡¢£€¥Š§š©ª«¬\u{ad}®¯°±²³Žµ¶·ž¹º»ŒœŸ¿'
+      'ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß'
+      'àáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ',
+  28606:
+      '\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}'
+      '\u{a0}ĄąŁ€„Š§š©Ș«Ź\u{ad}źŻ°±ČłŽ”¶·žčș»ŒœŸż'
+      'ÀÁÂĂÄĆÆÇÈÉÊËÌÍÎÏĐŃÒÓÔŐÖŚŰÙÚÛÜĘȚß'
+      'àáâăäćæçèéêëìíîïđńòóôőöśűùúûüęțÿ',
+  20866:
+      '─│┌┐└┘├┤┬┴┼▀▄█▌▐░▒▓⌠■∙√≈≤≥\u{a0}⌡°²·÷'
+      '═║╒ё╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡Ё╢╣╤╥╦╧╨╩╪╫╬©'
+      'юабцдефгхийклмнопярстужвьызшэщчъ'
+      'ЮАБЦДЕФГХИЙКЛМНОПЯРСТУЖВЬЫЗШЭЩЧЪ',
+  21866:
+      '─│┌┐└┘├┤┬┴┼▀▄█▌▐░▒▓⌠■∙√≈≤≥\u{a0}⌡°²·÷'
+      '═║╒ёє╔ії╗╘╙╚╛ґў╞╟╠╡ЁЄ╣ІЇ╦╧╨╩╪ҐЎ©'
+      'юабцдефгхийклмнопярстужвьызшэщчъ'
+      'ЮАБЦДЕФГХИЙКЛМНОПЯРСТУЖВЬЫЗШЭЩЧЪ',
+  10007:
+      'АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ'
+      '†°Ґ£§•¶І®©™Ђђ≠Ѓѓ∞±≤≥іµґЈЄєЇїЉљЊњ'
+      'јЅ¬√ƒ≈∆«»…\u{a0}ЋћЌќѕ–—“”‘’÷„ЎўЏџ№Ёёя'
+      'абвгдежзийклмнопрстуфхцчшщъыьэю€',
 };

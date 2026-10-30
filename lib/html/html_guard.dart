@@ -49,12 +49,52 @@ String originalTagName(String name) =>
 /// form controls, SVG and MathML are taken out, `<style>` text is kept apart
 /// and formatting elements are renamed. A model of the parser's stack, which
 /// never closes an element the parser keeps open, rejects pages that nest
-/// deeper than [maxDepth] or make more than [maxElements] elements.
+/// deeper than [maxDepth] or make more than [maxElements] elements, and
+/// pages that would keep the parser busy for long: too much text, content
+/// it moves out of tables, parse errors or end tags it searches the stack
+/// for in vain. In XHTML, `<x/>` is an empty element.
 GuardedHtml guardHtml(
   String html, {
   int maxDepth = 256,
   int maxElements = 200000,
 }) => _Guard(html, maxDepth, maxElements).run();
+
+/// Characters of text outside tags.
+const _maxText = 16 * 1024 * 1024;
+
+/// Nodes the parser passes over to put content in front of tables (foster
+/// parenting), in all.
+const _maxFosterWork = 50000000;
+
+/// Parse errors and unmatched end tags, each weighted by the stack the
+/// parser searches for it; about half a second of parsing.
+const _maxParserWork = 3000000;
+const _errorWork = 16;
+
+/// References past the last code point, which package:html can't read.
+final _longReference = RegExp(
+  r'&#(?:[xX]0*[1-9a-fA-F][0-9a-fA-F]{6,}|0*[1-9][0-9]{7,});?',
+);
+
+final _xhtmlNamespace = RegExp(
+  r'''<html\b[^>]*\bxmlns\s*=\s*["']http://www\.w3\.org/1999/xhtml["']''',
+  caseSensitive: false,
+);
+
+/// Where the parser moves content that isn't a table part out of the table.
+const _fosterTargets = {'table', 'tbody', 'thead', 'tfoot', 'tr'};
+const _tableParts = {
+  'table',
+  'caption',
+  'colgroup',
+  'col',
+  'tbody',
+  'thead',
+  'tfoot',
+  'tr',
+  'td',
+  'th',
+};
 
 const _rawText = {
   'script',
@@ -277,14 +317,16 @@ const _special = {
   'xmp',
 };
 
-typedef _Tag = ({String name, int nameEnd, int end});
+typedef _Tag = ({String name, int nameEnd, int end, bool selfClosing});
 
 class _Guard {
-  _Guard(this.source, this.maxDepth, this.maxElements);
+  _Guard(this.source, this.maxDepth, this.maxElements)
+    : _xhtml = _isXhtml(source);
 
   final String source;
   final int maxDepth;
   final int maxElements;
+  final bool _xhtml;
   final _out = StringBuffer();
   final _styles = <String>[];
   var _dropped = false;
@@ -295,12 +337,19 @@ class _Guard {
   final _open = <String, int>{'html': 1, 'body': 1};
   var _elements = 3;
 
+  /// Children of each element in [_stack] so far.
+  final _children = <int>[1, 0];
+  var _text = 0;
+  var _fosterWork = 0;
+  var _parserWork = 0;
+
   GuardedHtml run() {
     _out.write('<!DOCTYPE html>');
     final s = source;
     var index = 0;
     while (true) {
       final lt = s.indexOf('<', index);
+      _textRun(index, lt < 0 ? s.length : lt);
       if (lt < 0 || lt + 1 >= s.length) break;
       final next = s.codeUnitAt(lt + 1);
       if (next == 0x21 || next == 0x3F) {
@@ -310,11 +359,92 @@ class _Guard {
       } else if (_isLetter(next)) {
         index = _startTag(lt);
       } else {
+        // A `<` that starts no tag is text, and a parse error.
+        _parse(_errorWork);
         index = lt + 1;
       }
     }
     _out.write(s.substring(_copied));
-    return GuardedHtml(_out.toString(), _styles, dropped: _dropped);
+    final html = _out.toString();
+    _invalidCharacters(html);
+    return GuardedHtml(
+      html.replaceAll(_longReference, '&#xFFFD;'),
+      _styles,
+      dropped: _dropped,
+    );
+  }
+
+  static bool _isXhtml(String source) {
+    final head = source.length > 4096 ? source.substring(0, 4096) : source;
+    return head.trimLeft().startsWith('<?xml') ||
+        _xhtmlNamespace.hasMatch(head);
+  }
+
+  /// Counts the text between [start] and [end]; outside cells, the parser
+  /// moves text in a table in front of it.
+  void _textRun(int start, int end) {
+    if (end <= start) return;
+    _text += end - start;
+    if (_text > _maxText) {
+      throw DocumentProblemException(DocumentProblem.tooLarge);
+    }
+    if (!_fosterTargets.contains(_stack.last)) {
+      _children.last++;
+      return;
+    }
+    for (var index = start; index < end; index++) {
+      if (!_isSpace(source.codeUnitAt(index))) {
+        _foster();
+        return;
+      }
+    }
+  }
+
+  /// Content the parser puts in front of the innermost table, passing over
+  /// the nodes before it.
+  void _foster() {
+    final parent = _stack.lastIndexOf('table') - 1;
+    if (parent < 0) return;
+    _fosterWork += ++_children[parent];
+    if (_fosterWork > _maxFosterWork) {
+      throw DocumentProblemException(DocumentProblem.tooLarge);
+    }
+  }
+
+  void _parse(int work) {
+    _parserWork += work;
+    if (_parserWork > _maxParserWork) {
+      throw DocumentProblemException(DocumentProblem.tooLarge);
+    }
+  }
+
+  /// Characters package:html reports one by one: NUL, controls, lone
+  /// surrogates and noncharacters.
+  void _invalidCharacters(String html) {
+    var count = 0;
+    for (var index = 0; index < html.length; index++) {
+      final char = html.codeUnitAt(index);
+      if (char >= 0x20 && char < 0x7F) continue;
+      if (char <= 0x08 ||
+          char == 0x0B ||
+          (char >= 0x0E && char <= 0x1F) ||
+          (char >= 0x7F && char <= 0x9F) ||
+          (char >= 0xFDD0 && char <= 0xFDEF) ||
+          char == 0xFFFE ||
+          char == 0xFFFF) {
+        count++;
+      } else if (char >= 0xD800 && char <= 0xDBFF) {
+        final next = index + 1 < html.length ? html.codeUnitAt(index + 1) : 0;
+        if (next >= 0xDC00 && next <= 0xDFFF) {
+          index++;
+        } else {
+          count++;
+        }
+      } else if (char >= 0xDC00 && char <= 0xDFFF) {
+        count++;
+      }
+    }
+    _parse(count * _errorWork);
   }
 
   /// Copies the input up to [start] and leaves out everything up to [end].
@@ -328,7 +458,16 @@ class _Guard {
     final tag = _readTag(lt + 1);
     if (tag == null) return _skip(lt, source.length);
     final name = tag.name;
+    // Foreign elements honor `/>` in HTML, and all elements do in XHTML.
+    final empty =
+        tag.selfClosing &&
+        !_void.contains(name) &&
+        (_xhtml || name == 'svg' || name == 'math');
     if (_rawText.contains(name)) {
+      if (empty) {
+        if (name == 'iframe') _dropped = true;
+        return _skip(lt, tag.end);
+      }
       final (:contentEnd, :end) = name == 'plaintext'
           ? (contentEnd: source.length, end: source.length)
           : _rawTextEnd(name, tag.end);
@@ -336,10 +475,15 @@ class _Guard {
       _skip(lt, end);
       switch (name) {
         case 'style':
-          _styles.add(content);
+          _styles.add(
+            _xhtml
+                ? content.replaceAll('<![CDATA[', '').replaceAll(']]>', '')
+                : content,
+          );
         case 'xmp' || 'plaintext':
           _out.write('<pre>${const HtmlEscape().convert(content)}</pre>');
           _start('pre');
+          _textRun(tag.end, contentEnd);
           _end('pre');
         case 'iframe':
           _dropped = true;
@@ -348,17 +492,24 @@ class _Guard {
     }
     if (_subtrees.contains(name)) {
       if (name == 'svg' || name == 'math') _dropped = true;
-      return _skip(lt, _subtreeEnd(name, tag.end));
+      return _skip(lt, empty ? tag.end : _subtreeEnd(name, tag.end));
     }
     if (_droppedTags.contains(name)) return _skip(lt, tag.end);
-    if (formattingTags.contains(name)) {
+    final element = formattingTags.contains(name)
+        ? '$renamedPrefix$name'
+        : name;
+    if (element != name) {
       if (name == 'a') _closeLink(lt);
       _out.write(source.substring(_copied, lt));
-      _out.write('<$renamedPrefix$name');
+      _out.write('<$element');
       _copied = tag.nameEnd;
-      _start('$renamedPrefix$name');
-    } else {
-      _start(name);
+    }
+    _start(element);
+    if (empty) {
+      _out.write(source.substring(_copied, tag.end));
+      _out.write('</$element>');
+      _copied = tag.end;
+      _end(element);
     }
     return tag.end;
   }
@@ -380,6 +531,8 @@ class _Guard {
         _droppedTags.contains(name)) {
       return _skip(lt, tag.end);
     }
+    final depth = _stack.length;
+    final elements = _elements;
     if (formattingTags.contains(name)) {
       _out.write(s.substring(_copied, lt));
       _out.write('</$renamedPrefix$name');
@@ -387,6 +540,10 @@ class _Guard {
       _end('$renamedPrefix$name');
     } else {
       _end(name);
+    }
+    // The parser searched its stack for an element that isn't there.
+    if (_stack.length == depth && _elements == elements) {
+      _parse(_errorWork + depth);
     }
     return tag.end;
   }
@@ -446,15 +603,26 @@ class _Guard {
       index++;
     }
     if (index >= s.length) return null;
-    final name = s.substring(start, index).toLowerCase();
+    final name = _asciiLowerCase(s.substring(start, index));
     final nameEnd = index;
+    // A `/` right before `>`, outside attribute values.
+    var slash = false;
     while (index < s.length) {
       var char = s.codeUnitAt(index);
       if (_isSpace(char) || char == 0x2F) {
+        slash = char == 0x2F;
         index++;
         continue;
       }
-      if (char == 0x3E) return (name: name, nameEnd: nameEnd, end: index + 1);
+      if (char == 0x3E) {
+        return (
+          name: name,
+          nameEnd: nameEnd,
+          end: index + 1,
+          selfClosing: slash,
+        );
+      }
+      slash = false;
       // Attribute name; its first character may be anything.
       index++;
       while (index < s.length) {
@@ -480,7 +648,12 @@ class _Guard {
         if (close < 0) return null;
         index = close + 1;
       } else if (char == 0x3E) {
-        return (name: name, nameEnd: nameEnd, end: index + 1);
+        return (
+          name: name,
+          nameEnd: nameEnd,
+          end: index + 1,
+          selfClosing: false,
+        );
       } else {
         while (index < s.length) {
           char = s.codeUnitAt(index);
@@ -501,7 +674,7 @@ class _Guard {
       if (lt < 0) break;
       final nameEnd = lt + 2 + name.length;
       if (nameEnd < s.length &&
-          s.substring(lt + 2, nameEnd).toLowerCase() == name) {
+          _asciiLowerCase(s.substring(lt + 2, nameEnd)) == name) {
         final char = s.codeUnitAt(nameEnd);
         if (_isSpace(char) || char == 0x2F || char == 0x3E) {
           final tag = _readTag(lt + 2);
@@ -540,7 +713,7 @@ class _Guard {
         final tag = _readTag(lt + 1);
         if (tag == null) return s.length;
         if (foreign && _breaksOut(tag.name)) return lt;
-        if (tag.name == name && s.codeUnitAt(tag.end - 2) != 0x2F) depth++;
+        if (tag.name == name && !tag.selfClosing) depth++;
         index = !foreign && _rawText.contains(tag.name)
             ? (tag.name == 'plaintext'
                   ? s.length
@@ -603,6 +776,21 @@ class _Guard {
   static bool _isLetter(int char) =>
       (char >= 0x41 && char <= 0x5A) || (char >= 0x61 && char <= 0x7A);
 
+  /// Lowercase as package:html makes tag names: only A to Z, so a name
+  /// like `linK` (with a Kelvin sign) stays an unknown element for both.
+  static String _asciiLowerCase(String name) {
+    for (var index = 0; index < name.length; index++) {
+      final char = name.codeUnitAt(index);
+      if (char >= 0x41 && char <= 0x5A) {
+        return String.fromCharCodes([
+          for (final unit in name.codeUnits)
+            unit >= 0x41 && unit <= 0x5A ? unit + 0x20 : unit,
+        ]);
+      }
+    }
+    return name;
+  }
+
   static bool _isSpace(int char) =>
       char == 0x20 ||
       char == 0x09 ||
@@ -617,8 +805,11 @@ class _Guard {
       if (name == 'hr') _closeParagraph();
       // A column may come with the column group the parser makes for it.
       if (name == 'col') _count();
-      _count();
+      _insert(name);
       return;
+    }
+    if (_fosterTargets.contains(_stack.last) && !_tableParts.contains(name)) {
+      _foster();
     }
     if (_closesParagraph.contains(name)) {
       _closeParagraph();
@@ -672,14 +863,14 @@ class _Guard {
         if (_inScope('p', _buttonScope)) {
           _popThrough('p');
         } else {
-          _count();
+          _insert(name);
         }
       case 'li':
         if (_inScope('li', _listScope)) _popThrough('li');
       case 'dd' || 'dt':
         if (_inScope(name, _scope)) _popThrough(name);
       case 'br':
-        _count();
+        _insert(name);
       case 'html' || 'head' || 'body':
         break;
       case 'table' ||
@@ -800,12 +991,24 @@ class _Guard {
   }
 
   void _push(String name) {
+    _children.last++;
     _stack.add(name);
+    _children.add(0);
     _open[name] = (_open[name] ?? 0) + 1;
     _count();
     if (_stack.length > maxDepth) {
       throw const FormatException('The page nests elements too deeply.');
     }
+  }
+
+  /// An element the parser inserts and closes at once.
+  void _insert(String name) {
+    if (_fosterTargets.contains(_stack.last) && !_tableParts.contains(name)) {
+      _foster();
+    } else {
+      _children.last++;
+    }
+    _count();
   }
 
   void _count() {
@@ -816,6 +1019,7 @@ class _Guard {
 
   String _pop() {
     final name = _stack.removeLast();
+    _children.removeLast();
     _open[name] = _open[name]! - 1;
     return name;
   }
