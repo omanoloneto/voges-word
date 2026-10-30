@@ -454,6 +454,7 @@ class OdtStyles {
       start: numbered.start,
       indentLeft: numbered.indentLeft ?? 0,
       hanging: numbered.indentLeft == null ? 0 : numbered.hanging,
+      suffix: numbered.suffix,
     );
   }
 
@@ -473,7 +474,9 @@ class OdtStyles {
         hanging: previous?.hanging ?? 18,
       );
     }
-    final indent = _indent(element.odfChild(_style, 'list-level-properties'));
+    final properties = element.odfChild(_style, 'list-level-properties');
+    final indent = _indent(properties);
+    final suffix = _suffix(properties);
     if (element.isOdf(_text, 'list-level-style-number') ||
         element.isOdf(_text, 'outline-level-style')) {
       final format = _numberFormat(element.odfAttribute(_style, 'num-format'));
@@ -503,6 +506,7 @@ class OdtStyles {
                 .clamp(0, 32767),
         indentLeft: indent.left,
         hanging: indent.hanging,
+        suffix: suffix,
       );
     }
     final char = element.isOdf(_text, 'list-level-style-bullet')
@@ -517,7 +521,25 @@ class OdtStyles {
           : String.fromCharCode(rune),
       indentLeft: indent.left,
       hanging: indent.hanging,
+      suffix: suffix,
     );
+  }
+
+  /// What follows the number; only the label alignment mode says.
+  static ListSuffix _suffix(XmlElement? properties) {
+    if (properties?.odfAttribute(_text, 'list-level-position-and-space-mode') !=
+        'label-alignment') {
+      return ListSuffix.tab;
+    }
+    final alignment = properties!.odfChild(
+      _style,
+      'list-level-label-alignment',
+    );
+    return switch (alignment?.odfAttribute(_text, 'label-followed-by')) {
+      'space' => ListSuffix.space,
+      'nothing' => ListSuffix.nothing,
+      _ => ListSuffix.tab,
+    };
   }
 
   static ({double? left, double hanging}) _indent(XmlElement? properties) {

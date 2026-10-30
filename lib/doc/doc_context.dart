@@ -279,10 +279,15 @@ class DocContext {
     indentLeft: level.left == null ? null : level.left! / 20,
     hanging: level.firstLine == null ? 18 : math.max(0, -level.firstLine!) / 20,
     font: level.font == null ? null : fontName(level.font!),
+    suffix: switch (level.follow) {
+      1 => ListSuffix.space,
+      2 => ListSuffix.nothing,
+      _ => ListSuffix.tab,
+    },
   );
 
-  /// Page size, margins and columns of a section, with Word's defaults for
-  /// values that make no sense.
+  /// Page size, margins, columns and page numbers of a section, with Word's
+  /// defaults for values that make no sense.
   PageSpec page(SectionProps section) {
     final defaults = SectionProps();
     final valid =
@@ -306,6 +311,17 @@ class DocContext {
       footerDistance: math.min(section.footerDistance, 31680) / 20,
       columns: section.columns.clamp(1, 45),
       columnSpacing: math.min(section.columnSpacing, 31680) / 20,
+      numberFormat: switch (section.pageNumberFormat) {
+        1 => NumberFormat.upperRoman,
+        2 => NumberFormat.lowerRoman,
+        3 => NumberFormat.upperLetter,
+        4 => NumberFormat.lowerLetter,
+        22 => NumberFormat.decimalZero,
+        _ => null,
+      },
+      firstNumber: section.restartPageNumbers
+          ? section.firstPageNumber.clamp(0, 32767)
+          : null,
     );
   }
 

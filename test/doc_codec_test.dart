@@ -71,6 +71,34 @@ TableModel _table(Delta delta, TableStore tables, [int index = 0]) =>
 String _cellText(TableCellModel cell) =>
     cell.controller.document.toPlainText().trim();
 
+/// Sets what follows the number of the first list's levels (LVLF
+/// ixchFollow: 0 a tab, 1 a space, 2 nothing), which the fixtures leave at
+/// a tab.
+void Function(String, Uint8List) _followedBy(List<int> values) {
+  var levels = 0;
+  return (name, bytes) {
+    final data = ByteData.sublistView(bytes);
+    if (name == 'WordDocument') {
+      // The levels follow the list definitions: fcPlfLst plus lcbPlfLst.
+      const plfLst = 154 + 73 * 8;
+      levels =
+          data.getUint32(plfLst, Endian.little) +
+          data.getUint32(plfLst + 4, Endian.little);
+    } else if (name == '1Table') {
+      var at = levels;
+      for (final value in values) {
+        bytes[at + 15] = value;
+        final text = at + 28 + bytes[at + 24] + bytes[at + 25];
+        at = text + 2 + data.getUint16(text, Endian.little) * 2;
+      }
+    }
+  };
+}
+
+/// The definition of [level] in the first list of a numbering part.
+String _numberingLevel(String numbering, int level) =>
+    RegExp('<w:lvl w:ilvl="$level">(.*?)</w:lvl>').firstMatch(numbering)![1]!;
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -273,6 +301,38 @@ void main() {
     expect(_line(loaded.delta, 'Numbered')?['list'], 'ordered');
     expect(_line(loaded.delta, 'Typed')?['list'], isNull);
     expect(document, contains('<w:numId w:val="0"/>'));
+  });
+
+  test('list levels keep what follows their number', () {
+    final doc = DocWriter();
+    final list = doc.addList([
+      (format: 0, text: '%1.', start: 1, left: 720, hanging: 360, font: null),
+      (format: 4, text: '%2)', start: 1, left: 1440, hanging: 360, font: null),
+      (format: 2, text: '%3.', start: 1, left: 2160, hanging: 360, font: null),
+    ], startOverride: 4);
+    doc
+      ..line('spaced', sprms: DocWriter.listParagraph(list))
+      ..line('joined', sprms: DocWriter.listParagraph(list, 1))
+      ..line('tabbed', sprms: DocWriter.listParagraph(list, 2));
+    final loaded = _decode(doc.build(mutate: _followedBy([1, 2, 0])));
+    final numbering = (loaded.source! as DocxPackage).text(
+      'word/numbering.xml',
+    )!;
+
+    expect(_line(loaded.delta, 'joined')?['list'], 'ordered');
+    // The override restarting the first level keeps what follows it.
+    expect(
+      _numberingLevel(numbering, 0),
+      allOf(
+        contains('<w:start w:val="4"/>'),
+        contains('<w:suff w:val="space"/>'),
+      ),
+    );
+    expect(
+      _numberingLevel(numbering, 1),
+      contains('<w:suff w:val="nothing"/>'),
+    );
+    expect(_numberingLevel(numbering, 2), isNot(contains('<w:suff')));
   });
 
   test('links, bookmarks and fields', () {
@@ -685,6 +745,60 @@ void main() {
       'Page ',
     );
     expect(loaded.notices, isEmpty);
+  });
+
+  test('sections keep how they number their pages', () {
+    final doc = DocWriter()..line('preface');
+    final preface = doc.position;
+    doc.line('chapter');
+    final chapter = doc.position;
+    doc.line('appendix');
+    final appendix = doc.position;
+    doc.line('index');
+    doc
+      ..sections.add((
+        preface,
+        [
+          ...sprm(Sprm.sNfcPgn, [2]),
+          // Without a restart the start is ignored, as MS-DOC says.
+          ...sprm(Sprm.sPgnStart97, u16(5)),
+        ],
+      ))
+      ..sections.add((
+        chapter,
+        [
+          ...sprm(Sprm.sFPgnRestart, [1]),
+          ...sprm(Sprm.sPgnStart97, u16(1)),
+        ],
+      ))
+      ..sections.add((
+        appendix,
+        [
+          ...sprm(Sprm.sNfcPgn, [3]),
+          ...sprm(Sprm.sFPgnRestart, [1]),
+          ...sprm(Sprm.sPgnStart97, u16(2)),
+          ...sprm(Sprm.sPgnStart, u32(7)),
+        ],
+      ))
+      // A restart without a number starts at 0, as MS-DOC says.
+      ..sections.add((doc.position, sprm(Sprm.sFPgnRestart, [1])));
+    final loaded = _decode(doc.build());
+    final sections = [
+      for (final section in _embeds(loaded.delta, EmbedTypes.sectionBreak))
+        sectionXmlOf(section[EmbedTypes.sectionBreak]),
+    ];
+
+    expect(sections, hasLength(3));
+    expect(sections[0], contains('<w:pgNumType w:fmt="lowerRoman"/>'));
+    expect(sections[1], contains('<w:pgNumType w:start="1"/>'));
+    expect(
+      sections[2],
+      contains('<w:pgNumType w:fmt="upperLetter" w:start="7"/>'),
+    );
+    expect(
+      (loaded.source! as DocxPackage).text('word/document.xml'),
+      contains('<w:pgNumType w:start="0"/>'),
+    );
   });
 
   test('tables keep cells, spans, merges, fills, header rows and nesting', () {

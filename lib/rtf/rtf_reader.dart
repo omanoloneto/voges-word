@@ -821,6 +821,22 @@ class RtfReader {
         _section.columns = parameter;
       case 'colsx':
         _section.columnSpacing = parameter;
+      case 'pgnrestart':
+        _section.restartPages = on;
+      case 'pgncont':
+        _section.restartPages = false;
+      case 'pgnstarts':
+        _section.firstPage = parameter ?? 1;
+      case 'pgndec':
+        _section.pageNumbers = null;
+      case 'pgnucrm':
+        _section.pageNumbers = NumberFormat.upperRoman;
+      case 'pgnlcrm':
+        _section.pageNumbers = NumberFormat.lowerRoman;
+      case 'pgnucltr':
+        _section.pageNumbers = NumberFormat.upperLetter;
+      case 'pgnlcltr':
+        _section.pageNumbers = NumberFormat.lowerLetter;
       case 'paperw':
         _paperWidth = parameter ?? _paperWidth;
       case 'paperh':
@@ -892,6 +908,14 @@ class RtfReader {
     'pc',
     'pca',
     'pghsxn',
+    'pgncont',
+    'pgndec',
+    'pgnlcltr',
+    'pgnlcrm',
+    'pgnrestart',
+    'pgnstarts',
+    'pgnucltr',
+    'pgnucrm',
     'pgwsxn',
     'sbkcol',
     'sbkeven',
@@ -1450,6 +1474,7 @@ class RtfReader {
       indentLeft: _points(level.left),
       hanging: firstLine == null ? 18 : math.max(-firstLine, 0) / 20,
       font: level.font,
+      suffix: level.suffix,
     );
   }
 
@@ -1846,6 +1871,10 @@ class RtfReader {
       footerDistance: (section.footer ?? 720).clamp(0, height ~/ 2) / 20,
       columns: (section.columns ?? 1).clamp(1, 45),
       columnSpacing: (section.columnSpacing ?? 720).clamp(0, 31680) / 20,
+      numberFormat: section.pageNumbers,
+      firstNumber: section.restartPages
+          ? section.firstPage.clamp(0, 32767)
+          : null,
     );
   }
 
@@ -2026,6 +2055,13 @@ class _Section {
   var landscape = false;
   var titlePage = false;
   var kind = SectionKind.nextPage;
+
+  /// Null numbers the pages 1, 2, 3.
+  NumberFormat? pageNumbers;
+
+  /// Without it, the pages go on from the previous section's numbers.
+  var restartPages = false;
+  var firstPage = 1;
 }
 
 class _Font {
@@ -2434,6 +2470,7 @@ class _LevelDef {
   int? left;
   int? firstLine;
   String? font;
+  var suffix = ListSuffix.tab;
 }
 
 class _ListEntry extends _Destination {
@@ -2486,6 +2523,12 @@ class _ListLevel extends _Destination {
         };
       case 'levelstartat':
         _level.start = parameter ?? 1;
+      case 'levelfollow':
+        _level.suffix = switch (parameter) {
+          1 => ListSuffix.space,
+          2 => ListSuffix.nothing,
+          _ => ListSuffix.tab,
+        };
       case 'leveltext':
         reader._begin(_LevelText(_level));
       case 'levelnumbers':

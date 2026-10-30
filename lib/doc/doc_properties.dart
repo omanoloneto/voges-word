@@ -449,6 +449,16 @@ class SectionProps {
   int top = 1440;
   int bottom = 1440;
 
+  /// Page number format (MSONFC): 0 decimal, 1 and 2 upper and lower Roman,
+  /// 3 and 4 upper and lower letters.
+  int pageNumberFormat = 0;
+
+  /// Without it, the pages go on from the previous section's numbers.
+  bool restartPageNumbers = false;
+
+  /// A restart that gives no number starts at 0, as MS-DOC says.
+  int firstPageNumber = 0;
+
   void apply(ByteView data, int start, int end) {
     forEachSprm(data, start, end, (sprm, at, size) {
       switch (sprm) {
@@ -456,6 +466,14 @@ class SectionProps {
           breakKind = data.u8(at);
         case Sprm.sFTitlePage:
           titlePage = data.u8(at) != 0;
+        case Sprm.sNfcPgn:
+          pageNumberFormat = data.u8(at);
+        case Sprm.sFPgnRestart:
+          restartPageNumbers = data.u8(at) != 0;
+        case Sprm.sPgnStart97:
+          firstPageNumber = data.u16(at);
+        case Sprm.sPgnStart:
+          firstPageNumber = data.u32(at);
         case Sprm.sCcolumns:
           columns = data.u16(at) + 1;
         case Sprm.sDxaColumns:

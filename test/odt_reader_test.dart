@@ -781,6 +781,63 @@ void main() {
     expect(numbering, contains('<w:lvl w:ilvl="0"><w:start w:val="10"/>'));
   });
 
+  test('list levels keep what follows their number', () {
+    String alignment(String followedBy) =>
+        '<style:list-level-properties text:list-level-position-and-space-mode="label-alignment">'
+        '<style:list-level-label-alignment text:label-followed-by="$followedBy" '
+        'fo:text-indent="-0.635cm" fo:margin-left="1.27cm"/></style:list-level-properties>';
+    final loaded = _decode(
+      odtFile(
+        styles:
+            '$libreOfficeStyles<text:outline-style style:name="Outline">'
+            '<text:outline-level-style text:level="1" style:num-format="1">${alignment('space')}</text:outline-level-style>'
+            '</text:outline-style>',
+        automatic:
+            '<text:list-style style:name="L1">'
+            '<text:list-level-style-number text:level="1" style:num-suffix="." style:num-format="1">${alignment('space')}</text:list-level-style-number>'
+            '<text:list-level-style-bullet text:level="2" text:bullet-char="•">${alignment('nothing')}</text:list-level-style-bullet>'
+            '<text:list-level-style-number text:level="3" style:num-format="i">${alignment('listtab')}</text:list-level-style-number>'
+            '</text:list-style>',
+        body:
+            '<text:h text:style-name="Heading_20_1" text:outline-level="1">Introduction</text:h>'
+            '<text:list text:style-name="L1">'
+            '<text:list-item text:start-value="4"><text:p>four</text:p>'
+            '<text:list><text:list-item><text:p>dot</text:p>'
+            '<text:list><text:list-item><text:p>roman</text:p></text:list-item></text:list>'
+            '</text:list-item></text:list>'
+            '</text:list-item></text:list>',
+      ),
+    );
+    final numbering = _package(loaded).text('word/numbering.xml')!;
+
+    expect(lineOf(loaded.delta, 'Introduction')?['list'], 'ordered');
+    expect(
+      numbering,
+      contains(
+        '<w:numFmt w:val="decimal"/><w:suff w:val="space"/>'
+        '<w:lvlText w:val="%1"/>',
+      ),
+    );
+    expect(
+      numbering,
+      contains(
+        '<w:start w:val="4"/><w:numFmt w:val="decimal"/>'
+        '<w:suff w:val="space"/><w:lvlText w:val="%1."/>',
+      ),
+    );
+    expect(
+      numbering,
+      contains(
+        '<w:numFmt w:val="bullet"/><w:suff w:val="nothing"/>'
+        '<w:lvlText w:val="•"/>',
+      ),
+    );
+    expect(
+      numbering,
+      contains('<w:numFmt w:val="lowerRoman"/><w:lvlText w:val="%3"/>'),
+    );
+  });
+
   test('a page break before a table starts no new section', () {
     final loaded = _decode(
       odtFile(
@@ -921,6 +978,80 @@ void main() {
     expect(sectionXmlOf(sections.single), contains('w:fmt="lowerRoman"'));
     final body = _package(front).text('word/document.xml')!;
     expect('lowerRoman'.allMatches(body), hasLength(1));
+  });
+
+  test('the page style a paragraph or table starts can restart the numbers', () {
+    const roman =
+        '<style:page-layout style:name="pm2"><style:page-layout-properties '
+        'fo:page-width="21cm" fo:page-height="29.7cm" style:num-format="i" '
+        'fo:margin-top="2cm" fo:margin-bottom="2cm" fo:margin-left="2cm" '
+        'fo:margin-right="2cm"/></style:page-layout>';
+    String paragraphStyle(String name, String master, String number) =>
+        '<style:style style:name="$name" style:family="paragraph" '
+        'style:parent-style-name="Standard" style:master-page-name="$master">'
+        '<style:paragraph-properties style:page-number="$number"/></style:style>';
+    final loaded = _decode(
+      odtFile(
+        masterAutomatic: '$a4Layout$roman',
+        masters:
+            '<style:master-page style:name="Front" style:page-layout-name="pm2"/>'
+            '<style:master-page style:name="Standard" style:page-layout-name="pm1"/>',
+        automatic:
+            '${paragraphStyle('P1', 'Front', '3')}'
+            '${paragraphStyle('P2', 'Standard', '1')}'
+            '${paragraphStyle('P3', 'Standard', 'auto')}'
+            '<style:style style:name="Table1" style:family="table" '
+            'style:master-page-name="Standard"><style:table-properties '
+            'style:width="17cm" style:page-number="20"/></style:style>',
+        body:
+            '<text:p text:style-name="P1">preface</text:p>'
+            '<text:p text:style-name="P2">chapter one</text:p>'
+            '<text:p text:style-name="P3">chapter two</text:p>'
+            '<table:table table:style-name="Table1"><table:table-column/>'
+            '<table:table-row><table:table-cell><text:p>annex</text:p>'
+            '</table:table-cell></table:table-row></table:table>',
+      ),
+    );
+    final sections = [
+      for (final section in embedsOf(loaded.delta, EmbedTypes.sectionBreak))
+        sectionXmlOf(section),
+    ];
+
+    expect(sections, hasLength(2));
+    expect(
+      sections[0],
+      contains('<w:pgNumType w:fmt="lowerRoman" w:start="3"/>'),
+    );
+    expect(sections[1], contains('<w:pgNumType w:start="1"/>'));
+    // The same page style without a new number is a page break.
+    expect(embedsOf(loaded.delta, EmbedTypes.pageBreak), hasLength(1));
+    expect(
+      _package(loaded).text('word/document.xml'),
+      contains('<w:pgNumType w:start="20"/>'),
+    );
+
+    final again = _decode(
+      OdtCodec(DocxCodec(_tables)).encode(
+        loaded.delta,
+        source: loaded.source,
+        look: loaded.look,
+        headersFooters: loaded.headersFooters,
+      ),
+    );
+    final savedSections = [
+      for (final section in embedsOf(again.delta, EmbedTypes.sectionBreak))
+        sectionXmlOf(section),
+    ];
+    expect(savedSections, hasLength(2));
+    expect(
+      savedSections[0],
+      contains('<w:pgNumType w:fmt="lowerRoman" w:start="3"/>'),
+    );
+    expect(savedSections[1], contains('<w:pgNumType w:start="1"/>'));
+    expect(
+      _package(again).text('word/document.xml'),
+      contains('<w:pgNumType w:start="20"/>'),
+    );
   });
 
   test('LibreOffice 4.3 to 6.4 contextual spacing is read', () {

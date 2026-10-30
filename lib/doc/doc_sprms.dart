@@ -87,14 +87,18 @@ abstract final class Sprm {
   static const sFTitlePage = 0x300A;
   static const sCcolumns = 0x500B;
   static const sDxaColumns = 0x900C;
+  static const sNfcPgn = 0x300E;
+  static const sFPgnRestart = 0x3011;
   static const sDyaHdrTop = 0xB017;
   static const sDyaHdrBottom = 0xB018;
+  static const sPgnStart97 = 0x501C;
   static const sXaPage = 0xB01F;
   static const sYaPage = 0xB020;
   static const sDxaLeft = 0xB021;
   static const sDxaRight = 0xB022;
   static const sDyaTop = 0x9023;
   static const sDyaBottom = 0x9024;
+  static const sPgnStart = 0x7044;
 }
 
 /// Calls [visit] with each sprm of the grpprl in [data] between [start] and

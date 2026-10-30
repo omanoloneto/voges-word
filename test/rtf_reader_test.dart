@@ -564,6 +564,31 @@ void main() {
       expect(section, contains('<w:type w:val="continuous"/>'));
     });
 
+    test('sections number their pages as they say', () {
+      final document = _read(
+        r'{\rtf1 \sectd\pgnlcrm\pgnstarts5 preface\sect'
+        r'\sectd\pgnrestart chapter\sect'
+        r'\sectd\pgnrestart\pgnstarts9\pgncont continued\sect'
+        r'\sectd\pgnucltr\pgnrestart\pgnstarts3 appendix\par}',
+      );
+      final sections = [
+        for (final section in _embeds<String>(
+          document.delta,
+          EmbedTypes.sectionBreak,
+        ))
+          sectionXmlOf(section),
+      ];
+
+      expect(sections, hasLength(3));
+      expect(sections[0], contains('<w:pgNumType w:fmt="lowerRoman"/>'));
+      expect(sections[1], contains('<w:pgNumType w:start="1"/>'));
+      expect(sections[2], isNot(contains('pgNumType')));
+      expect(
+        _package(document).text('word/document.xml'),
+        contains('<w:pgNumType w:fmt="upperLetter" w:start="3"/>'),
+      );
+    });
+
     test(r'a \sect at the end adds no empty section', () {
       final document = _read(
         r'{\rtf1 \sectd\lndscpsxn\pgwsxn15840\pghsxn12240 Last page text\par'
@@ -638,6 +663,30 @@ void main() {
         _line(delta, 'two')[HiddenAttributes.numbering],
         _line(delta, 'one')[HiddenAttributes.numbering],
       );
+    });
+
+    test(r'\levelfollow says what follows the number', () {
+      final document = _read(
+        r'{\rtf1{\*\listtable{\list\listtemplateid1'
+        r"{\listlevel\levelnfc0\levelfollow1{\leveltext\'02\'00.;}"
+        r"{\levelnumbers\'01;}\fi-360\li720}"
+        r"{\listlevel\levelnfc4\levelfollow2{\leveltext\'02\'01);}"
+        r"{\levelnumbers\'01;}\fi-360\li1440}"
+        r"{\listlevel\levelnfc2\levelfollow0{\leveltext\'02\'02.;}"
+        r"{\levelnumbers\'01;}\fi-360\li2160}"
+        r'\listid1}}'
+        r'{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}}'
+        r'\pard\ls1 one\par\pard\ls1\ilvl1 two\par\pard\ls1\ilvl2 three\par}',
+      );
+      final numbering = _package(document).text('word/numbering.xml')!;
+      String level(int index) => RegExp(
+        '<w:lvl w:ilvl="$index">(.*?)</w:lvl>',
+      ).firstMatch(numbering)![1]!;
+
+      expect(_line(document.delta, 'two')['list'], 'ordered');
+      expect(level(0), contains('<w:suff w:val="space"/>'));
+      expect(level(1), contains('<w:suff w:val="nothing"/>'));
+      expect(level(2), isNot(contains('<w:suff')));
     });
 
     test('headers for left and right pages', () {

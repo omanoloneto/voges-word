@@ -50,6 +50,7 @@ class _ParagraphStyle {
     required this.textCase,
     required this.breaks,
     required this.masterPage,
+    required this.pageNumber,
     required this.outlineLevel,
     required this.listStyle,
   });
@@ -67,6 +68,9 @@ class _ParagraphStyle {
   final TextCase textCase;
   final PageBreaks breaks;
   final String? masterPage;
+
+  /// The number of the first page [masterPage] starts; null goes on counting.
+  final int? pageNumber;
   final int? outlineLevel;
   final String? listStyle;
 }
@@ -146,6 +150,26 @@ bool _samePage(PageSpec a, PageSpec b) =>
     a.columns == b.columns &&
     a.numberFormat == b.numberFormat;
 
+/// `style:page-number`: a number restarts the pages there, `auto` goes on.
+int? _pageNumber(String? value) {
+  final number = int.tryParse(value?.trim() ?? '');
+  return number == null || number < 0 ? null : math.min(number, 32767);
+}
+
+PageSpec _numberedFrom(PageSpec page, int? first) => first == null
+    ? page
+    : PageSpec(
+        width: page.width,
+        height: page.height,
+        margins: page.margins,
+        headerDistance: page.headerDistance,
+        footerDistance: page.footerDistance,
+        columns: page.columns,
+        columnSpacing: page.columnSpacing,
+        numberFormat: page.numberFormat,
+        firstNumber: first,
+      );
+
 /// Builds a [DocumentSpec] from an OpenDocument Text package.
 class OdtReader {
   OdtReader(this.package)
@@ -209,6 +233,9 @@ class OdtReader {
   String? _firstMaster;
   String? _master;
 
+  /// The number of the current section's first page; null goes on counting.
+  int? _sectionNumber;
+
   /// The page style each section starts with, and every one the body uses.
   final _sectionMasters = <String?>[];
   final _usedMasters = <String>{};
@@ -257,7 +284,7 @@ class OdtReader {
 
     if (_sectionMasters.isEmpty) _sectionMasters.add(_firstMaster);
     _usedMasters.addAll(_sectionMasters.whereType<String>());
-    _spec.page = _page(_sectionMasters.last);
+    _spec.page = _numberedFrom(_page(_sectionMasters.last), _sectionNumber);
     _readHeadersFooters();
     return _spec;
   }
@@ -417,6 +444,7 @@ class OdtReader {
     bool? before;
     bool? after;
     String? master;
+    String? pageNumber;
     int? outline;
     String? list;
     OdfStyle? named;
@@ -432,6 +460,8 @@ class OdtReader {
       before = breaks.before ?? before;
       after = breaks.after ?? after;
       master = _nonEmpty(style.masterPageName) ?? master;
+      pageNumber =
+          properties?.odfAttribute(_style, 'page-number') ?? pageNumber;
       outline = style.outlineLevel ?? outline;
       list = style.listStyleName ?? list;
       if (style.automatic) {
@@ -452,6 +482,7 @@ class OdtReader {
       textCase: textCase,
       breaks: (before: before, after: after),
       masterPage: master,
+      pageNumber: _pageNumber(pageNumber),
       outlineLevel: outline,
       listStyle: list,
     );
@@ -554,7 +585,12 @@ class OdtReader {
     );
     final newPage =
         context.place == _Place.body &&
-        _beforeBodyBlock(out, style.masterPage, style.breaks);
+        _beforeBodyBlock(
+          out,
+          style.masterPage,
+          style.breaks,
+          pageNumber: style.pageNumber,
+        );
     final heading = element.isOdf(_text, 'h')
         ? (int.tryParse(element.odfAttribute(_text, 'outline-level') ?? '') ??
                   style.outlineLevel ??
@@ -647,12 +683,14 @@ class OdtReader {
   }
 
   /// Page and section breaks before a paragraph or table of the body;
-  /// returns whether it starts a new page without a new section.
+  /// returns whether it starts a new page without a new section. A page
+  /// style that numbers its pages again ([pageNumber]) starts a section.
   bool _beforeBodyBlock(
     List<BlockSpec> out,
     String? master,
-    PageBreaks breaks,
-  ) {
+    PageBreaks breaks, {
+    int? pageNumber,
+  }) {
     final known = master != null && _styles.masterPages.containsKey(master)
         ? master
         : null;
@@ -660,7 +698,10 @@ class OdtReader {
     _pendingBreak = breaks.after ?? false;
     if (!_started) {
       _started = true;
-      if (known != null) _master = _firstMaster = known;
+      if (known != null) {
+        _master = _firstMaster = known;
+        _sectionNumber = pageNumber;
+      }
       _sectionMasters.add(_master);
       return false;
     }
@@ -668,10 +709,13 @@ class OdtReader {
       final previous = _master;
       _master = known;
       _usedMasters.add(known);
-      if (_samePage(_page(known), _page(previous))) return true;
+      if (pageNumber == null && _samePage(_page(known), _page(previous))) {
+        return true;
+      }
       _charge(16 * _elementCost);
-      out.add(SectionBreakSpec(_page(previous)));
+      out.add(SectionBreakSpec(_numberedFrom(_page(previous), _sectionNumber)));
       _sectionMasters.add(known);
+      _sectionNumber = pageNumber;
       return false;
     }
     return pending || (breaks.before ?? false);
@@ -785,6 +829,7 @@ class OdtReader {
           indentLeft: definition.indentLeft,
           hanging: definition.hanging,
           font: definition.font,
+          suffix: definition.suffix,
         ),
         _ => definition,
       },
@@ -847,6 +892,9 @@ class OdtReader {
           out,
           _nonEmpty(style?.masterPageName),
           OdtStyles.breaksOf(properties),
+          pageNumber: _pageNumber(
+            properties?.odfAttribute(_style, 'page-number'),
+          ),
         )) {
       // A page break, as in LibreOffice: a new section would show the first
       // page's header again.

@@ -10,6 +10,7 @@ class DocListLevel {
     this.left,
     this.firstLine,
     this.font,
+    this.follow = 0,
   });
 
   final int start;
@@ -27,6 +28,9 @@ class DocListLevel {
   /// Font index of the number or bullet.
   final int? font;
 
+  /// What follows the number (ixchFollow): 0 a tab, 1 a space, 2 nothing.
+  final int follow;
+
   DocListLevel startingAt(int value) => DocListLevel(
     start: value,
     format: format,
@@ -34,6 +38,7 @@ class DocListLevel {
     left: left,
     firstLine: firstLine,
     font: font,
+    follow: follow,
   );
 }
 
@@ -163,6 +168,7 @@ class DocLists {
         left: left,
         firstLine: firstLine,
         font: font,
+        follow: data.u8(at + 15),
       ),
       28 + papxSize + chpxSize + 2 + length * 2,
     );

@@ -72,11 +72,13 @@ LoadedDocument _again(LoadedDocument document) =>
 LoadedDocument _openRtf(String rtf) =>
     _codec.decode(Uint8List.fromList(latin1.encode(rtf)));
 
-/// A .docx whose body is [body]; [media] go in word/media, related from the
-/// body as rIdM1, rIdM2...
+/// A .docx whose body is [body] and whose last section has [section]'s
+/// properties; [media] go in word/media, related from the body as rIdM1,
+/// rIdM2...
 LoadedDocument _openDocx(
   String body, {
   Map<String, Uint8List> media = const {},
+  String section = '',
 }) {
   final package = newDocumentPackage();
   final namespaces = {
@@ -88,7 +90,7 @@ LoadedDocument _openDocx(
       'word/document.xml',
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
           '<w:document $namespaces><w:body>$body'
-          '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>'
+          '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>$section</w:sectPr>'
           '</w:body></w:document>',
     )
     ..addRelationships('word/document.xml', [
@@ -954,6 +956,45 @@ void main() {
     expect(
       titlePages('<w:titlePg w:val="0"/>', differentFirstPage: true),
       'same first',
+    );
+  });
+
+  test('each section keeps how it numbers its pages', () {
+    String paragraph(String text, String numbers) =>
+        '<w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/>$numbers'
+        '</w:sectPr></w:pPr><w:r><w:t>$text</w:t></w:r></w:p>';
+    final opened = _openDocx(
+      '${paragraph('Preface', '<w:pgNumType w:fmt="lowerRoman"/>')}'
+      '${paragraph('Chapter', '<w:pgNumType w:start="1"/>')}'
+      '${paragraph('Notes', '')}'
+      '<w:p><w:r><w:t>Appendix</w:t></w:r></w:p>',
+      section: '<w:pgNumType w:fmt="upperLetter" w:start="3"/>',
+    );
+    final rtf = _save(opened);
+    final sections = [
+      for (final match in RegExp(r'\\sectd[^\r\n]*').allMatches(rtf)) match[0]!,
+    ];
+
+    expect(sections, hasLength(4));
+    expect(sections[0], contains(r'\pgnlcrm'));
+    expect(sections[0], isNot(contains(r'\pgnrestart')));
+    expect(sections[1], contains(r'\pgnrestart\pgnstarts1'));
+    expect(sections[2], isNot(contains(r'\pgn')));
+    expect(sections[3], contains(r'\pgnucltr\pgnrestart\pgnstarts3'));
+
+    final again = _openRtf(rtf);
+    final breaks = [
+      for (final operation in again.delta.toList())
+        if (operation.data case {EmbedTypes.sectionBreak: final String xml})
+          sectionXmlOf(xml),
+    ];
+    expect(breaks, hasLength(3));
+    expect(breaks[0], contains('<w:pgNumType w:fmt="lowerRoman"/>'));
+    expect(breaks[1], contains('<w:pgNumType w:start="1"/>'));
+    expect(breaks[2], isNot(contains('pgNumType')));
+    expect(
+      (again.source! as DocxPackage).text('word/document.xml'),
+      contains('<w:pgNumType w:fmt="upperLetter" w:start="3"/>'),
     );
   });
 

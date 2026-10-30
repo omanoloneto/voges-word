@@ -6,6 +6,8 @@ import 'package:flutter/painting.dart' show Color, EdgeInsets;
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:image/image.dart' as img;
 import 'package:xml/xml.dart';
+import 'package:xml/xml_events.dart'
+    show XmlEndElementEvent, XmlStartElementEvent, parseEvents;
 
 import '../document/delta_blocks.dart';
 import '../document/document_look.dart';
@@ -87,7 +89,11 @@ class RtfWriter {
       for (final block in blocks)
         if (block is EmbedBlock && block.type == EmbedTypes.sectionBreak)
           _PageSetup.fromSection(sectionXmlOf(block.value), look),
-      _PageSetup.fromLook(look, titlePage: _differentFirstPage),
+      _PageSetup.fromLook(
+        look,
+        titlePage: _differentFirstPage,
+        numbers: _lastPageNumbers(),
+      ),
     ];
     final defaults =
         '{\\*\\defchp ${_characterLook(look.body)}}'
@@ -282,6 +288,16 @@ class RtfWriter {
     if (page.columns > 1) {
       out.write('\\cols${page.columns}\\colsx${page.columnSpacing}');
     }
+    out.write(switch (page.numbers.format) {
+      'upperRoman' => r'\pgnucrm',
+      'lowerRoman' => r'\pgnlcrm',
+      'upperLetter' => r'\pgnucltr',
+      'lowerLetter' => r'\pgnlcltr',
+      _ => '',
+    });
+    if (page.numbers.start case final first?) {
+      out.write('\\pgnrestart\\pgnstarts${first.clamp(0, 32767)}');
+    }
     out.write(switch (page.start) {
       'continuous' => r'\sbknone',
       'evenPage' => r'\sbkeven',
@@ -291,6 +307,46 @@ class RtfWriter {
     });
     if (page.titlePage) out.write(r'\titlepg');
     return out.toString();
+  }
+
+  /// How the last section numbers its pages, from the body's own w:sectPr,
+  /// which the editor keeps in the package.
+  _PageNumbers _lastPageNumbers() {
+    final package = _package;
+    if (package == null) return _unnumbered;
+    try {
+      final text = package.text(package.mainDocumentPath);
+      if (text == null || !text.contains('pgNumType')) return _unnumbered;
+      final path = <String>[];
+      var numbers = _unnumbered;
+      for (final event in parseEvents(text)) {
+        if (event is XmlStartElementEvent) {
+          final local = event.localName;
+          final inBody = path.length >= 2 && path[1] == 'body';
+          if (inBody && path.length == 2 && local == 'sectPr') {
+            numbers = _unnumbered;
+          } else if (inBody &&
+              path.length == 3 &&
+              path[2] == 'sectPr' &&
+              local == 'pgNumType') {
+            String? attribute(String name) => event.attributes
+                .where((attribute) => attribute.localName == name)
+                .firstOrNull
+                ?.value;
+            numbers = (
+              format: attribute('fmt'),
+              start: int.tryParse(attribute('start')?.trim() ?? ''),
+            );
+          }
+          if (!event.isSelfClosing) path.add(local);
+        } else if (event is XmlEndElementEvent && path.isNotEmpty) {
+          path.removeLast();
+        }
+      }
+      return numbers;
+    } catch (_) {
+      return _unnumbered;
+    }
   }
 
   /// The document's one set of headers and footers, which every section
@@ -1316,7 +1372,7 @@ enum _ListKind {
   };
 }
 
-/// Page size, margins and start of a section, in twips.
+/// Page size, margins, start and page numbers of a section, in twips.
 class _PageSetup {
   _PageSetup({
     required this.width,
@@ -1331,22 +1387,28 @@ class _PageSetup {
     this.columnSpacing = 720,
     this.start,
     this.titlePage = false,
+    this.numbers = _unnumbered,
   });
 
   /// The last section, whose first page the editor's setting decides.
-  factory _PageSetup.fromLook(DocumentLook look, {bool titlePage = false}) =>
-      _PageSetup.fromPoints(
-        look.pageWidth,
-        look.pageHeight,
-        look.margins,
-        titlePage: titlePage,
-      );
+  factory _PageSetup.fromLook(
+    DocumentLook look, {
+    bool titlePage = false,
+    _PageNumbers numbers = _unnumbered,
+  }) => _PageSetup.fromPoints(
+    look.pageWidth,
+    look.pageHeight,
+    look.margins,
+    titlePage: titlePage,
+    numbers: numbers,
+  );
 
   factory _PageSetup.fromPoints(
     double width,
     double height,
     EdgeInsets margins, {
     bool titlePage = false,
+    _PageNumbers numbers = _unnumbered,
   }) => _PageSetup(
     width: RtfWriter._twips(width),
     height: RtfWriter._twips(height),
@@ -1355,6 +1417,7 @@ class _PageSetup {
     top: RtfWriter._twips(margins.top),
     bottom: RtfWriter._twips(margins.bottom),
     titlePage: titlePage,
+    numbers: numbers,
   );
 
   /// From a .docx section (`w:sectPr`); what it lacks comes from [look].
@@ -1380,6 +1443,7 @@ class _PageSetup {
     final margins = child('pgMar');
     final columns = child('cols');
     final titlePage = child('titlePg');
+    final numbers = child('pgNumType');
     return _PageSetup(
       width: number(size, 'w') ?? fallback.width,
       height: number(size, 'h') ?? fallback.height,
@@ -1399,6 +1463,10 @@ class _PageSetup {
             'false',
             'off',
           }.contains(titlePage.getAttribute('w:val')),
+      numbers: (
+        format: numbers?.getAttribute('w:fmt'),
+        start: number(numbers, 'start'),
+      ),
     );
   }
 
@@ -1418,9 +1486,16 @@ class _PageSetup {
 
   /// The section's first page has its own header and footer.
   final bool titlePage;
+  final _PageNumbers numbers;
 
   bool get landscape => width > height;
 }
+
+/// Word's `w:pgNumType`: the format, such as lowerRoman (null for 1, 2, 3),
+/// and the number of the section's first page (null to go on counting).
+typedef _PageNumbers = ({String? format, int? start});
+
+const _PageNumbers _unnumbered = (format: null, start: null);
 
 /// Paragraph properties of a .docx paragraph that the editor keeps hidden
 /// and RTF can say.
