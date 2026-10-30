@@ -782,6 +782,36 @@ void main() {
       expect(_shownNumbers(document), ['1.', '2.', '3.', '1.', '2.']);
     });
 
+    test(r'an \ls that redefines a level counts with its list while the '
+        'level shows the same numbers', () {
+      String level(String properties) =>
+          '{\\listlevel$properties'
+          r"{\leveltext\'02\'00.;}{\levelnumbers\'01;}\fi-360\li720}";
+      final document = _read(
+        r'{\rtf1{\*\listtable{\list\listtemplateid1'
+        '${level(r'\levelnfc0\levelstartat1')}'
+        r'\listid7}}{\*\listoverridetable'
+        r'{\listoverride\listid7\listoverridecount0\ls1}'
+        // Only further in.
+        r'{\listoverride\listid7\listoverridecount1{\lfolevel'
+        r'\listoverrideformat{\listlevel\levelnfc0\levelstartat1'
+        r"{\leveltext\'02\'00.;}{\levelnumbers\'01;}\fi-360\li1440}}\ls2}"
+        // No numbers.
+        r'{\listoverride\listid7\listoverridecount1{\lfolevel'
+        r'\listoverrideformat{\listlevel\levelnfc255\levelstartat1'
+        r"{\leveltext\'00;}{\levelnumbers;}}}\ls3}"
+        // Starts again where its new level starts.
+        r'{\listoverride\listid7\listoverridecount1{\lfolevel'
+        r'\listoverrideformat\listoverridestartat'
+        '${level(r'\levelnfc0\levelstartat5')}}\\ls4}}'
+        r'\pard\ls1 one\par\pard\ls2 two\par\pard\ls3 none\par'
+        r'\pard\ls4 five\par\pard\ls1 on\par}',
+      );
+
+      expect(_line(document.delta, 'none')['list'], isNull);
+      expect(_shownNumbers(document), ['1.', '2.', '5.', '6.']);
+    });
+
     test(r"\ilvl9, Word's body text, and above put a paragraph in no list", () {
       final numbered = [
         for (var level = 0; level < 8; level++)

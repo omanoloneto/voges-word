@@ -1456,17 +1456,41 @@ class RtfReader {
 
   /// The list of `\ls` [number]. As in Word, the `\ls` of one list of the
   /// list table count as one list, each starting again the levels it
-  /// overrides.
+  /// overrides. One that redefines what a level shows numbers on its own,
+  /// since a list of the .docx that goes on counting another takes its
+  /// levels.
   int _wordList(int number) {
     final override = _overrides[number];
     final list = _lists[override?.listId];
     if (override == null || list == null || list.levels.isEmpty) {
       return _addList(ListSpec.bullets);
     }
-    final id = _addList(() => _listSpec(list, override, _firstLists[list]));
-    _firstLists.putIfAbsent(list, () => id);
+    final own = override.formats.entries.any(
+      (entry) => !_showsAlike(
+        entry.value,
+        list.levels.elementAtOrNull(entry.key),
+        restarted: override.starts.containsKey(entry.key),
+      ),
+    );
+    final id = _addList(
+      () => _listSpec(list, override, own ? null : _firstLists[list]),
+    );
+    if (!own) _firstLists.putIfAbsent(list, () => id);
     return id;
   }
+
+  /// Whether [redefined] shows what [level] shows, wherever it places it.
+  static bool _showsAlike(
+    _LevelDef redefined,
+    _LevelDef? level, {
+    required bool restarted,
+  }) =>
+      level != null &&
+      redefined.format == level.format &&
+      redefined.text == level.text &&
+      redefined.legal == level.legal &&
+      (restarted || redefined.start == level.start) &&
+      (redefined.format != NumberFormat.bullet || redefined.font == level.font);
 
   ListSpec _listSpec(_ListEntry list, _Override override, int? continues) {
     final bullets = list.levels.first.format == NumberFormat.bullet;
@@ -1474,10 +1498,11 @@ class RtfReader {
     return ListSpec(
       [
         for (var index = 0; index < 9; index++)
-          if (index < list.levels.length)
-            _levelSpec(list.levels[index])
-          else
-            fallback.levels[index],
+          switch (override.formats[index] ??
+              list.levels.elementAtOrNull(index)) {
+            final level? => _levelSpec(level),
+            null => fallback.levels[index],
+          },
       ],
       continues: continues,
       restarts: override.starts,
@@ -2514,7 +2539,7 @@ class _ListEntry extends _Destination {
   bool word(RtfReader reader, String word, int? parameter) {
     switch (word) {
       case 'listlevel':
-        reader._beginStory(_ListLevel(this));
+        reader._beginStory(_ListLevel(_add));
       case 'listid':
         id = parameter;
       case 'listname':
@@ -2523,6 +2548,10 @@ class _ListEntry extends _Destination {
         return false;
     }
     return true;
+  }
+
+  void _add(_LevelDef level) {
+    if (levels.length < 9) levels.add(level);
   }
 
   @override
@@ -2535,9 +2564,10 @@ class _ListEntry extends _Destination {
 }
 
 class _ListLevel extends _Destination {
-  _ListLevel(this._list);
+  _ListLevel(this._done);
 
-  final _ListEntry _list;
+  /// Takes the level once its group ends.
+  final void Function(_LevelDef level) _done;
   final _level = _LevelDef();
 
   @override
@@ -2584,7 +2614,7 @@ class _ListLevel extends _Destination {
       ..left = group.para.left
       ..firstLine = group.para.firstLine
       ..font = reader._fontName(group.run.font);
-    if (_list.levels.length < 9) _list.levels.add(_level);
+    _done(_level);
   }
 }
 
@@ -2638,6 +2668,9 @@ class _Override extends _Destination {
   int? listId;
   int? number;
   final starts = <int, int>{};
+
+  /// The levels it redefines (`\listoverrideformat`).
+  final formats = <int, _LevelDef>{};
   var _levels = 0;
 
   @override
@@ -2671,6 +2704,7 @@ class _LfoLevel extends _Destination {
   final int _level;
   var _restart = false;
   int? _start;
+  _LevelDef? _format;
 
   @override
   bool word(RtfReader reader, String word, int? parameter) {
@@ -2680,7 +2714,7 @@ class _LfoLevel extends _Destination {
       case 'levelstartat':
         _start = parameter;
       case 'listlevel':
-        break;
+        reader._beginStory(_ListLevel((level) => _format = level));
       default:
         return false;
     }
@@ -2689,10 +2723,12 @@ class _LfoLevel extends _Destination {
 
   @override
   void close(RtfReader reader, _Group group) {
-    final start = _start;
-    if (_restart && start != null && _level < 9) {
-      _override.starts[_level] = start;
-    }
+    if (_level >= 9) return;
+    final format = _format;
+    if (format != null) _override.formats[_level] = format;
+    // Without a start of its own it starts again where its new level does.
+    final start = _start ?? format?.start;
+    if (_restart && start != null) _override.starts[_level] = start;
   }
 }
 

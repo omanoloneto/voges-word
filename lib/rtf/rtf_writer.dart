@@ -68,17 +68,16 @@ class RtfWriter {
   /// from 1.
   final _lists = <List<_Level>>[];
 
-  /// The list overrides: the list each one numbers, and the levels it
-  /// starts again; its `\ls` is its place from 1.
-  final _overrides = <({int list, Map<int, int> starts})>[];
+  /// The list overrides; the `\ls` of each is its place from 1.
+  final _overrides = <_Override>[];
   final _counters = <int, List<int?>>{};
 
   /// The `\ls` of the Word lists of the opened package, by what numbers
   /// them as one list.
   final _wordLists = <Object, int>{};
 
-  /// The list of each abstract Word list whose lists only restart levels:
-  /// RTF readers count its `\ls` together, as Word counts those lists.
+  /// The list of each abstract Word list: RTF readers count its `\ls`
+  /// together, as Word counts its lists.
   final _abstractLists = <Object, int>{};
   var _numbering = DocxNumbering.parse(null);
   var _counter = WordListCounter(DocxNumbering.parse(null));
@@ -120,7 +119,6 @@ class RtfWriter {
     _look = look;
     _package = source is DocxPackage ? source : null;
     _numbering = DocxNumbering.of(source);
-    _counter = WordListCounter(_numbering);
     _font(look.body.fontFamily ?? 'Arial');
     _differentFirstPage = headersFooters?.differentFirstPage ?? false;
     _headerDistance = headersFooters?.headerDistance ?? 35.4;
@@ -144,6 +142,7 @@ class RtfWriter {
     final stories = StringBuffer();
     if (headersFooters != null) _stories(stories, headersFooters);
     final body = StringBuffer();
+    _counter = WordListCounter(_numbering);
     _part = _package?.mainDocumentPath;
     _inBody = true;
     _orderedList = null;
@@ -281,32 +280,7 @@ class RtfWriter {
       final id = index + 1;
       out.write('\r\n{\\list\\listtemplateid$id\\listhybrid');
       for (final definition in levels) {
-        final format = switch (definition.format) {
-          'bullet' => 23,
-          'none' => 255,
-          final format => _numberFormats[format] ?? 0,
-        };
-        final align = definition.justification;
-        out
-          ..write(
-            '{\\listlevel\\levelnfc$format\\levelnfcn$format\\leveljc$align'
-            '\\leveljcn$align\\levelfollow${definition.follow.index}'
-            '\\levelstartat${definition.start}'
-            '${definition.legal ? r'\levellegal1' : ''}'
-            '\\levelspace0\\levelindent0',
-          )
-          // TextEdit shows its own check or box instead of the bullet.
-          ..write(switch (definition.text) {
-            '☑' => r'{\*\levelmarker \{check\}}',
-            '☐' => r'{\*\levelmarker \{box\}}',
-            _ => '',
-          })
-          ..write(_levelText(definition.text))
-          ..write(definition.font == null ? '' : '\\f${definition.font}')
-          ..write(
-            '\\fi${-definition.hanging}\\li${definition.left}'
-            '\\lin${definition.left} }',
-          );
+        _listLevel(out, definition);
       }
       out.write('{\\listname ;}\\listid$id}');
     }
@@ -314,22 +288,58 @@ class RtfWriter {
     for (final (index, override) in _overrides.indexed) {
       out.write('{\\listoverride\\listid${override.list + 1}');
       final starts = override.starts;
+      final redefined = override.redefined;
+      final levels = {...starts.keys, ...redefined.keys};
       // Word writes the levels in order, one or all nine of them.
-      final count = starts.isEmpty
+      final count = levels.isEmpty
           ? 0
-          : (starts.keys.every((level) => level == 0) ? 1 : wordListLevels);
+          : (levels.every((level) => level == 0) ? 1 : wordListLevels);
       out.write('\\listoverridecount$count');
       for (var level = 0; level < count; level++) {
-        out.write(switch (starts[level]) {
-          final start? =>
-            '{\\lfolevel\\listoverridestartat'
-                '\\levelstartat${start.clamp(0, 32767)}}',
-          null => r'{\lfolevel}',
-        });
+        out.write(r'{\lfolevel');
+        if (starts[level] case final start?) {
+          out.write(
+            '\\listoverridestartat\\levelstartat${start.clamp(0, 32767)}',
+          );
+        }
+        if (redefined[level] case final definition?) {
+          out.write(r'\listoverrideformat');
+          _listLevel(out, definition);
+        }
+        out.write('}');
       }
       out.write('\\ls${index + 1}}');
     }
     out.write('}\r\n');
+  }
+
+  void _listLevel(StringBuffer out, _Level definition) {
+    final format = switch (definition.format) {
+      'bullet' => 23,
+      'none' => 255,
+      final format => _numberFormats[format] ?? 0,
+    };
+    final align = definition.justification;
+    out
+      ..write(
+        '{\\listlevel\\levelnfc$format\\levelnfcn$format\\leveljc$align'
+        '\\leveljcn$align\\levelfollow${definition.follow.index}'
+        '\\levelstartat${definition.start}'
+        '${definition.legal ? r'\levellegal1' : ''}'
+        '\\levelspace0\\levelindent0',
+      )
+      // TextEdit shows its own check or box instead of the bullet.
+      ..write(switch (definition.text) {
+        '☑' => r'{\*\levelmarker \{check\}}',
+        '☐' => r'{\*\levelmarker \{box\}}',
+        _ => '',
+      })
+      ..write(_levelText(definition.text))
+      ..write(definition.font == null ? '' : '\\f${definition.font}')
+      ..write(
+        '\\fi${-definition.hanging}\\li${definition.left}'
+        '\\lin${definition.left} }',
+      );
   }
 
   /// `\leveltext`: its length, then its characters, where `\'0N` stands for
@@ -448,6 +458,8 @@ class RtfWriter {
         out.write('{\\$keyword ');
         _part = story.partPath;
         _orderedList = null;
+        // The lists of headers and footers count apart from the body's.
+        _counter = WordListCounter(_numbering);
         _blocks(out, documentBlocks(story.delta), 0);
         out.write('}\r\n');
       }
@@ -692,38 +704,57 @@ class RtfWriter {
     };
   }
 
-  /// The `\ls` of Word list [numId]. The lists of an abstract list that only
-  /// restart levels number on its list, starting those levels again with
-  /// `\listoverridestartat`, so they count together as in Word; a list that
-  /// redefines levels has a list of its own.
+  /// The `\ls` of Word list [numId]. The lists of an abstract list number on
+  /// its list, so they count together as in Word: each starts again the
+  /// levels it restarts with `\listoverridestartat` and gives the levels it
+  /// redefines with `\listoverrideformat`.
   int _wordListNumber(int numId) =>
       _wordLists[_numbering.sameNumbering(numId)] ??= () {
-        if (!_numbering.usesAbstractLevels(numId)) {
-          return _addList(
-            _wordLevels((level) => _numbering.level(numId, level)),
-          );
-        }
         final list = _abstractLists[_numbering.groupOf(numId)!] ??= _define(
           _wordLevels((level) => _numbering.abstractLevel(numId, level)),
         );
-        return _override(list, _numbering.startOverrides(numId));
+        final shared = _lists[list];
+        final starts = _numbering.startOverrides(numId);
+        final redefined = <int, _Level>{};
+        for (var level = 0; level < wordListLevels; level++) {
+          final own = _numbering.level(numId, level);
+          if (own == null) continue;
+          // A level that only starts again keeps the list's definition.
+          final start = starts.containsKey(level) ? shared[level].start : null;
+          if (_wordLevel(own, start: start) != shared[level]) {
+            redefined[level] = _wordLevel(own);
+          }
+        }
+        return _override(list, starts: starts, redefined: redefined);
       }();
 
   /// A list with an override of its own; returns its `\ls`.
-  int _addList(List<_Level> levels) => _override(_define(levels), const {});
+  int _addList(List<_Level> levels) => _override(_define(levels));
 
   int _define(List<_Level> levels) {
     _lists.add(levels);
     return _lists.length - 1;
   }
 
-  int _override(int list, Map<int, int> starts) {
-    _overrides.add((list: list, starts: starts));
+  int _override(
+    int list, {
+    Map<int, int> starts = const {},
+    Map<int, _Level> redefined = const {},
+  }) {
+    _overrides.add((
+      list: list,
+      starts: starts,
+      redefined: redefined,
+      levels: [
+        for (final (level, definition) in _lists[list].indexed)
+          redefined[level] ?? definition,
+      ],
+    ));
     return _overrides.length;
   }
 
   /// The levels `\ls` [number] numbers.
-  List<_Level> _levelsOf(int number) => _lists[_overrides[number - 1].list];
+  List<_Level> _levelsOf(int number) => _overrides[number - 1].levels;
 
   /// The levels of a Word list as its definition in the opened package
   /// numbers them; the levels it leaves out are the editor's.
@@ -739,12 +770,13 @@ class RtfWriter {
     ];
   }
 
-  _Level _wordLevel(WordLevel level) {
+  /// [level] as the list table holds it, starting at [start] if given.
+  _Level _wordLevel(WordLevel level, {int? start}) {
     final font = level.font?.trim();
     return (
       format: level.format,
       text: level.text,
-      start: level.start.clamp(0, 32767),
+      start: (start ?? level.start).clamp(0, 32767),
       font: font == null || font.isEmpty || font.length > _maxFontName
           ? null
           : _font(font),
@@ -1532,6 +1564,15 @@ typedef _Level = ({
   int left,
   int hanging,
   bool legal,
+});
+
+/// A list override: the list it numbers, the levels it starts again and
+/// the levels it redefines, and so the levels it numbers with.
+typedef _Override = ({
+  int list,
+  Map<int, int> starts,
+  Map<int, _Level> redefined,
+  List<_Level> levels,
 });
 
 /// Page size, margins, start and page numbers of a section, in twips.

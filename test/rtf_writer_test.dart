@@ -1437,6 +1437,169 @@ void main() {
     expect(numId('R1'), isNot(numId('A1')));
   });
 
+  test('Word lists that redefine levels count with the other lists of their '
+      'abstract list, overriding those levels', () async {
+    String level(int level, String format, String text, {int left = 720}) =>
+        '<w:lvl w:ilvl="$level"><w:start w:val="1"/><w:numFmt '
+        'w:val="$format"/><w:lvlText w:val="$text"/><w:pPr><w:ind '
+        'w:left="$left" w:hanging="360"/></w:pPr></w:lvl>';
+    String item(String text, int numId, [int level = 0]) =>
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="$level"/><w:numId '
+        'w:val="$numId"/></w:numPr></w:pPr><w:r><w:t>$text</w:t></w:r></w:p>';
+    final opened = _openDocx(
+      [
+        item('Alpha', 1),
+        item('Beta', 2),
+        item('Gamma', 1),
+        item('Gamma sub', 1, 1),
+        item('Delta', 3),
+        item('Delta sub', 3, 1),
+      ].join(),
+      numbering:
+          '<w:numbering xmlns:w="${Namespaces.w}">'
+          '<w:abstractNum w:abstractNumId="0">${level(0, 'decimal', '%1)')}'
+          '${level(1, 'lowerLetter', '%2.', left: 1440)}</w:abstractNum>'
+          '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'
+          // Only a deeper first level.
+          '<w:num w:numId="2"><w:abstractNumId w:val="0"/><w:lvlOverride '
+          'w:ilvl="0">${level(0, 'decimal', '%1)', left: 1440)}'
+          '</w:lvlOverride></w:num>'
+          '<w:num w:numId="3"><w:abstractNumId w:val="0"/><w:lvlOverride '
+          'w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride>'
+          '<w:lvlOverride w:ilvl="1">'
+          '${level(1, 'lowerRoman', '(%2)', left: 2160)}</w:lvlOverride>'
+          '</w:num></w:numbering>',
+    );
+    final rtf = _save(opened);
+    _expectBalanced(rtf);
+
+    expect(RegExp(r'\{\\list\\').allMatches(rtf), hasLength(1));
+    expect(
+      rtf,
+      contains(
+        r'{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}'
+        r'{\listoverride\listid1\listoverridecount1{\lfolevel'
+        r'\listoverrideformat{\listlevel\levelnfc0\levelnfcn0\leveljc0'
+        r'\leveljcn0\levelfollow0\levelstartat1\levelspace0\levelindent0'
+        r"{\leveltext\'02\'00);}{\levelnumbers\'01;}\fi-360\li1440\lin1440 }}"
+        r'\ls2}'
+        r'{\listoverride\listid1\listoverridecount9{\lfolevel'
+        r'\listoverridestartat\levelstartat1}{\lfolevel\listoverrideformat'
+        r'{\listlevel\levelnfc2\levelnfcn2\leveljc0\leveljcn0\levelfollow0'
+        r'\levelstartat1\levelspace0\levelindent0'
+        r"{\leveltext\'03(\'01);}{\levelnumbers\'02;}\fi-360\li2160\lin2160 }}"
+        '${r'{\lfolevel}' * 7}\\ls3}}',
+      ),
+    );
+    expect(_line(rtf, 'Beta'), contains(r'\ls2\ilvl0\li1440\fi-360'));
+    expect(_line(rtf, 'Delta sub'), contains(r'\ls3\ilvl1\li2160\fi-360'));
+    String shown(String text) => RegExp(
+      r'\{\\listtext\\f\d+ ([^\\}]*)\\tab\}'
+      '${RegExp.escape(text)}'
+      r'\\par',
+    ).firstMatch(rtf)![1]!;
+    expect(
+      [
+        for (final text in [
+          'Alpha',
+          'Beta',
+          'Gamma',
+          'Gamma sub',
+          'Delta',
+          'Delta sub',
+        ])
+          shown(text),
+      ],
+      ['1)', '2)', '3)', 'a.', '1)', '(i)'],
+    );
+
+    // Readers count the \ls of the list together, as Word does.
+    final reopened = _again(opened);
+    final numbering = DocxNumbering.of(reopened.source);
+    final counter = WordListCounter(numbering);
+    final lines = {
+      for (final line in documentBlocks(reopened.delta).whereType<LineBlock>())
+        line.plainText: line,
+    };
+    expect(
+      [
+        for (final line in lines.values)
+          if (line.list != null) (counter..count(line)).textOf(line),
+      ],
+      ['1)', '2)', '3)', 'a.', '1)', '(i)'],
+    );
+    Object? group(String text) => numbering.groupOf(
+      (lines[text]!.attributes[HiddenAttributes.numbering] as num).toInt(),
+    );
+    expect(group('Beta'), group('Alpha'));
+
+    final textutil = File('/usr/bin/textutil');
+    if (!textutil.existsSync()) return;
+    final folder = Directory.systemTemp.createTempSync('rtf_overrides');
+    addTearDown(() => folder.deleteSync(recursive: true));
+    final file = File('${folder.path}/overrides.rtf')
+      ..writeAsStringSync(rtf, encoding: latin1);
+    final result = await Process.run(textutil.path, [
+      '-convert',
+      'html',
+      file.path,
+      '-stdout',
+    ]);
+    expect(result.exitCode, 0);
+    expect(
+      result.stdout,
+      allOf(
+        matches(RegExp('<li[^>]*>Beta</li>')),
+        matches(RegExp('<li[^>]*>Delta sub</li>')),
+      ),
+    );
+  });
+
+  test('headers and footers number their lists apart from the body', () {
+    String level(int level, String format, String text) =>
+        '<w:lvl w:ilvl="$level"><w:start w:val="1"/><w:numFmt '
+        'w:val="$format"/><w:lvlText w:val="$text"/></w:lvl>';
+    String item(String text, [int level = 0]) =>
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="$level"/><w:numId w:val="1"/>'
+        '</w:numPr></w:pPr><w:r><w:t>$text</w:t></w:r></w:p>';
+    final numbering =
+        '<w:numbering xmlns:w="${Namespaces.w}">'
+        '<w:abstractNum w:abstractNumId="0">${level(0, 'upperRoman', '%1.')}'
+        '${level(1, 'upperLetter', '%2.')}${level(2, 'decimal', '%3.')}'
+        '${level(3, 'lowerLetter', '%4)')}</w:abstractNum>'
+        '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'
+        '</w:numbering>';
+    final opened = _openDocx(
+      [item('Introduction'), item('Profession')].join(),
+      numbering: numbering,
+    );
+    HeaderFooterStory story(String text) => HeaderFooterStory(
+      delta: _openDocx(item(text, 3), numbering: numbering).delta,
+    );
+    final rtf = latin1.decode(
+      _codec.encode(
+        opened.delta,
+        source: opened.source,
+        look: opened.look,
+        headersFooters: HeadersFooters(
+          headers: {PageVariant.normal: story('Running head')},
+          footers: {PageVariant.normal: story('Running foot')},
+        ),
+      ),
+    );
+
+    expect(_line(rtf, 'Running head'), contains(r'{\listtext\f0 a)\tab}'));
+    expect(_line(rtf, 'Running foot'), contains(r'{\listtext\f0 a)\tab}'));
+    expect(
+      _line(rtf, 'Introduction'),
+      contains(r'{\listtext\f0 I.\tab}Introduction'),
+    );
+    expect(
+      _line(rtf, 'Profession'),
+      contains(r'{\listtext\f0 II.\tab}Profession'),
+    );
+  });
+
   test('checklist items are bullets of boxes in Segoe UI Symbol', () {
     final rtf = latin1.decode(
       _codec.encode(

@@ -109,6 +109,12 @@ class MarkdownWriter {
     // nothing has been written after it.
     String? listBefore;
     var listBeforeAt = -1;
+    // Only what shows is written, so content that shows nothing keeps two
+    // lists apart as an empty paragraph does.
+    void add(String chunk) {
+      if (chunk.trim().isNotEmpty) chunks.add(chunk);
+    }
+
     void endList() {
       if (items.isEmpty) return;
       chunks.add(items.join('\n'));
@@ -140,10 +146,36 @@ class MarkdownWriter {
       final block = blocks[index];
       if (block is LineBlock && block.list != null) {
         endCode();
+        final key = block.isOrdered ? _counter.keyOf(block) : 'bullets';
+        final counted = _counter.count(block);
+        if (block.isOrdered &&
+            (_counter.textOf(block)?.trim().isEmpty ?? false)) {
+          // Word shows no number before it: it goes on the item it sits
+          // under, or stands apart.
+          final level = WordListCounter.levelOf(block);
+          var holder = levels.length;
+          while (holder > 0 && levels[holder - 1].wordLevel > level) {
+            holder--;
+          }
+          if (holder == 0 || block.heading != null) {
+            endList();
+            _paragraph(block).forEach(add);
+            continue;
+          }
+          levels.length = holder;
+          final text = _continuation(block, levels[holder - 1].offset);
+          if (text.trim().isNotEmpty) {
+            items.add('\n$text');
+            continued = true;
+          }
+          continue;
+        }
         items.add(
           _item(
             block,
             levels,
+            key: key,
+            counted: counted,
             continued: continued,
             after: items.isEmpty && chunks.length == listBeforeAt
                 ? listBefore
@@ -157,7 +189,7 @@ class MarkdownWriter {
         endCode();
         endList();
         _counter.breakRun();
-        chunks.addAll(_paragraph(block, label: _label(block)));
+        _paragraph(block, label: _label(block)).forEach(add);
         continue;
       }
       final level = _continuationLevel(block, levels.length);
@@ -196,15 +228,15 @@ class MarkdownWriter {
       _counter.breakRun();
       switch (block) {
         case LineBlock():
-          chunks.addAll(_paragraph(block));
+          _paragraph(block).forEach(add);
         case EmbedBlock(type: EmbedTypes.table):
           final table = tables[tableIdOf(block.value)];
-          if (table != null) chunks.add(_table(table));
+          if (table != null) add(_table(table));
         case EmbedBlock(type: EmbedTypes.opaqueBlock):
           final content = OpaqueContent.decode(block.value);
           if (content.hidden) break;
           for (final line in content.text.split('\n')) {
-            chunks.add(_escape(line.trim(), lineStart: true));
+            add(_escape(line.trim(), lineStart: true));
           }
         case EmbedBlock():
           break;
@@ -212,10 +244,7 @@ class MarkdownWriter {
     }
     endCode();
     endList();
-    return [
-      for (final chunk in chunks)
-        if (chunk.trim().isNotEmpty) chunk,
-    ];
+    return chunks;
   }
 
   static bool _isBlank(DocumentBlock block) =>
@@ -255,7 +284,8 @@ class MarkdownWriter {
     final chunks = <String>[];
     final parts = pageParts(line);
     final heading = line.heading?.clamp(1, 6);
-    final quote = math.min(line.indent, 8);
+    // A list item's indent is its level.
+    final quote = line.list == null ? math.min(line.indent, 8) : 0;
     for (var index = 0; index < parts.length; index++) {
       final anchors = index == 0 ? _anchors(line) : '';
       var text = _inline(
@@ -330,11 +360,15 @@ class MarkdownWriter {
   /// as part of the text above. Items nest under the open item of a level
   /// above theirs, and items of one level stay side by side, however deep
   /// the list starts.
-  /// [after] is the top-level delimiter or bullet of a list that ends right
-  /// before this item's list, with nothing written between them.
+  /// [key] is the list the item belongs to and [counted] its number, as the
+  /// counter gave them; [after] is the top-level delimiter or bullet of a
+  /// list that ends right before this item's list, with nothing written
+  /// between them.
   String _item(
     LineBlock line,
     List<_Level> levels, {
+    required Object key,
+    required int? counted,
     bool continued = false,
     String? after,
   }) {
@@ -347,11 +381,9 @@ class MarkdownWriter {
     final previous = level < levels.length ? levels[level] : null;
     final parent = level == 0 ? null : levels[level - 1];
     final ordered = line.isOrdered;
-    final key = ordered ? _counter.keyOf(line) : 'bullets';
     var delimiter = ordered ? '.' : '-';
     var marker = delimiter;
     var number = 1;
-    final counted = _counter.count(line);
     // Numbered items of another level in the place of the open one start
     // another list there, which shows their own numbers.
     final another =

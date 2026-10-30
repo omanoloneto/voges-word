@@ -173,4 +173,70 @@ void main() {
       numbered,
     );
   });
+
+  test('lists with only content that shows nothing between them stay '
+      'apart', () {
+    final docx = DocxCodec(TableStore());
+    final loaded = _openWord(
+      docx,
+      [
+        _item('A1', 1),
+        _item('A2', 1),
+        // Kept as it is, without text.
+        '<w:altChunk xmlns:r="http://schemas.openxmlformats.org/'
+            'officeDocument/2006/relationships" r:id="rIdChunk"/>',
+        _item('B1', 2),
+        _item('B2', 2),
+      ].join(),
+      '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start '
+      'w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/>'
+      '</w:lvl></w:abstractNum>'
+      '<w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:start '
+      'w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/>'
+      '</w:lvl></w:abstractNum>'
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'
+      '<w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>',
+    );
+
+    expect(
+      utf8.decode(
+        MarkdownCodec(docx).encode(loaded.delta, source: loaded.source),
+      ),
+      '1. A1\n2. A2\n\n1) B1\n2) B2\n',
+    );
+  });
+
+  test('items whose Word level shows no number go on the item above', () {
+    final docx = DocxCodec(TableStore());
+    final loaded = _openWord(
+      docx,
+      [
+        _item('First', 1),
+        _item('second', 1, 1),
+        _item('another', 1, 1),
+        _item('', 1, 1),
+        _item('third level', 1, 2),
+        _item('Between'),
+        _item('Loose', 1, 1),
+        _item('Item', 1),
+      ].join(),
+      // Like LibreOffice's tdf120394.docx: the second level has no text and
+      // counts from 0.
+      '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start '
+      'w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1"/>'
+      '</w:lvl><w:lvl w:ilvl="1"><w:numFmt w:val="decimal"/><w:lvlText '
+      'w:val=""/></w:lvl><w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt '
+      'w:val="decimal"/><w:lvlText w:val="%1.%2.%3"/></w:lvl>'
+      '</w:abstractNum>'
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>',
+    );
+
+    expect(
+      utf8.decode(
+        MarkdownCodec(docx).encode(loaded.delta, source: loaded.source),
+      ),
+      '1. First\n\n   second\n\n   another\n\n   1. third level\n\n'
+      'Between\n\nLoose\n\n2. Item\n',
+    );
+  });
 }
