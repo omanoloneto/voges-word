@@ -894,6 +894,46 @@ void main() {
       expect(huge, contains('<li>Terms'));
     });
 
+    test('letters go on after z as in Word, where browsers would show ab', () {
+      final spec = DocumentSpec();
+      final list = spec.addList(
+        ListSpec([
+          const ListLevelSpec(
+            format: NumberFormat.lowerLetter,
+            text: '%1.',
+            start: 26,
+          ),
+          for (var level = 1; level < 9; level++)
+            ListLevelSpec(format: NumberFormat.decimal, text: '%${level + 1}.'),
+        ]),
+      );
+      spec.body.addAll([
+        _item('z', list),
+        _item('aa', list),
+        _item('bb', list),
+      ]);
+      expect(
+        _save(_open(spec)),
+        contains(
+          '<ol start="26" type="a"><li>z</li>\n'
+          '<li data-marker="aa.">aa</li>\n<li data-marker="bb.">bb</li></ol>',
+        ),
+      );
+
+      // The editor's own lists letter their second level.
+      final delta = Delta()
+        ..insert('Top')
+        ..insert('\n', {'list': 'ordered'});
+      for (var item = 1; item <= 28; item++) {
+        delta
+          ..insert('Item $item')
+          ..insert('\n', {'list': 'ordered', 'indent': 1});
+      }
+      final html = _write(delta);
+      expect(html, contains('<li>Item 26</li><li data-marker="aa.">Item 27'));
+      expect(html, contains('<li data-marker="bb.">Item 28</li>'));
+    });
+
     test('lists of one abstract list count together, as in Word', () {
       final loaded = _openWord(
         [

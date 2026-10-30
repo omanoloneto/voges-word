@@ -4,8 +4,10 @@ import 'dart:math' as math;
 import 'package:flutter_quill/quill_delta.dart';
 
 import '../document/delta_blocks.dart';
+import '../document/document_look.dart';
 import '../document/embeds.dart';
 import '../document/tables.dart';
+import '../docx/docx_builder.dart' show ListSuffix;
 import '../docx/docx_numbering.dart';
 import '../docx/word_list_counter.dart';
 import 'html_writer.dart';
@@ -15,16 +17,26 @@ import 'writing.dart';
 /// strikethrough. Underline, colors, sizes, alignment, headers and footers
 /// have no Markdown and are left out.
 class MarkdownWriter {
-  MarkdownWriter(this.tables, {required this.numbering, required this.html})
-    : _counter = WordListCounter(numbering);
+  MarkdownWriter(
+    this.tables, {
+    required this.numbering,
+    required DocumentLook look,
+  }) : _counter = WordListCounter(numbering),
+       _look = look;
 
   final TableStore tables;
   final DocxNumbering numbering;
+  final DocumentLook _look;
+  final WordListCounter _counter;
 
   /// Writes the tables Markdown can't hold: merged cells, lists or tables
-  /// inside cells.
-  final HtmlWriter html;
-  final WordListCounter _counter;
+  /// inside cells. Their lists count on with the text's, as in Word.
+  late final _html = HtmlWriter(
+    tables,
+    look: _look,
+    numbering: numbering,
+    counter: _counter,
+  );
 
   String write(Delta delta) {
     final blocks = documentBlocks(delta);
@@ -126,6 +138,13 @@ class MarkdownWriter {
         continued = false;
         continue;
       }
+      if (block is LineBlock && _counter.unnumberedList(block) != null) {
+        endCode();
+        endList();
+        _counter.breakRun();
+        chunks.addAll(_paragraph(block, label: _label(block)));
+        continue;
+      }
       final level = _continuationLevel(block, levels.length);
       if (block is LineBlock && _isCode(block)) {
         if (code.isNotEmpty && codeLevel != level) endCode();
@@ -143,6 +162,7 @@ class MarkdownWriter {
         final following = next < blocks.length ? blocks[next] : null;
         if (following is LineBlock &&
             following.list == null &&
+            _counter.unnumberedList(following) == null &&
             _isCode(following) &&
             _continuationLevel(following, levels.length) == codeLevel) {
           code.addAll(List.filled(next - index, ''));
@@ -215,7 +235,8 @@ class MarkdownWriter {
 
   // Paragraphs and headings
 
-  List<String> _paragraph(LineBlock line) {
+  /// A [label] Word shows before the paragraph starts its text.
+  List<String> _paragraph(LineBlock line, {String label = ''}) {
     final chunks = <String>[];
     final parts = pageParts(line);
     final heading = line.heading?.clamp(1, 6);
@@ -227,6 +248,9 @@ class MarkdownWriter {
         breaks: heading == null,
         indent: quote == 0 ? '' : '> ' * quote,
       ).trim();
+      if (index == 0 && label.isNotEmpty) {
+        text = '${_escape(label, lineStart: true)}$text'.trimRight();
+      }
       if (heading != null && text.endsWith('#')) {
         text = '${text.substring(0, text.length - 1)}\\#';
       }
@@ -241,6 +265,21 @@ class MarkdownWriter {
     }
     return chunks;
   }
+
+  /// Counts a paragraph at a level of its Word list without numbers, which
+  /// restarts the levels below, and returns the level's text Word shows
+  /// before it with what follows; empty for other lines.
+  String _label(LineBlock line) {
+    final numId = _counter.unnumberedList(line);
+    if (numId == null) return '';
+    _counter.count(line);
+    final text = _counter.textOf(line)?.replaceAll(_labelBreaks, ' ').trim();
+    if (text == null || text.isEmpty) return '';
+    final level = numbering.level(numId, WordListCounter.levelOf(line))!;
+    return level.suffix == ListSuffix.nothing ? text : '$text ';
+  }
+
+  static final _labelBreaks = RegExp('[\t\n\r\u000B  ]');
 
   /// Inline HTML anchors for the line's bookmarks, the targets of `#` links.
   static String _anchors(LineBlock line) => [
@@ -273,9 +312,15 @@ class MarkdownWriter {
 
   /// The item's Markdown. It starts with an empty line after a paragraph or
   /// code that [continued] the item before, and where Markdown would read it
-  /// as part of the text above.
+  /// as part of the text above. Items nest under the open item of a level
+  /// above theirs, and items of one level stay side by side, however deep
+  /// the list starts.
   String _item(LineBlock line, List<_Level> levels, {bool continued = false}) {
-    final level = math.min(line.indent, levels.length);
+    final wordLevel = WordListCounter.levelOf(line);
+    var level = 0;
+    while (level < levels.length && levels[level].wordLevel < wordLevel) {
+      level++;
+    }
     final indent = level == 0 ? 0 : levels[level - 1].offset;
     final previous = level < levels.length ? levels[level] : null;
     final parent = level == 0 ? null : levels[level - 1];
@@ -285,13 +330,20 @@ class MarkdownWriter {
     var marker = '-';
     var number = 1;
     final counted = _counter.count(line);
+    // Numbered items of another level in the place of the open one start
+    // another list there, which shows their own numbers.
+    final another =
+        previous != null &&
+        (previous.ordered != ordered ||
+            previous.key != key ||
+            (ordered && previous.wordLevel != wordLevel));
     if (ordered) {
       if (previous != null && previous.ordered) {
         // A list right after another one at the same level needs another
         // delimiter, or Markdown joins them.
-        delimiter = previous.key == key
-            ? previous.delimiter
-            : (previous.delimiter == '.' ? ')' : '.');
+        delimiter = another
+            ? (previous.delimiter == '.' ? ')' : '.')
+            : previous.delimiter;
       }
       number = counted!;
       marker = '$number$delimiter';
@@ -311,14 +363,12 @@ class MarkdownWriter {
           ordered: ordered,
           delimiter: delimiter,
           empty: empty,
+          wordLevel: wordLevel,
         ),
       );
     // Another list right after a list needs a blank line: one that doesn't
     // start at 1 can't interrupt the item before. Under the text of its
     // parent, neither can an empty item or a list not starting at 1.
-    final another =
-        previous != null &&
-        (previous.ordered != ordered || previous.key != key);
     final interrupts =
         previous == null &&
         parent != null &&
@@ -378,7 +428,7 @@ class MarkdownWriter {
             ),
           ),
         );
-    if (!simple) return html.table(table).trim();
+    if (!simple) return _html.table(table).trim();
     final columns = rows.map((row) => row.length).fold(1, math.max);
     String line(List<List<DocumentBlock>> row, {bool header = false}) {
       final cells = [
@@ -409,7 +459,9 @@ class MarkdownWriter {
 
   String _cell(List<DocumentBlock> blocks, {bool header = false}) => [
     for (final block in blocks.whereType<LineBlock>())
-      _inline(block.pieces, table: true, header: header).trim(),
+      '${_escape(_label(block), table: true)}'
+              '${_inline(block.pieces, table: true, header: header).trim()}'
+          .trim(),
   ].where((text) => text.isNotEmpty).join('<br>');
 
   // Inline content
@@ -840,6 +892,7 @@ class _Level {
     required this.ordered,
     required this.delimiter,
     required this.empty,
+    required this.wordLevel,
   });
 
   /// Column where the item's content starts.
@@ -850,6 +903,9 @@ class _Level {
 
   /// The item has no text, so an item under it doesn't follow a paragraph.
   final bool empty;
+
+  /// The item's list level in the editor and in Word.
+  final int wordLevel;
 }
 
 /// Delimiters open in this order, so strikethrough sits inside bold and

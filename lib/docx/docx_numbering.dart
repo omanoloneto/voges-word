@@ -13,6 +13,15 @@ const _checkboxFont = 'Segoe UI Symbol';
 /// Word numbers levels 0 to 8 only.
 const wordListLevels = 9;
 
+/// The hidden line attribute with the Word level of a paragraph at a level
+/// of its list without numbers (w:numFmt none), which the editor shows as a
+/// plain paragraph; the attribute with its list is
+/// `HiddenAttributes.numbering`.
+const unnumberedLevelAttribute = 'vw-nlvl';
+
+/// Word keeps list ids in 32 bits.
+const _maxWordId = 0x7FFFFFFF;
+
 /// A level of a Word list, as its w:lvl defines it.
 class WordLevel {
   const WordLevel({
@@ -56,6 +65,9 @@ class WordLevel {
   final bool picture;
 
   bool get numbered => format != 'bullet' && format != 'none';
+
+  /// A level whose paragraphs show its text without a number of their own.
+  bool get unnumbered => format == 'none';
 
   /// Only Unicode boxes make checklists: a symbol font's private-use glyph
   /// stays a bullet.
@@ -283,6 +295,31 @@ class DocxNumbering {
   bool restarts(int numId, int level) =>
       _lists[numId]?.starts.containsKey(level) ?? false;
 
+  /// The levels list [numId] restarts by its w:startOverride, with their
+  /// starts.
+  Map<int, int> startOverrides(int numId) => _lists[numId]?.starts ?? const {};
+
+  /// [level] as the abstract list of list [numId] defines it, without what
+  /// the list overrides.
+  WordLevel? abstractLevel(int numId, int level) =>
+      _abstracts[_lists[numId]?.abstractId]?[level];
+
+  /// Whether list [numId] numbers on its abstract list's levels, restarting
+  /// some at most: it has one and redefines none of its levels.
+  bool usesAbstractLevels(int numId) {
+    final list = _lists[numId];
+    return list != null &&
+        list.abstractId != null &&
+        _abstracts.containsKey(list.abstractId) &&
+        list.redefined.isEmpty;
+  }
+
+  /// Whether the part has abstract list [id].
+  bool hasAbstract(int id) => _abstracts.containsKey(id);
+
+  /// Whether the part has list [numId].
+  bool hasList(int numId) => _lists.containsKey(numId);
+
   /// The lists that number as one: each list that redefines and restarts
   /// none of its levels numbers as the other such lists of its abstract
   /// list; any other list numbers on its own.
@@ -306,8 +343,14 @@ class NumberingPlan {
   final _abstracts = <ListKind, int>{};
   final _shared = <ListKind, int>{};
   final _nums = <int, int>{};
-  late int _nextAbstract = _numbering.maxAbstractId + 1;
-  late int _nextNum = _numbering.maxNumId + 1;
+  late final _abstractIds = _Ids(
+    _numbering.maxAbstractId,
+    (id) => _numbering.hasAbstract(id) || _abstracts.containsValue(id),
+  );
+  late final _numIds = _Ids(
+    _numbering.maxNumId,
+    (id) => _numbering.hasList(id) || _nums.containsKey(id),
+  );
 
   bool get isEmpty => _nums.isEmpty;
 
@@ -321,8 +364,8 @@ class NumberingPlan {
   int newOrderedList() => _register(ListKind.ordered);
 
   int _register(ListKind kind) {
-    final id = _nextNum++;
-    _nums[id] = _abstracts[kind] ??= _nextAbstract++;
+    final id = _numIds.take();
+    _nums[id] = _abstracts[kind] ??= _abstractIds.take();
     return id;
   }
 
@@ -423,5 +466,23 @@ class NumberingPlan {
     }
     return '<w:abstractNum w:abstractNumId="$id">'
         '<w:multiLevelType w:val="hybridMultilevel"/>$levels</w:abstractNum>';
+  }
+}
+
+/// New ids after the highest one the part has, or, past Word's range, the
+/// lowest ones from 1 that are free.
+class _Ids {
+  _Ids(int highest, this._taken) : _next = highest + 1;
+
+  final bool Function(int id) _taken;
+  int _next;
+  var _lowest = 1;
+
+  int take() {
+    if (_next >= 1 && _next <= _maxWordId && !_taken(_next)) return _next++;
+    while (_taken(_lowest)) {
+      _lowest++;
+    }
+    return _lowest++;
   }
 }

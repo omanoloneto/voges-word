@@ -75,18 +75,26 @@ String _fontNames(String font) {
 }
 
 /// Where a list level puts the text, and what follows its number or
-/// bullet: `listtab`, `space` or `nothing`.
+/// bullet: `listtab`, `space` or `nothing`; [align] is how the number lines
+/// up, as Word's w:lvlJc says.
 String _labelAlignment(
   String followedBy, {
   required double left,
   required double hanging,
-}) =>
-    '<style:list-level-properties '
-    'text:list-level-position-and-space-mode="label-alignment">'
-    '<style:list-level-label-alignment text:label-followed-by="$followedBy"'
-    '${followedBy == 'listtab' ? ' text:list-tab-stop-position="${odfPoints(left)}"' : ''}'
-    ' fo:text-indent="${odfPoints(-hanging)}" fo:margin-left="${odfPoints(left)}"/>'
-    '</style:list-level-properties>';
+  String? align,
+}) {
+  final textAlign = switch (align) {
+    'right' || 'end' => ' fo:text-align="end"',
+    'center' => ' fo:text-align="center"',
+    _ => '',
+  };
+  return '<style:list-level-properties$textAlign '
+      'text:list-level-position-and-space-mode="label-alignment">'
+      '<style:list-level-label-alignment text:label-followed-by="$followedBy"'
+      '${followedBy == 'listtab' ? ' text:list-tab-stop-position="${odfPoints(left)}"' : ''}'
+      ' fo:text-indent="${odfPoints(-hanging)}" fo:margin-left="${odfPoints(left)}"/>'
+      '</style:list-level-properties>';
+}
 
 /// A stored fragment of Word XML, under one root; null when it is malformed.
 XmlElement? _fragment(Object? xml) {
@@ -551,7 +559,7 @@ class OdtWriter {
         word == null || !word.numbered
             ? '<text:outline-level-style text:level="$level" style:num-format=""/>'
             : '<text:outline-level-style text:level="$level"${_numbers(word, level)}>'
-                  '${_labelAlignment(word.followedBy, left: word.leftPoints, hanging: word.hangingPoints)}'
+                  '${_labelAlignment(word.followedBy, left: word.leftPoints, hanging: word.hangingPoints, align: word.justification)}'
                   '</text:outline-level-style>',
       );
     }
@@ -585,10 +593,15 @@ class OdtWriter {
     };
     return '${prefix.isEmpty ? '' : ' style:num-prefix="${_attribute(prefix)}"'}'
         '${suffix.isEmpty ? '' : ' style:num-suffix="${_attribute(suffix)}"'}'
-        ' style:num-format="$format"'
+        ' style:num-format="$format"${_letterSync(format)}'
         '${shown > 1 ? ' text:display-levels="$shown"' : ''}'
         '${word.firstNumber == 1 ? '' : ' text:start-value="${word.firstNumber}"'}';
   }
+
+  /// Word goes on after z with aa, bb, cc, where OpenDocument's letters go
+  /// on with aa, ab, ac unless they say otherwise.
+  static String _letterSync(String format) =>
+      format == 'a' || format == 'A' ? ' style:num-letter-sync="true"' : '';
 
   static String _lookParagraph(TextLook look) =>
       ' fo:margin-top="${odfPoints(look.spaceBefore)}" '
@@ -690,14 +703,16 @@ class _Document {
     null => null,
   };
 
-  /// Whether [level] of a Word list shows the numbers of levels above in
-  /// decimals (w:isLgl) where they number otherwise.
-  bool decimalAbove(int numId, int level) {
+  /// Whether [level] of a Word list shows its numbers, and those of the
+  /// levels above, as legal numbering does (w:isLgl) where they number
+  /// otherwise.
+  bool legalNumbers(int numId, int level) {
     final word = wordLevel(numId, level);
     if (word == null || !word.legal) return false;
-    return word
-        .levelsAbove(level)
-        .any((above) => wordLevel(numId, above)?.format != 'decimal');
+    return [...word.levelsAbove(level), level].any((shown) {
+      final format = wordLevel(numId, shown)?.format;
+      return format != null && legalFormat(format) != format;
+    });
   }
 
   /// Word's numbers of the body's list paragraphs.
@@ -935,11 +950,13 @@ extension on WordLevel {
       followedBy == other.followedBy &&
       leftPoints == other.leftPoints &&
       hangingPoints == other.hangingPoints &&
+      justification == other.justification &&
       legal == other.legal;
 
-  /// The level with its numbers in decimals.
-  WordLevel get inDecimals => WordLevel(
+  /// The level with its numbers as legal numbering shows them.
+  WordLevel get inLegalNumbers => WordLevel(
     start: start,
+    format: legalFormat(format),
     text: text,
     suffix: suffix,
     left: left,
@@ -1016,7 +1033,7 @@ class _Outline {
         return false;
       }
     }
-    return !_document.decimalAbove(numId, line.indent);
+    return !_document.legalNumbers(numId, line.indent);
   }
 
   /// Keeps the Word lists of [lines] the outline can number whole.
@@ -1204,9 +1221,11 @@ class _Styles {
         hanging: 18,
       );
       if (kind == 'ordered') {
+        final format = numbers[(level - 1) % 3];
         _xml.write(
           '<text:list-level-style-number text:level="$level" '
-          'style:num-suffix="." style:num-format="${numbers[(level - 1) % 3]}">'
+          'style:num-suffix="." style:num-format="$format"'
+          '${OdtWriter._letterSync(format)}>'
           '$properties</text:list-level-style-number>',
         );
       } else {
@@ -1223,8 +1242,7 @@ class _Styles {
   }();
 
   /// The levels of Word list [numId] as they number in Word; at [legal],
-  /// the numbers of the levels above show in decimals, as w:isLgl shows
-  /// them.
+  /// and at the levels above, numbers show as w:isLgl shows them.
   String wordList(_Document document, int numId, {int? legal}) =>
       _wordLists[(numId, legal)] ??= _wordList(
         document.wordLevels(numId),
@@ -1244,6 +1262,7 @@ class _Styles {
                 level.followedBy,
                 level.leftPoints,
                 level.hangingPoints,
+                level.justification ?? '',
                 level.font ?? '',
               ].join('\u0000'),
       '$legal',
@@ -1255,7 +1274,7 @@ class _Styles {
         final word = level <= levels.length ? levels[level - 1] : null;
         _xml.write(
           _wordLevel(
-            legal != null && level - 1 < legal ? word?.inDecimals : word,
+            legal != null && level - 1 <= legal ? word?.inLegalNumbers : word,
             level,
           ),
         );
@@ -1271,6 +1290,7 @@ class _Styles {
       word?.followedBy ?? 'listtab',
       left: word?.leftPoints ?? 36.0 * level,
       hanging: word?.hangingPoints ?? 18,
+      align: word?.justification,
     );
     final font = OdtWriter._font(word?.font);
     if (font != null) fonts.add(font);
@@ -1437,6 +1457,11 @@ class _StoryWriter {
           } else {
             _listLine(block, following: next, number: number);
           }
+        // A paragraph at a level of its Word list without numbers stays in
+        // the list, whose level shows its text.
+        case LineBlock() when document.counts.unnumberedList(block) != null:
+          if (place == _Place.body) document.counts.count(block);
+          _listLine(block, following: next);
         case LineBlock():
           _closeLists();
           // Paragraphs of a Word style with contextual spacing add no space
@@ -1542,15 +1567,17 @@ class _StoryWriter {
 
   /// [number] is Word's number of a paragraph of a Word list in the body.
   void _listLine(LineBlock line, {DocumentBlock? following, int? number}) {
-    final numId = document.wordList(line);
+    final numId =
+        document.wordList(line) ?? document.counts.unnumberedList(line);
     if (numId == null) {
       _editorItem(line);
     } else {
       _wordItem(numId, WordListCounter.levelOf(line), number);
     }
     // Like the editor and Word's List Paragraph style, a list adds space
-    // after its last item only; numbered headings keep their own.
-    final spaced = line.heading != null;
+    // after its last item only; numbered headings, and paragraphs that show
+    // no number, keep their own.
+    final spaced = line.heading != null || line.list == null;
     _line(
       line,
       inList: true,
@@ -1606,7 +1633,7 @@ class _StoryWriter {
     final style = styles.wordList(
       document,
       numId,
-      legal: document.decimalAbove(numId, level) ? level : null,
+      legal: document.legalNumbers(numId, level) ? level : null,
     );
     if (_lists.isNotEmpty && _lists.first.group != group) _closeLists();
     while (_lists.isNotEmpty && _lists.last.level > level) {

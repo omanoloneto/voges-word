@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:archive/archive.dart';
+
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voges_word/document/delta_blocks.dart';
@@ -316,8 +318,8 @@ void main() {
       ]);
     });
 
-    test('Word writes legal numbers in decimals and levels yet to count '
-        'one before their start', () {
+    test('Word writes legal numbers in decimals, and levels above yet to '
+        'count at their start', () {
       final numbering = DocxNumbering.parse(
         _numbering(
           '<w:abstractNum w:abstractNumId="0">'
@@ -336,9 +338,10 @@ void main() {
         return counter.textOf(line);
       }
 
-      expect(next(1), '2.1');
-      expect(next(0), 'Article III.');
+      // Word counts the article it shows, so the next one is IV.
       expect(next(1), '3.1');
+      expect(next(0), 'Article IV.');
+      expect(next(1), '4.1');
       expect(next(2), '(a)');
       expect(next(3), '${'x' * 250}1');
       expect(next(4), isNull);
@@ -393,8 +396,9 @@ void main() {
       expect(counter.count(_item(1, level: 1)), 1);
       expect(counter.count(_item(1, level: 1)), 2);
       // A checklist item of the list restarts the levels below it, as Word
-      // counts it, though it shows the editor's box.
-      expect(counter.count(box), 1);
+      // counts it, though it shows the editor's box; the items under it
+      // counted its level once already.
+      expect(counter.count(box), 2);
       expect(counter.count(_item(1, level: 1)), 1);
       expect(
         counter.count(_item(null)),
@@ -409,6 +413,234 @@ void main() {
       expect(counter.count(unchecked), isNull, reason: 'its box is ☐');
       expect(counter.count(_item(1, level: 1)), 2);
     });
+
+    test('levels above a paragraph that have not counted show their start '
+        'and count there, as in Word', () {
+      // LibreOffice's tdf116883.docx and tdf75748_inheritChapterNumberingC
+      // tests, with the labels Word shows.
+      final numbering = DocxNumbering.parse(
+        _numbering(
+          '<w:abstractNum w:abstractNumId="0">'
+          '${_level(0, 'decimal', '%1>')}${_level(1, 'decimal', '%1>%2>')}'
+          '${_level(2, 'decimal', '%1>%2>%3>')}'
+          '${_level(3, 'decimal', '%1>%2>%3>%4>')}</w:abstractNum>'
+          '<w:abstractNum w:abstractNumId="1">'
+          '${_level(0, 'upperRoman', '%1.')}'
+          '${_level(1, 'upperLetter', '%1.%2.')}'
+          '${_level(2, 'decimal', '%1.%2.%3.')}</w:abstractNum>'
+          '${_list(1, 0)}${_list(2, 1)}',
+        ),
+      );
+      List<String?> texts(int numId, List<int> levels) {
+        final counter = WordListCounter(numbering);
+        return [
+          for (final level in levels)
+            () {
+              final line = _item(numId, level: level);
+              counter.count(line);
+              return counter.textOf(line);
+            }(),
+        ];
+      }
+
+      expect(texts(1, [1, 1, 3, 2, 2]), [
+        '1>1>',
+        '1>2>',
+        '1>2>1>1>',
+        '1>2>2>',
+        '1>2>3>',
+      ]);
+      expect(texts(2, [2, 0, 1, 1, 2]), [
+        'I.A.1.',
+        'II.',
+        'II.A.',
+        'II.B.',
+        'II.B.1.',
+      ]);
+    });
+
+    test('a level text that names a level below its own shows nothing, as '
+        'in Word', () {
+      final numbering = DocxNumbering.parse(
+        _numbering(
+          '<w:abstractNum w:abstractNumId="0">${_level(0, 'decimal', '%1.%2')}'
+          '${_level(1, 'decimal', '%1.%2')}</w:abstractNum>${_list(1, 0)}',
+        ),
+      );
+      final counter = WordListCounter(numbering);
+      final top = _item(1);
+      final below = _item(1, level: 1);
+      counter
+        ..count(top)
+        ..count(below);
+      expect(counter.textOf(below), '1.1');
+      counter.count(top);
+      expect(counter.textOf(top), '');
+    });
+
+    test('paragraphs at a level without numbers count and show the level '
+        'text, so the levels below them restart', () {
+      final numbering = DocxNumbering.parse(
+        _numbering(
+          '<w:abstractNum w:abstractNumId="0">${_level(0, 'none', 'Part')}'
+          '${_level(1, 'decimal', '%2.')}${_level(2, 'none', 'Schedule%3')}'
+          '${_level(3, 'lowerLetter', '%2.%3%4)')}</w:abstractNum>'
+          '${_list(1, 0)}',
+        ),
+      );
+      LineBlock unnumbered(int level) => LineBlock(const [], {
+        HiddenAttributes.numbering: 1,
+        unnumberedLevelAttribute: level,
+      });
+      final counter = WordListCounter(numbering);
+      final labels = <String?>[];
+      final numbers = <int?>[];
+      for (final line in [
+        unnumbered(0),
+        _item(1, level: 1),
+        _item(1, level: 1),
+        unnumbered(0),
+        _item(1, level: 1),
+        unnumbered(2),
+        _item(1, level: 3),
+      ]) {
+        numbers.add(counter.count(line));
+        labels.add(counter.textOf(line));
+      }
+
+      expect(numbers, [1, 1, 2, 2, 1, 1, 1]);
+      expect(labels, ['Part', '1.', '2.', 'Part', '1.', 'Schedule', '1.a)']);
+      expect(counter.unnumberedList(unnumbered(0)), 1);
+      expect(counter.wordList(unnumbered(0)), isNull);
+      expect(WordListCounter.levelOf(unnumbered(2)), 2);
+      // Without its level, or at a level with numbers, a paragraph the editor
+      // shows without a list is no list paragraph.
+      expect(
+        counter.count(LineBlock(const [], {HiddenAttributes.numbering: 1})),
+        isNull,
+      );
+      expect(counter.unnumberedList(unnumbered(1)), isNull);
+      expect(counter.count(unnumbered(1)), isNull);
+    });
+  });
+
+  test('paragraphs at a level without numbers stay in their list, which '
+      'every format shows', () {
+    String paragraph(String text, int level) =>
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="$level"/><w:numId w:val="1"/>'
+        '</w:numPr></w:pPr><w:r><w:t>$text</w:t></w:r></w:p>';
+    final docx = DocxCodec(TableStore());
+    final loaded = docx.read(
+      _package(
+        [
+          paragraph('A', 0),
+          paragraph('x', 1),
+          paragraph('y', 1),
+          paragraph('B', 0),
+          paragraph('z', 1),
+        ].join(),
+        _numbering(
+          '<w:abstractNum w:abstractNumId="0">'
+          '${_level(0, 'none', 'Part', extra: '<w:suff w:val="space"/>')}'
+          '${_level(1, 'decimal', '%2.')}</w:abstractNum>${_list(1, 0)}',
+        ).toXmlString(),
+      ),
+    );
+    final lines = documentBlocks(loaded.delta).whereType<LineBlock>().toList();
+    LineBlock line(String text) =>
+        lines.firstWhere((line) => line.plainText == text);
+
+    // The editor shows the parts as paragraphs.
+    expect(line('A').list, isNull);
+    expect(line('A').attributes[HiddenAttributes.numbering], 1);
+    expect(line('A').attributes[unnumberedLevelAttribute], 0);
+    expect(line('z').list, 'ordered');
+
+    String saved(DocumentCodec codec, [Encoding encoding = utf8]) =>
+        encoding.decode(
+          codec.encode(loaded.delta, source: loaded.source, look: loaded.look),
+        );
+    final html = saved(HtmlCodec(docx));
+    expect(html, contains('<p>Part A</p>'));
+    expect(html, contains('<p>Part B</p>'));
+    expect(html, isNot(contains('start="3"')));
+    expect(
+      saved(MarkdownCodec(docx)),
+      'Part A\n\n1. x\n2. y\n\nPart B\n\n1. z\n',
+    );
+    final rtf = saved(RtfCodec(docx), latin1);
+    expect(rtf, contains(r'\ls1\ilvl0'));
+    expect(rtf, contains(r'{\listtext\f0 Part }A\par'));
+    expect(rtf, contains(r'{\listtext\f0 1.\tab}z\par'));
+
+    // OpenDocument keeps the parts in the list, whose first level shows
+    // "Part" and no number.
+    final odt = OdtCodec(
+      docx,
+    ).encode(loaded.delta, source: loaded.source, look: loaded.look);
+    final content = XmlDocument.parse(
+      utf8.decode(
+        ZipDecoder().decodeBytes(odt).findFile('content.xml')!.content,
+      ),
+    );
+    XmlElement paragraphOf(String text) =>
+        content.descendantElements.firstWhere(
+          (element) => element.innerText == text && element.name.local == 'p',
+        );
+    expect(paragraphOf('A').parentElement!.name.local, 'list-item');
+    expect(
+      paragraphOf('z').parentElement!.getAttribute('text:start-value'),
+      isNull,
+    );
+    final level = content.descendantElements.firstWhere(
+      (element) =>
+          element.name.local == 'list-level-style-number' &&
+          element.getAttribute('text:level') == '1',
+    );
+    expect(level.getAttribute('style:num-prefix'), 'Part');
+    expect(level.getAttribute('style:num-format'), '');
+
+    // Saved as .docx and opened again, they are still in the list.
+    final again = docx.decode(docx.encode(loaded.delta, source: loaded.source));
+    final reopened = documentBlocks(again.delta).whereType<LineBlock>();
+    expect(
+      reopened
+          .firstWhere((line) => line.plainText == 'B')
+          .attributes[unnumberedLevelAttribute],
+      0,
+    );
+  });
+
+  test('lists added in the editor take free ids in Word\'s range', () {
+    const huge = 9223372036854775807;
+    final xml = _numbering(
+      '<w:abstractNum w:abstractNumId="$huge">${_level(0, 'decimal', '%1.')}'
+      '</w:abstractNum><w:abstractNum w:abstractNumId="1">'
+      '${_level(0, 'decimal', '%1.')}</w:abstractNum>'
+      '${_list(huge, huge)}${_list(1, 1)}${_list(2, 1)}',
+    ).toXmlString();
+    final plan = NumberingPlan(DocxNumbering.parse(XmlDocument.parse(xml)));
+    final ordered = plan.newOrderedList();
+    final bullets = plan.sharedList(ListKind.bullet);
+    final saved = DocxNumbering.parse(XmlDocument.parse(plan.apply(xml)));
+
+    // The lowest ids from 1 that the part leaves free.
+    expect([ordered, bullets], [3, 4]);
+    expect([saved.groupOf(ordered), saved.groupOf(bullets)], [2, 3]);
+    expect(saved.level(ordered, 0)!.format, 'decimal');
+    expect(saved.level(bullets, 0)!.format, 'bullet');
+    expect(saved.groupOf(1), 1);
+    expect(saved.groupOf(huge), huge);
+
+    final normal = NumberingPlan(
+      DocxNumbering.parse(
+        _numbering(
+          '<w:abstractNum w:abstractNumId="4">${_level(0, 'decimal', '%1.')}'
+          '</w:abstractNum>${_list(7, 4)}',
+        ),
+      ),
+    );
+    expect(normal.newOrderedList(), 8, reason: 'after the highest');
   });
 
   test('lists made with a Word list style open as lists and save with '

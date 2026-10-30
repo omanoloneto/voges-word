@@ -10,7 +10,6 @@ import '../document/text_encodings.dart';
 import '../docx/docx_codec.dart';
 import '../docx/docx_numbering.dart';
 import 'html_codec.dart';
-import 'html_writer.dart';
 import 'markdown_reader.dart';
 import 'markdown_writer.dart';
 
@@ -50,13 +49,12 @@ class MarkdownCodec implements DocumentCodec {
     bool pageSetupChanged = false,
     HeadersFooters? headersFooters,
   }) {
-    final numbering = DocxNumbering.of(source);
     return Uint8List.fromList(
       utf8.encode(
         MarkdownWriter(
           docx.tables,
-          numbering: numbering,
-          html: HtmlWriter(docx.tables, look: look, numbering: numbering),
+          numbering: DocxNumbering.of(source),
+          look: look,
         ).write(delta),
       ),
     );

@@ -64,14 +64,22 @@ class RtfWriter {
   final _fontIndexes = <String, int>{};
   final _colors = <String>[];
 
-  /// The levels of each list of the list table; its `\ls` is its place
+  /// The levels of each list of the list table; its `\listid` is its place
   /// from 1.
   final _lists = <List<_Level>>[];
+
+  /// The list overrides: the list each one numbers, and the levels it
+  /// starts again; its `\ls` is its place from 1.
+  final _overrides = <({int list, Map<int, int> starts})>[];
   final _counters = <int, List<int?>>{};
 
   /// The `\ls` of the Word lists of the opened package, by what numbers
   /// them as one list.
   final _wordLists = <Object, int>{};
+
+  /// The list of each abstract Word list whose lists only restart levels:
+  /// RTF readers count its `\ls` together, as Word counts those lists.
+  final _abstractLists = <Object, int>{};
   var _numbering = DocxNumbering.parse(null);
   var _counter = WordListCounter(DocxNumbering.parse(null));
   final _bookmarks = <String>{};
@@ -303,11 +311,23 @@ class RtfWriter {
       out.write('{\\listname ;}\\listid$id}');
     }
     out.write('}\r\n{\\*\\listoverridetable');
-    for (var index = 0; index < _lists.length; index++) {
-      out.write(
-        '{\\listoverride\\listid${index + 1}\\listoverridecount0'
-        '\\ls${index + 1}}',
-      );
+    for (final (index, override) in _overrides.indexed) {
+      out.write('{\\listoverride\\listid${override.list + 1}');
+      final starts = override.starts;
+      // Word writes the levels in order, one or all nine of them.
+      final count = starts.isEmpty
+          ? 0
+          : (starts.keys.every((level) => level == 0) ? 1 : wordListLevels);
+      out.write('\\listoverridecount$count');
+      for (var level = 0; level < count; level++) {
+        out.write(switch (starts[level]) {
+          final start? =>
+            '{\\lfolevel\\listoverridestartat'
+                '\\levelstartat${start.clamp(0, 32767)}}',
+          null => r'{\lfolevel}',
+        });
+      }
+      out.write('\\ls${index + 1}}');
     }
     out.write('}\r\n');
   }
@@ -543,11 +563,16 @@ class RtfWriter {
       _ => r'\ql',
     });
     if (list == null) _orderedList = null;
-    final listNumber = list == null ? null : _listNumber(line);
-    final listLevel = line.indent.clamp(0, 8);
+    // A paragraph at a level of its Word list without numbers stays in the
+    // list, which shows the level's text.
+    final unnumbered = _counter.unnumberedList(line);
+    final listNumber = unnumbered != null
+        ? _wordListNumber(unnumbered)
+        : (list == null ? null : _listNumber(line));
+    final listLevel = WordListCounter.levelOf(line);
     final definition = listNumber == null
         ? null
-        : _lists[listNumber - 1][listLevel];
+        : _levelsOf(listNumber)[listLevel];
     if (definition != null) {
       _counter.count(line);
       out.write(
@@ -594,7 +619,7 @@ class RtfWriter {
       out.write('{\\listtext\\f${definition.font ?? 0} ');
       _escape(
         out,
-        _counter.wordList(line) == null
+        (unnumbered ?? _counter.wordList(line)) == null
             ? _listText(listNumber!, listLevel)
             : _counter.textOf(line) ?? '',
       );
@@ -658,11 +683,7 @@ class RtfWriter {
   int _listNumber(LineBlock line) {
     final numId = _counter.wordList(line);
     if (line.list != 'ordered' || numId != null) _orderedList = null;
-    if (numId != null) {
-      return _wordLists[_numbering.sameNumbering(numId)] ??= _addList(
-        _wordLevels(numId),
-      );
-    }
+    if (numId != null) return _wordListNumber(numId);
     return switch (line.list) {
       'ordered' => _orderedList ??= _addList(_levels(_ListKind.ordered)),
       'checked' => _checkedList ??= _addList(_levels(_ListKind.checked)),
@@ -671,19 +692,47 @@ class RtfWriter {
     };
   }
 
-  int _addList(List<_Level> levels) {
+  /// The `\ls` of Word list [numId]. The lists of an abstract list that only
+  /// restart levels number on its list, starting those levels again with
+  /// `\listoverridestartat`, so they count together as in Word; a list that
+  /// redefines levels has a list of its own.
+  int _wordListNumber(int numId) =>
+      _wordLists[_numbering.sameNumbering(numId)] ??= () {
+        if (!_numbering.usesAbstractLevels(numId)) {
+          return _addList(
+            _wordLevels((level) => _numbering.level(numId, level)),
+          );
+        }
+        final list = _abstractLists[_numbering.groupOf(numId)!] ??= _define(
+          _wordLevels((level) => _numbering.abstractLevel(numId, level)),
+        );
+        return _override(list, _numbering.startOverrides(numId));
+      }();
+
+  /// A list with an override of its own; returns its `\ls`.
+  int _addList(List<_Level> levels) => _override(_define(levels), const {});
+
+  int _define(List<_Level> levels) {
     _lists.add(levels);
-    return _lists.length;
+    return _lists.length - 1;
   }
+
+  int _override(int list, Map<int, int> starts) {
+    _overrides.add((list: list, starts: starts));
+    return _overrides.length;
+  }
+
+  /// The levels `\ls` [number] numbers.
+  List<_Level> _levelsOf(int number) => _lists[_overrides[number - 1].list];
 
   /// The levels of a Word list as its definition in the opened package
   /// numbers them; the levels it leaves out are the editor's.
-  List<_Level> _wordLevels(int numId) {
-    final bullets = _numbering.level(numId, 0)?.format == 'bullet';
+  List<_Level> _wordLevels(WordLevel? Function(int level) levelOf) {
+    final bullets = levelOf(0)?.format == 'bullet';
     final fallback = _levels(bullets ? _ListKind.bullet : _ListKind.ordered);
     return [
       for (var level = 0; level < 9; level++)
-        switch (_numbering.level(numId, level)) {
+        switch (levelOf(level)) {
           final defined? => _wordLevel(defined),
           null => fallback[level],
         },
@@ -742,7 +791,7 @@ class RtfWriter {
   /// What readers without lists show of an item of the editor's lists: the
   /// level's text with the item's number.
   String _listText(int number, int level) {
-    final levels = _lists[number - 1];
+    final levels = _levelsOf(number);
     final counters = _counters.putIfAbsent(
       number,
       () => List<int?>.filled(9, null),

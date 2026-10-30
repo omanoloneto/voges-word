@@ -8,6 +8,7 @@ import '../document/delta_blocks.dart';
 import '../document/document_look.dart';
 import '../document/embeds.dart';
 import '../document/tables.dart';
+import '../docx/docx_builder.dart' show ListSuffix;
 import '../docx/docx_codec.dart';
 import '../docx/docx_numbering.dart';
 import '../docx/docx_package.dart';
@@ -21,12 +22,14 @@ import 'writing.dart';
 /// no place in a web page and are left out; footnotes and endnotes follow the
 /// text, and sections that start a page break it.
 class HtmlWriter {
+  /// A [counter] shared with another writer goes on with its numbers.
   HtmlWriter(
     this.tables, {
     required this.look,
     required this.numbering,
     this.package,
-  }) : _counter = WordListCounter(numbering);
+    WordListCounter? counter,
+  }) : _counter = counter ?? WordListCounter(numbering);
 
   final TableStore tables;
   final DocumentLook look;
@@ -243,7 +246,7 @@ class HtmlWriter {
       _counter.breakRun();
       switch (block) {
         case LineBlock():
-          _paragraph(block, out);
+          _paragraph(block, out, label: _label(block));
         case EmbedBlock(type: EmbedTypes.table):
           final table = store[tableIdOf(block.value)];
           if (table != null) _table(table, out, depth, store);
@@ -269,7 +272,8 @@ class HtmlWriter {
   static bool _startsPage(Object? section) =>
       _val(_properties(sectionXmlOf(section))['type']) != 'continuous';
 
-  void _paragraph(LineBlock line, StringBuffer out) {
+  /// A [label] Word shows before the paragraph goes before its first text.
+  void _paragraph(LineBlock line, StringBuffer out, {String label = ''}) {
     final level = line.heading?.clamp(1, 6);
     final tag = level == null ? 'p' : 'h$level';
     if (level != null) _headingTitle(line);
@@ -283,7 +287,8 @@ class HtmlWriter {
       final pieces = parts[index];
       final breakAfter = index < parts.length - 1;
       final (:id, :anchors) = index == marked ? bookmarks : _noBookmarks;
-      if (pieces.isEmpty && parts.length > 1) {
+      final labeled = index == marked && label.isNotEmpty;
+      if (pieces.isEmpty && parts.length > 1 && !labeled) {
         if (!breakAfter) continue;
         final style = [
           if (index == 0 && _isOn(kept['pageBreakBefore'])) _breakBefore,
@@ -298,12 +303,25 @@ class HtmlWriter {
         breakBefore: index == 0,
         breakAfter: breakAfter,
       );
-      final content = _inlines(pieces);
+      final content = '${labeled ? _text(label) : ''}${_inlines(pieces)}';
       out.writeln(
         '<$tag$id$attributes>$anchors${content.isEmpty ? '<br/>' : content}'
         '</$tag>',
       );
     }
+  }
+
+  /// Counts a paragraph at a level of its Word list without numbers, which
+  /// restarts the levels below, and returns the level's text Word shows
+  /// before it with what follows; empty for other lines.
+  String _label(LineBlock line) {
+    final numId = _counter.unnumberedList(line);
+    if (numId == null) return '';
+    _counter.count(line);
+    final text = _counter.textOf(line)?.replaceAll(_lineBreaksAndTabs, ' ');
+    if (text == null || text.isEmpty) return '';
+    final level = numbering.level(numId, WordListCounter.levelOf(line))!;
+    return level.suffix == ListSuffix.nothing ? text : '$text ';
   }
 
   /// The properties of the line's .docx paragraph that pages show: its
@@ -383,12 +401,12 @@ class HtmlWriter {
       out.write('<ul style="list-style-type:none"><li>');
       open.add(_OpenList(gap, false, 'gap'));
     }
+    // The editor numbers the levels of its own lists 1., a., i.
+    final format =
+        _wordLevel(line)?.format ??
+        const ['decimal', 'lowerLetter', 'lowerRoman'][level % 3];
     if (open.isEmpty || open.last.level < level) {
       if (ordered) {
-        // The editor numbers the levels of its own lists 1., a., i.
-        final format =
-            _wordLevel(line)?.format ??
-            const ['decimal', 'lowerLetter', 'lowerRoman'][level % 3];
         final type = switch (format) {
           'lowerLetter' => ' type="a"',
           'upperLetter' => ' type="A"',
@@ -426,7 +444,7 @@ class HtmlWriter {
       breakBefore: true,
       extra: [if (checklist && heading == null) 'list-style-type:none'],
     );
-    final marker = ordered && _markers ? _marker(line) : null;
+    final marker = ordered && _markers ? _marker(line, number, format) : null;
     _markersShown |= marker != null;
     final shown = marker == null
         ? ''
@@ -452,12 +470,17 @@ class HtmlWriter {
     null => null,
   };
 
-  /// The number of a numbered [line] as its Word level writes it, like
+  /// The [number] of a numbered [line] as its Word level writes it, like
   /// `1.1.`, `(a)` or `Article I.`; null when browsers show it the same way.
-  String? _marker(LineBlock line) {
+  /// Browsers go on after z with aa, ab, where Word goes on with aa, bb.
+  String? _marker(LineBlock line, int number, String format) {
     final word = _wordLevel(line);
-    if (word == null || word.text.length > _maxMarker) return null;
-    if (word.text == '%${WordListCounter.levelOf(line) + 1}.' &&
+    final letters =
+        number > 26 && (format == 'lowerLetter' || format == 'upperLetter');
+    if (word == null) return letters ? '${wordNumber(number, format)}.' : null;
+    if (word.text.length > _maxMarker) return null;
+    if (!letters &&
+        word.text == '%${WordListCounter.levelOf(line) + 1}.' &&
         !word.legal &&
         _browserFormats.contains(word.format)) {
       return null;

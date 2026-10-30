@@ -20,6 +20,7 @@ import 'package:voges_word/docx/docx_numbering.dart';
 import 'package:voges_word/docx/docx_package.dart';
 import 'package:voges_word/docx/docx_template.dart';
 import 'package:voges_word/docx/image_formats.dart';
+import 'package:voges_word/docx/word_list_counter.dart';
 import 'package:voges_word/docx/word_xml.dart';
 import 'package:voges_word/editor/page_numbers.dart';
 import 'package:voges_word/rtf/rtf_codec.dart';
@@ -1282,6 +1283,114 @@ void main() {
         contains('list-style-type: lower-alpha'),
         contains('Sub bullet'),
       ),
+    );
+  });
+
+  test('paragraphs at a level without numbers stay in their list and show '
+      'its text', () {
+    String item(String text, int level) =>
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="$level"/><w:numId w:val="1"/>'
+        '</w:numPr></w:pPr><w:r><w:t>$text</w:t></w:r></w:p>';
+    final opened = _openDocx(
+      [
+        item('First', 0),
+        item('one', 1),
+        item('two', 1),
+        item('Second', 0),
+        item('again', 1),
+      ].join(),
+      numbering:
+          '<w:numbering xmlns:w="${Namespaces.w}">'
+          '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start '
+          'w:val="1"/><w:numFmt w:val="none"/><w:lvlText '
+          'w:val="Schedule%1"/></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/>'
+          '<w:numFmt w:val="decimal"/><w:lvlText w:val="%2)"/></w:lvl>'
+          '</w:abstractNum>'
+          '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'
+          '</w:numbering>',
+    );
+    final rtf = _save(opened);
+
+    expect(_line(rtf, 'First'), contains(r'\ls1\ilvl0'));
+    expect(_line(rtf, 'First'), contains(r'{\listtext\f0 Schedule\tab}First'));
+    expect(_line(rtf, 'two'), contains(r'{\listtext\f0 2)\tab}two'));
+    expect(_line(rtf, 'again'), contains(r'{\listtext\f0 1)\tab}again'));
+    expect(rtf, contains(r"{\listlevel\levelnfc255\levelnfcn255"));
+
+    final reopened = documentBlocks(
+      _again(opened).delta,
+    ).whereType<LineBlock>().toList();
+    final second = reopened.firstWhere((line) => line.plainText == 'Second');
+    expect(second.list, isNull);
+    expect(second.attributes[unnumberedLevelAttribute], 0);
+    expect(
+      second.attributes[HiddenAttributes.numbering],
+      reopened
+          .firstWhere((line) => line.plainText == 'again')
+          .attributes[HiddenAttributes.numbering],
+    );
+  });
+
+  test('restarted and continued lists of one abstract list stay one list, '
+      'whose overrides start levels again', () {
+    String item(String text, int numId, [int level = 0]) =>
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="$level"/><w:numId '
+        'w:val="$numId"/></w:numPr></w:pPr><w:r><w:t>$text</w:t></w:r></w:p>';
+    final opened = _openDocx(
+      [
+        item('First', 1),
+        item('Second', 1),
+        item('Restarted', 2),
+        item('Continued', 1),
+        item('Deep', 3, 1),
+        item('Deeper', 3, 1),
+      ].join(),
+      numbering:
+          '<w:numbering xmlns:w="${Namespaces.w}">'
+          '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start '
+          'w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/>'
+          '</w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt '
+          'w:val="lowerLetter"/><w:lvlText w:val="%2)"/></w:lvl>'
+          '</w:abstractNum>'
+          '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'
+          '<w:num w:numId="2"><w:abstractNumId w:val="0"/><w:lvlOverride '
+          'w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride></w:num>'
+          '<w:num w:numId="3"><w:abstractNumId w:val="0"/><w:lvlOverride '
+          'w:ilvl="1"><w:startOverride w:val="5"/></w:lvlOverride></w:num>'
+          '</w:numbering>',
+    );
+    final rtf = _save(opened);
+
+    expect(RegExp(r'\{\\list\\').allMatches(rtf), hasLength(1));
+    expect(
+      rtf,
+      contains(
+        r'{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}'
+        r'{\listoverride\listid1\listoverridecount1{\lfolevel'
+        r'\listoverridestartat\levelstartat1}\ls2}'
+        r'{\listoverride\listid1\listoverridecount9{\lfolevel}{\lfolevel'
+        r'\listoverridestartat\levelstartat5}'
+        '${r'{\lfolevel}' * 7}\\ls3}}',
+      ),
+    );
+    expect(_line(rtf, 'Restarted'), contains(r'\ls2\ilvl0'));
+    expect(
+      _line(rtf, 'Continued'),
+      contains(r'{\listtext\f0 2.\tab}Continued'),
+    );
+    expect(_line(rtf, 'Deep'), contains(r'{\listtext\f0 e)\tab}Deep'));
+
+    // Readers count them as Word does.
+    final reopened = _again(opened);
+    final counter = WordListCounter(DocxNumbering.of(reopened.source));
+    expect(
+      [
+        for (final line in documentBlocks(
+          reopened.delta,
+        ).whereType<LineBlock>())
+          if (line.list != null) (counter..count(line)).textOf(line),
+      ],
+      ['1.', '2.', '1.', '2.', 'e)', 'f)'],
     );
   });
 

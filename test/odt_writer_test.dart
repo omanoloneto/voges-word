@@ -1627,6 +1627,7 @@ void main() {
       'text:level': '3',
       'style:num-prefix': 'Annex ',
       'style:num-format': 'A',
+      'style:num-letter-sync': 'true',
     });
     expect(level(4).getAttribute('style:num-format'), '');
   });
@@ -1891,6 +1892,94 @@ void main() {
     expect(lineOf(reopened.delta, 'Terms')?['indent'], 1);
   });
 
+  test('Word list numbers keep how they line up', () {
+    String level(int level, String justification) =>
+        '<w:lvl w:ilvl="$level"><w:start w:val="1"/><w:numFmt '
+        'w:val="lowerRoman"/><w:lvlText w:val="%${level + 1}."/>'
+        '<w:lvlJc w:val="$justification"/><w:pPr><w:ind '
+        'w:left="${720 * (level + 1)}" w:hanging="180"/></w:pPr></w:lvl>';
+    final bytes = _docxToOdt(
+      _docxFile(
+        [
+          for (var level = 0; level < 4; level++)
+            _wordParagraph(
+              '<w:pPr><w:numPr><w:ilvl w:val="$level"/><w:numId w:val="1"/>'
+              '</w:numPr></w:pPr>${_wordRun('Item $level')}',
+            ),
+        ].join(),
+        relationships: [('rIdNumbering', 'numbering', 'numbering.xml')],
+        parts: {
+          'word/numbering.xml': _wordNumbering(
+            '<w:abstractNum w:abstractNumId="0">${level(0, 'left')}'
+                '${level(1, 'center')}${level(2, 'right')}${level(3, 'end')}'
+                '</w:abstractNum>',
+            '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>',
+          ),
+        },
+      ),
+    );
+    final style = _elements(
+      _xml(bytes, 'content.xml'),
+      'text:list-style',
+    ).single;
+    String? align(int level) => _elements(
+      style.childElements.firstWhere(
+        (element) => element.getAttribute('text:level') == '$level',
+      ),
+      'style:list-level-properties',
+    ).single.getAttribute('fo:text-align');
+
+    // Word's third level of a numbered list is right-aligned roman numbers.
+    expect(
+      [align(1), align(2), align(3), align(4)],
+      [null, 'center', 'end', 'end'],
+    );
+  });
+
+  test('legal numbering keeps zero-padded numbers above and shows its own '
+      'in decimals', () {
+    final bytes = _docxToOdt(
+      _docxFile(
+        [
+          for (final (level, text) in [
+            (0, 'Chapter'),
+            (1, 'Section'),
+            (1, 'Next section'),
+          ])
+            _wordParagraph(
+              '<w:pPr><w:numPr><w:ilvl w:val="$level"/><w:numId w:val="1"/>'
+              '</w:numPr></w:pPr>${_wordRun(text)}',
+            ),
+        ].join(),
+        relationships: [('rIdNumbering', 'numbering', 'numbering.xml')],
+        parts: {
+          'word/numbering.xml': _wordNumbering(
+            '<w:abstractNum w:abstractNumId="0">'
+                '${_wordLevel(0, 'decimalZero', '%1.')}'
+                '${_wordLevel(1, 'lowerLetter', '%1.%2', extra: '<w:isLgl/>')}'
+                '</w:abstractNum>',
+            '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>',
+          ),
+        },
+      ),
+    );
+    final content = _xml(bytes, 'content.xml');
+    final legal = _paragraphWith(
+      content,
+      'Section',
+    ).parentElement!.getAttribute('text:style-override');
+    String? format(int level) => _elements(content, 'text:list-style')
+        .firstWhere((style) => style.getAttribute('style:name') == legal)
+        .childElements
+        .firstWhere((element) => element.getAttribute('text:level') == '$level')
+        .getAttribute('style:num-format');
+
+    // Word shows 01.1 and 01.2, as the other formats write them.
+    expect(legal, isNotNull);
+    expect(format(1), '01, 02, 03, ...');
+    expect(format(2), '1');
+  });
+
   test('Word lists keep their own numbering and go on counting where Word '
       'does', () {
     final numbering = _wordNumbering(
@@ -1986,6 +2075,7 @@ void main() {
     expect(level('alpha', 1), {
       'style:num-suffix': ')',
       'style:num-format': 'a',
+      'style:num-letter-sync': 'true',
     });
     expect(level('alpha', 2), {
       'style:num-prefix': '(',

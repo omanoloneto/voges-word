@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import '../document/delta_blocks.dart';
 import '../document/embeds.dart';
 import 'docx_numbering.dart';
@@ -22,9 +20,16 @@ class WordListCounter {
   /// Longer level texts are left out of [textOf].
   static const maxText = 255;
 
-  /// The list level of [line], from 0.
+  /// The list level of [line], from 0: the level a paragraph at a level of
+  /// its Word list without numbers keeps, or else the line's indent.
   static int levelOf(LineBlock line) =>
-      line.indent.clamp(0, wordListLevels - 1);
+      ((line.list == null ? _unnumberedLevel(line) : null) ?? line.indent)
+          .clamp(0, wordListLevels - 1);
+
+  static int? _unnumberedLevel(LineBlock line) {
+    final value = line.attributes[unnumberedLevelAttribute];
+    return value is num && value.isFinite ? value.toInt() : null;
+  }
 
   /// Ends the run of the editor's numbered items: the next one starts at 1.
   void breakRun() => _run++;
@@ -33,7 +38,15 @@ class WordListCounter {
   /// from the opened document while it is still the kind of list its level
   /// is, as the .docx writer keeps it. Checklists show the editor's boxes.
   int? wordList(LineBlock line) =>
-      line.list == 'checked' || line.list == 'unchecked' ? null : _listOf(line);
+      line.list == 'checked' || line.list == 'unchecked' || line.list == null
+      ? null
+      : _listOf(line);
+
+  /// The Word list of a paragraph the editor shows without a list, at a
+  /// level of the list without numbers: Word counts it, and [textOf] gives
+  /// the level's text that it shows.
+  int? unnumberedList(LineBlock line) =>
+      line.list == null ? _listOf(line) : null;
 
   /// Identifies the list a numbered [line] belongs to, before [count] counts
   /// it.
@@ -55,45 +68,56 @@ class WordListCounter {
     if (numbering.restarts(numId, level) && _restarted.add((numId, level))) {
       counts[level] = null;
     }
+    // Word shows the levels above that haven't counted yet at their start,
+    // and counts them there.
+    for (var above = 0; above < level; above++) {
+      counts[above] ??= numbering.level(numId, above)?.start ?? 1;
+    }
     final number = _next(counts, level, numbering.level(numId, level)!.start);
     if (line.isOrdered) breakRun();
     return number;
   }
 
   /// [line]'s number as its Word level writes it, like `1.1.`, `(a)` or
-  /// `Article I.`, once [count] counted it; null for other lines and for
-  /// level texts longer than [maxText].
+  /// `Article I.`, once [count] counted it; the level's text, like
+  /// `Schedule`, for a paragraph at a level without numbers. Null for other
+  /// lines and for level texts longer than [maxText]; empty when the text
+  /// names a level below the line's, which Word shows nothing for.
   String? textOf(LineBlock line) {
     final numId = _listOf(line);
     if (numId == null) return null;
-    final word = numbering.level(numId, levelOf(line))!;
+    final level = levelOf(line);
+    final word = numbering.level(numId, level)!;
     final counts = _counts[numbering.groupOf(numId)];
     if (counts == null || word.text.length > maxText) return null;
+    final placeholders = _placeholder.allMatches(word.text);
+    if (placeholders.any((match) => int.parse(match[1]!) - 1 > level)) {
+      return '';
+    }
     return word.text.replaceAllMapped(_placeholder, (match) {
       final shown = int.parse(match[1]!) - 1;
       final definition = numbering.level(numId, shown);
-      // Word shows a level that hasn't counted yet one before its start.
-      final count = counts[shown] ?? math.max((definition?.start ?? 1) - 1, 0);
       final format = definition?.format ?? 'decimal';
-      return wordNumber(count, word.legal ? _legal(format) : format);
+      return wordNumber(
+        counts[shown] ?? definition?.start ?? 1,
+        word.legal ? legalFormat(format) : format,
+      );
     });
   }
 
-  /// Legal numbering shows numbers in decimals, but keeps zero-padded ones,
-  /// as in `Section 1.01`; levels without a number still show none.
-  static String _legal(String format) => switch (format) {
-    'decimalZero' || 'none' || 'bullet' => format,
-    _ => 'decimal',
-  };
-
   /// The Word list [line] belongs to while the line is still the kind of
-  /// list its level is.
+  /// list its level is, or while a line without a list stays at its level
+  /// without numbers.
   int? _listOf(LineBlock line) {
     final value = line.attributes[HiddenAttributes.numbering];
     if (value is! num || !value.isFinite) return null;
     final numId = value.toInt();
-    final kind = numbering.level(numId, levelOf(line))?.kind;
-    return kind != null && kind.name == line.list ? numId : null;
+    final word = numbering.level(numId, levelOf(line));
+    if (word == null) return null;
+    return switch (line.list) {
+      null => word.unnumbered && _unnumberedLevel(line) != null ? numId : null,
+      final list => word.kind?.name == list ? numId : null,
+    };
   }
 
   static List<int?> _noCounts() => List.filled(wordListLevels, null);
@@ -106,6 +130,14 @@ class WordListCounter {
     return number;
   }
 }
+
+/// The format a level of [format] shows its numbers in under Word's legal
+/// numbering (w:isLgl): decimal, unless already decimal or zero-padded, as
+/// in `Section 1.01`; levels without a number still show none.
+String legalFormat(String format) => switch (format) {
+  'decimalZero' || 'none' || 'bullet' => format,
+  _ => 'decimal',
+};
 
 /// [number] in a Word number format, like `upperRoman`; other formats, and
 /// numbers out of a format's range, come in decimal.

@@ -647,6 +647,13 @@ class _BlockReader {
     final list = numId == null || numId == 0
         ? null
         : c.numbering.kind(numId, props.level);
+    // A paragraph at a level without numbers stays in its list: Word counts
+    // it and shows the level's text.
+    final unnumbered =
+        list == null &&
+        numId != null &&
+        numId != 0 &&
+        (c.numbering.level(numId, props.level)?.unnumbered ?? false);
 
     final inline = _InlineReader(
       c,
@@ -672,7 +679,8 @@ class _BlockReader {
       if (!props.exactLineSpacing &&
           (props.lineSpacing - c.normalParagraph.lineSpacing).abs() > 0.01)
         'line-height': (props.lineSpacing * 100).round() / 100,
-      if (list != null) HiddenAttributes.numbering: numId,
+      if (list != null || unnumbered) HiddenAttributes.numbering: numId,
+      if (unnumbered) unnumberedLevelAttribute: props.level,
       if (list == null) ...{
         if (differs(props.spaceBefore, base.spaceBefore))
           HiddenAttributes.spaceBefore: props.spaceBefore,

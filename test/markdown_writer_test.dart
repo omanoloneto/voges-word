@@ -80,4 +80,63 @@ void main() {
       '4. A3\n',
     );
   });
+
+  test('items of one level stay side by side, however deep the list '
+      'starts', () {
+    String level(int level) =>
+        '<w:lvl w:ilvl="$level"><w:start w:val="1"/><w:numFmt '
+        'w:val="decimal"/><w:lvlText w:val="%${level + 1}."/></w:lvl>';
+    final docx = DocxCodec(TableStore());
+    final loaded = _openWord(
+      docx,
+      [
+        _item('first', 1, 2),
+        _item('second', 1, 2),
+        _item('third', 1, 2),
+        _item('deeper', 1, 3),
+        _item('fourth', 1, 2),
+        _item('top', 1),
+        _item('Between'),
+        _item('again', 1, 1),
+        _item('more', 1, 1),
+      ].join(),
+      '<w:abstractNum w:abstractNumId="0">'
+      '${level(0)}${level(1)}${level(2)}${level(3)}</w:abstractNum>'
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>',
+    );
+    final markdown = utf8.decode(
+      MarkdownCodec(docx).encode(loaded.delta, source: loaded.source),
+    );
+
+    // Word counted the first level once at the list's start, so the item
+    // there is 2, a list of its own.
+    expect(
+      markdown,
+      '1. first\n2. second\n3. third\n   1. deeper\n4. fourth\n\n'
+      '2) top\n\nBetween\n\n1. again\n2. more\n',
+    );
+  });
+
+  test('lists in tables count on with the text around them, as in Word', () {
+    final docx = DocxCodec(TableStore());
+    final loaded = _openWord(
+      docx,
+      '${_item('First', 1)}${_item('Second', 1)}'
+          '<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>'
+          '${_item('Third', 2)}${_item('Fourth', 2)}</w:tc></w:tr></w:tbl>'
+          '${_item('Fifth', 1)}',
+      '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start '
+          'w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/>'
+          '</w:lvl></w:abstractNum>'
+          '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'
+          '<w:num w:numId="2"><w:abstractNumId w:val="0"/></w:num>',
+    );
+    final markdown = utf8.decode(
+      MarkdownCodec(docx).encode(loaded.delta, source: loaded.source),
+    );
+
+    expect(markdown, startsWith('1. First\n2. Second\n\n<table'));
+    expect(markdown, contains('<ol start="3"><li>Third</li>'));
+    expect(markdown, endsWith('</table>\n\n5. Fifth\n'));
+  });
 }
