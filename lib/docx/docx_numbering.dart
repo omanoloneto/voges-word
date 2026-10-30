@@ -1,5 +1,7 @@
 import 'package:xml/xml.dart';
 
+import 'docx_builder.dart' show ListSuffix;
+import 'docx_package.dart';
 import 'word_xml.dart';
 
 /// Kinds of list item, named as the editor's list attribute.
@@ -8,80 +10,271 @@ enum ListKind { bullet, ordered, checked, unchecked }
 /// Font of the checklist boxes, which has ☐ and ☑.
 const _checkboxFont = 'Segoe UI Symbol';
 
-typedef _Levels = Map<int, ListKind?>;
+/// Word numbers levels 0 to 8 only.
+const wordListLevels = 9;
 
+/// A level of a Word list, as its w:lvl defines it.
+class WordLevel {
+  const WordLevel({
+    this.start = 1,
+    this.format = 'decimal',
+    this.text = '',
+    this.suffix = ListSuffix.tab,
+    this.left,
+    this.hanging,
+    this.justification,
+    this.font,
+    this.legal = false,
+    this.picture = false,
+  });
+
+  final int start;
+
+  /// Word's number format, like `decimal`, `lowerLetter`, `bullet` or
+  /// `none`.
+  final String format;
+
+  /// Word's level text: `%1.%2.` shows the numbers of the first two levels.
+  final String text;
+  final ListSuffix suffix;
+
+  /// Points from the margin to the text, and from the text back to the
+  /// number; null when the level leaves them out.
+  final double? left;
+  final double? hanging;
+
+  /// Word's w:lvlJc, like `left`, `center` or `right`.
+  final String? justification;
+
+  /// The font of the number or bullet.
+  final String? font;
+
+  /// Word's w:isLgl: the numbers the text shows are all in decimal.
+  final bool legal;
+
+  /// A picture bullet, whose text is what shows without the picture.
+  final bool picture;
+
+  bool get numbered => format != 'bullet' && format != 'none';
+
+  /// Only Unicode boxes make checklists: a symbol font's private-use glyph
+  /// stays a bullet.
+  ListKind? get kind {
+    if (format == 'none') return null;
+    if (format != 'bullet') return ListKind.ordered;
+    if (picture) return ListKind.bullet;
+    return switch (text) {
+      '☐' => ListKind.unchecked,
+      '☑' || '☒' => ListKind.checked,
+      _ => ListKind.bullet,
+    };
+  }
+
+  WordLevel _startingAt(int start) => WordLevel(
+    start: start,
+    format: format,
+    text: text,
+    suffix: suffix,
+    left: left,
+    hanging: hanging,
+    justification: justification,
+    font: font,
+    legal: legal,
+    picture: picture,
+  );
+}
+
+/// A Word list (w:num): its abstract list (w:abstractNum) and the levels it
+/// redefines or restarts.
+typedef _List = ({
+  int? abstractId,
+  Map<int, WordLevel> redefined,
+  Map<int, int> starts,
+});
+
+/// The lists of a Word numbering part. A list keeps what it overrides apart
+/// from its abstract list, so many lists of one definition don't each copy
+/// all of its levels.
 class DocxNumbering {
-  DocxNumbering._(this._lists, this.maxAbstractId, this.maxNumId);
+  DocxNumbering._(
+    this._abstracts,
+    this._lists,
+    this.maxAbstractId,
+    this.maxNumId,
+  );
 
   factory DocxNumbering.parse(XmlDocument? numbering) {
-    if (numbering == null) return DocxNumbering._(const {}, 0, 0);
+    if (numbering == null) return DocxNumbering._(const {}, const {}, 0, 0);
     final root = numbering.rootElement;
     final x = WordXml(root);
 
-    // Only Unicode boxes: a symbol font's private-use glyph stays a bullet.
-    ListKind? kindOf(XmlElement level) {
-      final format = x.childVal(level, 'numFmt') ?? 'decimal';
-      if (format == 'none') return null;
-      if (format != 'bullet') return ListKind.ordered;
-      if (x.child(level, 'lvlPicBulletId') != null) return ListKind.bullet;
-      return switch (x.childVal(level, 'lvlText')) {
-        '☐' => ListKind.unchecked,
-        '☑' || '☒' => ListKind.checked,
-        _ => ListKind.bullet,
-      };
-    }
-
-    _Levels levelKinds(XmlElement parent) => {
-      for (final level in x.children(parent, 'lvl'))
-        int.tryParse(x.attr(level, 'ilvl') ?? '') ?? 0: kindOf(level),
-    };
-
     var maxAbstract = 0;
-    final abstracts = <int, _Levels>{};
+    final abstracts = <int, Map<int, WordLevel>>{};
     for (final element in x.children(root, 'abstractNum')) {
       final id = int.tryParse(x.attr(element, 'abstractNumId') ?? '');
       if (id == null) continue;
       if (id > maxAbstract) maxAbstract = id;
-      abstracts[id] = levelKinds(element);
+      final levels = abstracts[id] = {};
+      for (final level in x.children(element, 'lvl')) {
+        final index = _levelIndex(x.attr(level, 'ilvl'));
+        if (index != null) levels[index] = _level(x, level);
+      }
     }
 
-    // A list keeps its redefined levels apart from the shared definition, so
-    // many lists of one definition don't each copy all of its levels.
     var maxNum = 0;
-    final lists = <int, (_Levels, _Levels)>{};
+    final lists = <int, _List>{};
     for (final element in x.children(root, 'num')) {
       final id = int.tryParse(x.attr(element, 'numId') ?? '');
       if (id == null) continue;
       if (id > maxNum) maxNum = id;
-      final abstractId = int.tryParse(
-        x.childVal(element, 'abstractNumId') ?? '',
-      );
-      final redefined = <int, ListKind?>{};
+      Map<int, WordLevel>? redefined;
+      Map<int, int>? starts;
       for (final override in x.children(element, 'lvlOverride')) {
-        final level = int.tryParse(x.attr(override, 'ilvl') ?? '') ?? 0;
+        final index = _levelIndex(x.attr(override, 'ilvl'));
+        if (index == null) continue;
         final definition = x.child(override, 'lvl');
-        if (definition != null) redefined[level] = kindOf(definition);
+        if (definition != null) {
+          (redefined ??= {})[index] = _level(x, definition);
+        }
+        final start = int.tryParse(x.childVal(override, 'startOverride') ?? '');
+        if (start != null) (starts ??= {})[index] = start;
       }
-      lists[id] = (abstracts[abstractId] ?? const {}, redefined);
+      lists[id] = (
+        abstractId: int.tryParse(x.childVal(element, 'abstractNumId') ?? ''),
+        redefined: redefined ?? const {},
+        starts: starts ?? const {},
+      );
     }
-    return DocxNumbering._(lists, maxAbstract, maxNum);
+    return DocxNumbering._(abstracts, lists, maxAbstract, maxNum);
   }
 
-  final Map<int, (_Levels, _Levels)> _lists;
+  /// The numbering of the package an opened document keeps; none for other
+  /// sources, or when the part can't be read.
+  factory DocxNumbering.of(Object? source) {
+    if (source is DocxPackage) {
+      try {
+        final main = source.mainDocumentPath;
+        for (final relationship in source.relationships(main)) {
+          if (relationship.hasType('numbering') && !relationship.external) {
+            return DocxNumbering.parse(
+              source.xml(DocxPackage.resolve(main, relationship.target)),
+            );
+          }
+        }
+      } catch (_) {
+        return DocxNumbering.parse(null);
+      }
+    }
+    return DocxNumbering.parse(null);
+  }
+
+  final Map<int, Map<int, WordLevel>> _abstracts;
+  final Map<int, _List> _lists;
   final int maxAbstractId;
   final int maxNumId;
 
-  /// Levels a list doesn't define take its first level's kind.
-  ListKind? kind(int numId, int level) {
+  static int? _levelIndex(String? value) {
+    final index = int.tryParse(value ?? '');
+    return index != null && index >= 0 && index < wordListLevels ? index : null;
+  }
+
+  /// Reads each property from the first element that has it, in one pass:
+  /// documents can hold hundreds of thousands of levels.
+  static WordLevel _level(WordXml x, XmlElement level) {
+    XmlElement? start, format, text, suffix, justification, legal;
+    XmlElement? paragraph, run;
+    var picture = false;
+    for (final child in level.childElements) {
+      if (x.namespaceOf(child.name) != Namespaces.w) continue;
+      switch (child.name.local) {
+        case 'start':
+          start ??= child;
+        case 'numFmt':
+          format ??= child;
+        case 'lvlText':
+          text ??= child;
+        case 'suff':
+          suffix ??= child;
+        case 'lvlJc':
+          justification ??= child;
+        case 'isLgl':
+          legal ??= child;
+        case 'lvlPicBulletId':
+          picture = true;
+        case 'pPr':
+          paragraph ??= child;
+        case 'rPr':
+          run ??= child;
+      }
+    }
+    final indents = <String, double>{};
+    for (final attribute in x.child(paragraph, 'ind')?.attributes ?? []) {
+      final twips = double.tryParse(attribute.value);
+      if (twips != null &&
+          twips.isFinite &&
+          x.namespaceOf(attribute.name) == Namespaces.w) {
+        indents.putIfAbsent(attribute.name.local, () => twips / 20);
+      }
+    }
+    final firstLine = indents['firstLine'];
+    final fonts = x.child(run, 'rFonts');
+    return WordLevel(
+      start: int.tryParse(x.val(start) ?? '') ?? 1,
+      format: x.val(format) ?? 'decimal',
+      text: x.val(text) ?? '',
+      suffix: switch (x.val(suffix)) {
+        'space' => ListSuffix.space,
+        'nothing' => ListSuffix.nothing,
+        _ => ListSuffix.tab,
+      },
+      left: indents['left'] ?? indents['start'],
+      hanging: indents['hanging'] ?? (firstLine == null ? null : -firstLine),
+      justification: x.val(justification),
+      font: x.attr(fonts, 'ascii') ?? x.attr(fonts, 'hAnsi'),
+      legal: x.onOff(legal) ?? false,
+      picture: picture,
+    );
+  }
+
+  /// [level] of list [numId] as the list numbers it: the list's own
+  /// definition of the level, or else its abstract list's, starting where
+  /// its w:startOverride says. Null when the list doesn't define the level.
+  WordLevel? level(int numId, int level) {
     final list = _lists[numId];
     if (list == null) return null;
-    final (shared, redefined) = list;
-    (ListKind?,)? at(int level) => redefined.containsKey(level)
-        ? (redefined[level],)
-        : shared.containsKey(level)
-        ? (shared[level],)
-        : null;
-    return (at(level) ?? at(0))?.$1;
+    final own = list.redefined[level] ?? _abstracts[list.abstractId]?[level];
+    final start = list.starts[level];
+    return own == null || start == null ? own : own._startingAt(start);
+  }
+
+  /// Levels a list doesn't define take its first level's kind.
+  ListKind? kind(int numId, int level) =>
+      (this.level(numId, level) ?? this.level(numId, 0))?.kind;
+
+  /// The abstract list whose numbers list [numId] goes on counting: Word
+  /// counts the lists of one abstract list together.
+  Object? groupOf(int numId) {
+    final list = _lists[numId];
+    return list == null ? null : list.abstractId ?? (numId,);
+  }
+
+  /// Whether list [numId] restarts [level] at its first paragraph there, by
+  /// its w:startOverride.
+  bool restarts(int numId, int level) =>
+      _lists[numId]?.starts.containsKey(level) ?? false;
+
+  /// The lists that number as one: each list that redefines and restarts
+  /// none of its levels numbers as the other such lists of its abstract
+  /// list; any other list numbers on its own.
+  Object sameNumbering(int numId) {
+    final list = _lists[numId];
+    final abstractId = list?.abstractId;
+    return list != null &&
+            abstractId != null &&
+            list.redefined.isEmpty &&
+            list.starts.isEmpty
+        ? ('abstract', abstractId)
+        : ('list', numId);
   }
 }
 

@@ -9,7 +9,9 @@ import '../document/document_look.dart';
 import '../document/embeds.dart';
 import '../document/tables.dart';
 import '../docx/docx_codec.dart';
+import '../docx/docx_numbering.dart';
 import '../docx/docx_package.dart';
+import '../docx/word_list_counter.dart';
 import '../docx/word_xml.dart';
 import 'css.dart';
 import 'writing.dart';
@@ -24,15 +26,15 @@ class HtmlWriter {
     required this.look,
     required this.numbering,
     this.package,
-  }) : _counter = ListCounter(numbering);
+  }) : _counter = WordListCounter(numbering);
 
   final TableStore tables;
   final DocumentLook look;
-  final ListNumbering numbering;
+  final DocxNumbering numbering;
 
   /// The opened document: its notes, language and title.
   final DocxPackage? package;
-  final ListCounter _counter;
+  final WordListCounter _counter;
   final _ids = <String>{};
   String? _title;
 
@@ -54,7 +56,20 @@ class HtmlWriter {
   static const _noBookmarks = (id: '', anchors: '');
   static const _breakBefore = 'break-before:page;page-break-before:always';
   static const _breakAfter = 'break-after:page;page-break-after:always';
+
+  /// Longer level texts and numbers are left to the browser's numbering.
+  static const _maxMarker = 64;
+
+  /// The formats `<ol type>` shows, followed by a period.
+  static const _browserFormats = {
+    'decimal',
+    'lowerLetter',
+    'upperLetter',
+    'lowerRoman',
+    'upperRoman',
+  };
   static final _lineBreaks = RegExp(r'[\n\r\u000B\u2028\u2029]');
+  static final _lineBreaksAndTabs = RegExp(r'[\t\n\r]');
   static final _languageTag = RegExp(r'^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$');
   static final _noteReference = RegExp(
     r'<w:(footnote|endnote)Reference\b[^>]*?\bw:id="(-?\d+)"',
@@ -118,6 +133,13 @@ class HtmlWriter {
     if (_markersShown) {
       out.writeln(
         'li[data-marker]::marker { content: attr(data-marker) " "; }',
+      );
+    }
+    // An <hr> would reopen as content the editor lacks.
+    if (_footnotes.isNotEmpty || _endnotes.isNotEmpty) {
+      out.writeln(
+        'section.footnotes, section.endnotes { '
+        'border-top: 0.5pt solid #000000; }',
       );
     }
     return out.toString();
@@ -345,8 +367,7 @@ class HtmlWriter {
     final level = math.min(line.indent, 8);
     final ordered = line.isOrdered;
     final key = ordered ? _counter.keyOf(line) : 'bullets';
-    final number = ordered ? _counter.next(line) : 0;
-    if (!ordered) _counter.countBullet(line);
+    final number = _counter.count(line) ?? 0;
     while (open.isNotEmpty && open.last.level > level) {
       _closeList(open, out);
     }
@@ -366,7 +387,7 @@ class HtmlWriter {
       if (ordered) {
         // The editor numbers the levels of its own lists 1., a., i.
         final format =
-            _counter.formatOf(line) ??
+            _wordLevel(line)?.format ??
             const ['decimal', 'lowerLetter', 'lowerRoman'][level % 3];
         final type = switch (format) {
           'lowerLetter' => ' type="a"',
@@ -405,7 +426,7 @@ class HtmlWriter {
       breakBefore: true,
       extra: [if (checklist && heading == null) 'list-style-type:none'],
     );
-    final marker = ordered && _markers ? _counter.markerOf(line) : null;
+    final marker = ordered && _markers ? _marker(line) : null;
     _markersShown |= marker != null;
     final shown = marker == null
         ? ''
@@ -423,6 +444,26 @@ class HtmlWriter {
       '${checklist ? ' style="list-style-type:none"' : ''}>'
       '<h$heading$id$attributes>$content</h$heading>',
     );
+  }
+
+  /// The level of the Word list a numbered [line] shows.
+  WordLevel? _wordLevel(LineBlock line) => switch (_counter.wordList(line)) {
+    final numId? => numbering.level(numId, WordListCounter.levelOf(line)),
+    null => null,
+  };
+
+  /// The number of a numbered [line] as its Word level writes it, like
+  /// `1.1.`, `(a)` or `Article I.`; null when browsers show it the same way.
+  String? _marker(LineBlock line) {
+    final word = _wordLevel(line);
+    if (word == null || word.text.length > _maxMarker) return null;
+    if (word.text == '%${WordListCounter.levelOf(line) + 1}.' &&
+        !word.legal &&
+        _browserFormats.contains(word.format)) {
+      return null;
+    }
+    final marker = _counter.textOf(line)?.replaceAll(_lineBreaksAndTabs, ' ');
+    return marker == null || marker.length > _maxMarker ? null : marker;
   }
 
   void _closeList(List<_OpenList> open, StringBuffer out) {
@@ -663,7 +704,7 @@ class HtmlWriter {
     ]) {
       if (notes.isEmpty) continue;
       _counter.breakRun();
-      out.writeln('<section class="$kind">\n<hr/>');
+      out.writeln('<section class="$kind">');
       for (final note in notes) {
         out.write('<div id="${note.id}">');
         _blocks(_noteBlocks(note), out, 0, _noteTables);

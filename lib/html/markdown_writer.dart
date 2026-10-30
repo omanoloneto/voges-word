@@ -6,6 +6,8 @@ import 'package:flutter_quill/quill_delta.dart';
 import '../document/delta_blocks.dart';
 import '../document/embeds.dart';
 import '../document/tables.dart';
+import '../docx/docx_numbering.dart';
+import '../docx/word_list_counter.dart';
 import 'html_writer.dart';
 import 'writing.dart';
 
@@ -14,15 +16,15 @@ import 'writing.dart';
 /// have no Markdown and are left out.
 class MarkdownWriter {
   MarkdownWriter(this.tables, {required this.numbering, required this.html})
-    : _counter = ListCounter(numbering);
+    : _counter = WordListCounter(numbering);
 
   final TableStore tables;
-  final ListNumbering numbering;
+  final DocxNumbering numbering;
 
   /// Writes the tables Markdown can't hold: merged cells, lists or tables
   /// inside cells.
   final HtmlWriter html;
-  final ListCounter _counter;
+  final WordListCounter _counter;
 
   String write(Delta delta) {
     final blocks = documentBlocks(delta);
@@ -281,6 +283,7 @@ class MarkdownWriter {
     var delimiter = '.';
     var marker = '-';
     var number = 1;
+    final counted = _counter.count(line);
     if (ordered) {
       if (previous != null && previous.ordered) {
         // A list right after another one at the same level needs another
@@ -289,10 +292,8 @@ class MarkdownWriter {
             ? previous.delimiter
             : (previous.delimiter == '.' ? ')' : '.');
       }
-      number = _counter.next(line);
+      number = counted!;
       marker = '$number$delimiter';
-    } else {
-      _counter.countBullet(line);
     }
     final offset = indent + marker.length + 1;
     final (:checkbox, :pieces) = _task(line);

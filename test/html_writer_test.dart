@@ -13,6 +13,8 @@ import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/docx/docx_builder.dart';
 import 'package:voges_word/docx/docx_codec.dart';
 import 'package:voges_word/docx/docx_package.dart';
+import 'package:voges_word/docx/docx_template.dart';
+import 'package:voges_word/docx/word_xml.dart';
 import 'package:voges_word/html/css.dart';
 import 'package:voges_word/html/html_codec.dart';
 import 'package:voges_word/html/markdown_codec.dart';
@@ -84,6 +86,35 @@ TableModel _table(Delta delta) =>
 ParagraphSpec _item(String text, int list, [int level = 0]) => ParagraphSpec([
   TextSpec(text),
 ], format: ParagraphFormat(list: ListRef(list, level)));
+
+/// A .docx whose body is [body] and whose numbering part holds
+/// [numbering].
+LoadedDocument _openWord(String body, String numbering) {
+  final package = newDocumentPackage()
+    ..setText(
+      'word/document.xml',
+      '<w:document xmlns:w="${Namespaces.w}"><w:body>$body<w:sectPr/>'
+          '</w:body></w:document>',
+    )
+    ..addRelationships('word/document.xml', const [
+      Relationship(
+        id: 'rIdNumbering',
+        type: RelationshipTypes.numbering,
+        target: 'numbering.xml',
+      ),
+    ])
+    ..setText(
+      'word/numbering.xml',
+      '<w:numbering xmlns:w="${Namespaces.w}">$numbering</w:numbering>',
+    );
+  return DocxCodec(_tables).read(package);
+}
+
+/// A paragraph of Word list [numId], or a plain one without it.
+String _wordItem(String text, [int? numId, int level = 0]) =>
+    '<w:p>${numId == null ? '' : '<w:pPr><w:numPr><w:ilvl w:val="$level"/>'
+              '<w:numId w:val="$numId"/></w:numPr></w:pPr>'}'
+    '<w:r><w:t>$text</w:t></w:r></w:p>';
 
 /// [loaded] saved as a page after giving the list item with [text] other
 /// [attributes], as the editor's list buttons do.
@@ -405,6 +436,39 @@ void main() {
       contains('As Smith showed<sup><a href="#fn-1" id="fnref-1">1</a></sup>'),
     );
     expect(html, contains('SMITH, J. The source.'));
+  });
+
+  test('the style sheet draws the notes\' separator, so pages with notes '
+      'reopen without a notice', () {
+    final spec = DocumentSpec()
+      ..body.add(
+        const ParagraphSpec([
+          TextSpec('Claim'),
+          NoteSpec(NoteKind.footnote, [
+            ParagraphSpec([TextSpec('A footnote.')]),
+          ]),
+          NoteSpec(NoteKind.endnote, [
+            ParagraphSpec([TextSpec('An endnote.')]),
+          ]),
+        ]),
+      );
+    final html = _save(_open(spec));
+
+    expect(html, isNot(contains('<hr')));
+    expect(html, contains('<section class="footnotes">\n<div id="fn-1">'));
+    expect(html, contains('<section class="endnotes">\n<div id="en-1">'));
+    expect(
+      html,
+      contains(
+        'section.footnotes, section.endnotes { border-top: 0.5pt solid '
+        '#000000; }',
+      ),
+    );
+    expect(() => XmlDocument.parse(html), returnsNormally);
+    final again = _read(html);
+    expect(again.notices, isEmpty);
+    expect(_plain(again.delta), contains('An endnote.'));
+    expect(_write(Delta()..insert('No notes\n')), isNot(contains('section.')));
   });
 
   test('a note marked many times is written once', () {
@@ -828,6 +892,45 @@ void main() {
       final huge = _save(DocxCodec(_tables).read(hostile));
       expect(huge, contains('<li data-marker="Article 4611686018427387904.">'));
       expect(huge, contains('<li>Terms'));
+    });
+
+    test('lists of one abstract list count together, as in Word', () {
+      final loaded = _openWord(
+        [
+          _wordItem('A1', 1),
+          _wordItem('A2', 1),
+          _wordItem('Between'),
+          _wordItem('B1', 2),
+          _wordItem('B1 sub', 2, 1),
+          _wordItem('B2', 2),
+          _wordItem('R1', 3),
+          _wordItem('R2', 3),
+          _wordItem('R3', 3),
+          _wordItem('A3', 1),
+        ].join(),
+        '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start '
+        'w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/>'
+        '</w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt '
+        'w:val="decimal"/><w:lvlText w:val="%1.%2."/></w:lvl></w:abstractNum>'
+        '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'
+        '<w:num w:numId="2"><w:abstractNumId w:val="0"/></w:num>'
+        '<w:num w:numId="3"><w:abstractNumId w:val="0"/><w:lvlOverride '
+        'w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride></w:num>',
+      );
+      final html = _save(loaded);
+
+      // B goes on from A; R restarts at its first item only, and A goes on
+      // from R.
+      expect(
+        html,
+        contains(
+          '<ol start="3"><li>B1<ol><li data-marker="3.1.">B1 sub</li></ol>'
+          '</li>\n<li>B2</li></ol>',
+        ),
+      );
+      expect(html, contains('<ol><li>R1</li>\n<li>R2</li>\n<li>R3</li></ol>'));
+      expect(html, contains('<ol start="4"><li>A3</li></ol>'));
+      expect(_lines(_read(html).delta), _lines(loaded.delta));
     });
 
     test('plain levels are left to the browser', () {

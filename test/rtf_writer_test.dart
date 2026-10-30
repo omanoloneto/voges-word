@@ -16,12 +16,12 @@ import 'package:voges_word/document/plain_text_codec.dart';
 import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/docx/docx_builder.dart';
 import 'package:voges_word/docx/docx_codec.dart';
+import 'package:voges_word/docx/docx_numbering.dart';
 import 'package:voges_word/docx/docx_package.dart';
 import 'package:voges_word/docx/docx_template.dart';
 import 'package:voges_word/docx/image_formats.dart';
 import 'package:voges_word/docx/word_xml.dart';
 import 'package:voges_word/editor/page_numbers.dart';
-import 'package:voges_word/html/writing.dart';
 import 'package:voges_word/rtf/rtf_codec.dart';
 
 final _png = base64Decode(
@@ -1078,7 +1078,7 @@ void main() {
     _expectBalanced(rtf);
     // The number readers without lists show, without its punctuation.
     String shown(String text) => RegExp(
-      r'\{\\listtext\\f\d+ (\w+)[^}]*\\tab\}'
+      r'\{\\listtext\\f\d+ \W*(\w+)[^}]*\\tab\}'
       '${RegExp.escape(text)}'
       r'\\par',
     ).firstMatch(rtf)![1]!;
@@ -1091,7 +1091,7 @@ void main() {
     expect(shown('Leek'), '1', reason: 'numbers restart under each bullet');
 
     final reopened = _again(opened);
-    final numbering = ListNumbering.of(reopened.source);
+    final numbering = DocxNumbering.of(reopened.source);
     final lines = {
       for (final block in documentBlocks(reopened.delta))
         if (block is LineBlock) block.plainText: block,
@@ -1135,6 +1135,197 @@ void main() {
         contains('Leek'),
       ),
     );
+  });
+
+  test('Word lists keep their level texts, what follows the number, '
+      'indents, alignment and bullet fonts', () async {
+    String item(String text, int numId, [int level = 0]) =>
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="$level"/><w:numId '
+        'w:val="$numId"/></w:numPr></w:pPr><w:r><w:t>$text</w:t></w:r></w:p>';
+    final opened = _openDocx(
+      [
+        item('Scope', 1),
+        item('Terms', 1, 1),
+        item('Deep', 1, 2),
+        item('Method', 1),
+        item('Bullet', 2),
+        item('Sub bullet', 2, 1),
+      ].join(),
+      numbering:
+          '<w:numbering xmlns:w="${Namespaces.w}">'
+          '<w:abstractNum w:abstractNumId="0">'
+          '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt '
+          'w:val="upperRoman"/><w:suff w:val="space"/><w:lvlText '
+          'w:val="Article %1."/><w:lvlJc w:val="left"/><w:pPr><w:ind '
+          'w:left="0" w:firstLine="0"/></w:pPr></w:lvl>'
+          '<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/>'
+          '<w:isLgl/><w:lvlText w:val="%1.%2."/><w:lvlJc w:val="center"/>'
+          '<w:pPr><w:ind w:start="1080" w:hanging="720"/></w:pPr></w:lvl>'
+          '<w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt '
+          'w:val="lowerLetter"/><w:suff w:val="nothing"/><w:lvlText '
+          'w:val="(%3)"/><w:lvlJc w:val="right"/><w:pPr><w:ind '
+          'w:left="1440" w:firstLine="-360"/></w:pPr></w:lvl>'
+          '</w:abstractNum><w:abstractNum w:abstractNumId="1">'
+          '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/>'
+          '<w:lvlText w:val=""/><w:pPr><w:ind w:left="720" '
+          'w:hanging="360"/></w:pPr><w:rPr><w:rFonts w:ascii="Symbol" '
+          'w:hAnsi="Symbol" w:hint="default"/></w:rPr></w:lvl>'
+          '<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="bullet"/>'
+          '<w:lvlText w:val="o"/><w:pPr><w:ind w:left="1440" '
+          'w:hanging="360"/></w:pPr><w:rPr><w:rFonts w:ascii="Courier New" '
+          'w:hAnsi="Courier New"/></w:rPr></w:lvl></w:abstractNum>'
+          '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'
+          '<w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>'
+          '</w:numbering>',
+    );
+    final rtf = _save(opened);
+    _expectBalanced(rtf);
+    int font(String name) => int.parse(
+      RegExp(
+        '\\{\\\\f(\\d+)\\\\fnil\\\\fcharset0 ${RegExp.escape(name)};\\}',
+      ).firstMatch(rtf)![1]!,
+    );
+    final symbol = font('Symbol');
+    final courier = font('Courier New');
+
+    expect(
+      rtf,
+      contains(
+        r'\levelnfc1\levelnfcn1\leveljc0\leveljcn0\levelfollow1'
+        r"\levelstartat1\levelspace0\levelindent0{\leveltext\'0aArticle "
+        r"\'00.;}{\levelnumbers\'09;}\fi0\li0\lin0 }",
+      ),
+    );
+    expect(
+      rtf,
+      contains(
+        r'\levelnfc0\levelnfcn0\leveljc1\leveljcn1\levelfollow0'
+        r'\levelstartat1\levellegal1\levelspace0\levelindent0'
+        r"{\leveltext\'04\'00.\'01.;}{\levelnumbers\'01\'03;}"
+        r'\fi-720\li1080\lin1080 }',
+      ),
+    );
+    expect(
+      rtf,
+      contains(
+        r'\levelnfc4\levelnfcn4\leveljc2\leveljcn2\levelfollow2'
+        r"\levelstartat1\levelspace0\levelindent0{\leveltext\'03(\'02);}"
+        r"{\levelnumbers\'02;}\fi-360\li1440\lin1440 }",
+      ),
+    );
+    expect(
+      rtf,
+      contains(
+        "{\\leveltext\\'01\\u-3913?;}{\\levelnumbers;}\\f$symbol"
+        r'\fi-360\li720\lin720 }',
+      ),
+    );
+    expect(
+      rtf,
+      contains(
+        "{\\leveltext\\'01o;}{\\levelnumbers;}\\f$courier"
+        r'\fi-360\li1440\lin1440 }',
+      ),
+    );
+    expect(_line(rtf, 'Scope'), contains(r'\ls1\ilvl0\li0\fi0'));
+    expect(_line(rtf, 'Scope'), contains(r'{\listtext\f0 Article I. }Scope'));
+    expect(_line(rtf, 'Terms'), contains(r'\ls1\ilvl1\li1080\fi-720'));
+    expect(_line(rtf, 'Terms'), contains(r'{\listtext\f0 1.1.\tab}Terms'));
+    expect(_line(rtf, 'Deep'), contains(r'{\listtext\f0 (a)}Deep'));
+    expect(
+      _line(rtf, 'Method'),
+      contains(r'{\listtext\f0 Article II. }Method'),
+    );
+    expect(
+      _line(rtf, 'Sub bullet'),
+      contains('{\\listtext\\f$courier o\\tab}Sub bullet'),
+    );
+    expect(
+      _line(rtf, 'Bullet'),
+      contains('{\\listtext\\f$symbol \\u-3913?\\tab}Bullet'),
+    );
+
+    final reopened = _again(opened);
+    final numbering = (reopened.source! as DocxPackage).text(
+      'word/numbering.xml',
+    )!;
+    expect(
+      numbering,
+      allOf(
+        contains('<w:suff w:val="space"/><w:lvlText w:val="Article %1."/>'),
+        contains('<w:lvlText w:val="%1.%2."/>'),
+        contains('<w:ind w:left="1080" w:hanging="720"/>'),
+        contains('<w:suff w:val="nothing"/><w:lvlText w:val="(%3)"/>'),
+        contains('<w:lvlText w:val=""/>'),
+        contains('w:ascii="Symbol"'),
+      ),
+    );
+    expect(_visible(reopened.delta), _visible(opened.delta));
+
+    final textutil = File('/usr/bin/textutil');
+    if (!textutil.existsSync()) return;
+    final folder = Directory.systemTemp.createTempSync('rtf_levels');
+    addTearDown(() => folder.deleteSync(recursive: true));
+    final file = File('${folder.path}/levels.rtf')
+      ..writeAsStringSync(rtf, encoding: latin1);
+    final result = await Process.run(textutil.path, [
+      '-convert',
+      'html',
+      file.path,
+      '-stdout',
+    ]);
+    expect(result.exitCode, 0);
+    expect(
+      result.stdout,
+      allOf(
+        contains('list-style-type: upper-roman'),
+        contains('list-style-type: lower-alpha'),
+        contains('Sub bullet'),
+      ),
+    );
+  });
+
+  test('Word lists of one abstract list number as one list', () {
+    String item(String text, int numId) =>
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="$numId"/>'
+        '</w:numPr></w:pPr><w:r><w:t>$text</w:t></w:r></w:p>';
+    final opened = _openDocx(
+      [
+        item('A1', 1),
+        item('A2', 1),
+        '<w:p><w:r><w:t>Between</w:t></w:r></w:p>',
+        item('B1', 2),
+        item('R1', 3),
+        item('R2', 3),
+      ].join(),
+      numbering:
+          '<w:numbering xmlns:w="${Namespaces.w}">'
+          '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start '
+          'w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/>'
+          '</w:lvl></w:abstractNum>'
+          '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'
+          '<w:num w:numId="2"><w:abstractNumId w:val="0"/></w:num>'
+          '<w:num w:numId="3"><w:abstractNumId w:val="0"/><w:lvlOverride '
+          'w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride></w:num>'
+          '</w:numbering>',
+    );
+    final rtf = _save(opened);
+
+    expect(_line(rtf, 'A2'), contains(r'\ls1\ilvl0'));
+    expect(_line(rtf, 'B1'), contains(r'\ls1\ilvl0'));
+    expect(_line(rtf, 'B1'), contains(r'{\listtext\f0 3.\tab}B1'));
+    expect(_line(rtf, 'R1'), contains(r'\ls2\ilvl0'));
+    expect(_line(rtf, 'R1'), contains(r'{\listtext\f0 1.\tab}R1'));
+    expect(_line(rtf, 'R2'), contains(r'{\listtext\f0 2.\tab}R2'));
+
+    final reopened = documentBlocks(
+      _again(opened).delta,
+    ).whereType<LineBlock>().toList();
+    Object? numId(String text) => reopened
+        .firstWhere((line) => line.plainText == text)
+        .attributes[HiddenAttributes.numbering];
+    expect(numId('B1'), numId('A1'));
+    expect(numId('R1'), isNot(numId('A1')));
   });
 
   test('checklist items are bullets of boxes in Segoe UI Symbol', () {
