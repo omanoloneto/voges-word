@@ -80,7 +80,8 @@ class MarkdownWriter {
   static final _tag = RegExp('<[A-Za-z/!?]');
   static final _space = RegExp(r'\s');
   static final _metadata = RegExp(
-    r'''#|\[|-(?:\s|$)|[\w"'.$@-][^:=]*(?::(?:\s|$)|=)''',
+    r'''#|\[|-(?:\s|$)|[\p{L}\p{N}_"'.$@-][^:=]*(?::(?:\s|$)|=)''',
+    unicode: true,
   );
 
   List<String> _blocks(List<DocumentBlock> blocks) {

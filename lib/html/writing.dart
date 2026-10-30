@@ -3,10 +3,6 @@ import 'dart:convert';
 import '../document/delta_blocks.dart';
 import '../document/embeds.dart';
 import '../docx/docx_builder.dart';
-import '../docx/docx_numbering.dart';
-
-/// The codecs' name for [DocxNumbering].
-typedef ListNumbering = DocxNumbering;
 
 final _unsafeAnchor = RegExp(r'[\s"<>]');
 final _trailingZeros = RegExp(r'\.?0+$');

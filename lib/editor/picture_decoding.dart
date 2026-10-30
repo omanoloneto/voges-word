@@ -7,6 +7,7 @@ import 'package:flutter/painting.dart';
 import '../docx/image_formats.dart';
 import '../print/pdf_document.dart' show printDpi;
 import 'paper_styles.dart' show pointsToPixels;
+import 'zoom.dart';
 
 /// Pictures larger than this are never decoded, however small the file: the
 /// same limit the HTML reader puts on each picture.
@@ -14,10 +15,6 @@ const maxPicturePixels = 100000000;
 
 /// Longest side a picture is decoded to, however large it is drawn.
 const maxPictureSide = 4096;
-
-/// The editor's largest zoom. Pictures are decoded for it, so zooming in
-/// never decodes them again.
-const largestZoom = 2.0;
 
 class PictureTooLargeException implements Exception {
   const PictureTooLargeException(this.width, this.height);

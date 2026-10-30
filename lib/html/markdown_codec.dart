@@ -8,11 +8,11 @@ import '../document/document_look.dart';
 import '../document/headers_footers.dart';
 import '../document/text_encodings.dart';
 import '../docx/docx_codec.dart';
+import '../docx/docx_numbering.dart';
 import 'html_codec.dart';
 import 'html_writer.dart';
 import 'markdown_reader.dart';
 import 'markdown_writer.dart';
-import 'writing.dart';
 
 /// Markdown (.md), GitHub flavored.
 class MarkdownCodec implements DocumentCodec {
@@ -50,7 +50,7 @@ class MarkdownCodec implements DocumentCodec {
     bool pageSetupChanged = false,
     HeadersFooters? headersFooters,
   }) {
-    final numbering = ListNumbering.of(source);
+    final numbering = DocxNumbering.of(source);
     return Uint8List.fromList(
       utf8.encode(
         MarkdownWriter(

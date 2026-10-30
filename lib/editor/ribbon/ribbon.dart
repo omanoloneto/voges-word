@@ -12,6 +12,7 @@ import '../editor_factory.dart';
 import '../editor_session.dart';
 import '../page_numbers.dart';
 import '../embeds/table_embed.dart';
+import '../zoom.dart';
 import 'font_picker.dart';
 import 'ribbon_controls.dart';
 import 'ribbon_style.dart';
@@ -58,7 +59,17 @@ enum RibbonTab {
   };
 }
 
-const zoomLevels = [0.5, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+const zoomLevels = [
+  smallestZoom,
+  0.75,
+  0.9,
+  1.0,
+  1.1,
+  1.25,
+  1.5,
+  1.75,
+  largestZoom,
+];
 
 const _sizes = <num>[
   8,

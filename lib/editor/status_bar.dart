@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import '../document/document_codec.dart';
 import '../l10n/l10n.dart';
 import 'editor_session.dart';
+import 'zoom.dart';
+
+const _zoomStep = 0.05;
 
 class StatusBar extends StatefulWidget {
   const StatusBar({
@@ -150,10 +153,11 @@ class _StatusBarState extends State<StatusBar> {
                     ),
                   ),
                   child: Slider(
-                    min: 0.5,
-                    max: 2,
-                    divisions: 30,
-                    value: widget.zoom.clamp(0.5, 2),
+                    min: smallestZoom,
+                    max: largestZoom,
+                    divisions: ((largestZoom - smallestZoom) / _zoomStep)
+                        .round(),
+                    value: widget.zoom.clamp(smallestZoom, largestZoom),
                     label: '${(widget.zoom * 100).round()}%',
                     semanticFormatterCallback: (value) =>
                         'Zoom ${(value * 100).round()}%',

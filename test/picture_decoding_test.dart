@@ -20,7 +20,6 @@ import 'package:voges_word/editor/editor_session.dart';
 import 'package:voges_word/editor/embeds/embed_builders.dart';
 import 'package:voges_word/editor/header_footer_painter.dart';
 import 'package:voges_word/editor/picture_decoding.dart';
-import 'package:voges_word/editor/ribbon/ribbon.dart' show zoomLevels;
 import 'package:voges_word/files/document_files.dart';
 import 'package:voges_word/l10n/l10n.dart';
 import 'package:voges_word/print/page_renderer.dart';
@@ -211,7 +210,6 @@ void main() {
   );
 
   test('pictures are decoded for the largest zoom and for printing', () {
-    expect(largestZoom, zoomLevels.last);
     // 300 by 150 points at 200%, on a screen of ratio 2.
     expect(drawnPictureSize(300, 150, 2), (width: 1600, height: 800));
     // On a screen of ratio 1, printing at 200 dpi needs more than 200%.
