@@ -290,6 +290,49 @@ void main() {
       }
     });
 
+    test('a task item keeps the numbers of the items after it', () {
+      const markdown = '1. First\n2. [x] Second done\n3. Third\n';
+      final loaded = _read(markdown);
+      expect(_lines(loaded.delta), [
+        [
+          'First',
+          {'list': 'ordered'},
+        ],
+        [
+          'Second done',
+          {'list': 'checked'},
+        ],
+        [
+          'Third',
+          {'list': 'ordered'},
+        ],
+      ]);
+      expect(_level(loaded, 'Second done'), ('☑', 'Segoe UI Symbol'));
+      final saved = _write(loaded.delta, null, loaded.source);
+      expect(saved, '1. First\n\n- [x] Second done\n\n3. Third\n');
+      expect(_lines(_read(saved).delta), _lines(loaded.delta));
+    });
+
+    test('only the first definition of a footnote counts, as on GitHub', () {
+      final loaded = _read(
+        'Text[^a] and more[^a].\n\n[^a]: First note.\n\n[^a]: Second note.\n',
+      );
+      expect(_plain(loaded.delta), contains('First note.'));
+      expect(_plain(loaded.delta), isNot(contains('Second note.')));
+
+      // Each definition would get a back-link to every reference.
+      final watch = Stopwatch()..start();
+      final repeated = _read(
+        '${List.filled(1000, 'Text[^a].').join(' ')}\n\n'
+        '${List.filled(1000, '[^a]: The note.').join('\n\n')}\n',
+      );
+      expect(watch.elapsed, lessThan(const Duration(seconds: 20)));
+      expect(
+        _lines(repeated.delta).where((line) => '${line.first}'.contains('The')),
+        hasLength(1),
+      );
+    });
+
     test('task items are ☑ and ☐ list levels', () {
       for (final markdown in [
         '- [x] Write the parser\n- [ ] Write the tests\n\n1. [x] Ordered\n',
@@ -412,6 +455,17 @@ void main() {
           reason: markdown.substring(0, 20),
         );
       }
+    });
+
+    test('a hundred pictures defined by reference open', () {
+      // As pandoc --reference-links writes them.
+      final markdown =
+          '${[for (var i = 0; i < 100; i++) '![Step $i][s$i]'].join('\n\n')}'
+          '\n\n'
+          '${[for (var i = 0; i < 100; i++) '[s$i]: ${_screenshot(30000, i)}'].join('\n')}\n';
+      final loaded = _read(markdown);
+      expect(_pictures(loaded.delta), 100);
+      expect(loaded.notices, isEmpty);
     });
 
     test('links read back as they were written', () {
@@ -1105,6 +1159,28 @@ void main() {
       }
     });
 
+    test('nesting inside footnotes counts', () {
+      for (final markdown in [
+        'Note[^a].\n\n[^a]: ${'> ' * 2000}x',
+        '[^a]: ${'> ' * 1000}${'x ' * 500000}',
+        '[^a]: ${'- ' * 20000}x',
+      ]) {
+        expect(
+          () => _read(markdown),
+          throwsA(
+            isA<FormatException>().having(
+              (error) => error.message,
+              'message',
+              'The Markdown nests too deeply.',
+            ),
+          ),
+          reason: markdown.substring(0, 20),
+        );
+      }
+      final note = _read('Note[^a].\n\n[^a]: > Quoted\n    > note.\n');
+      expect(_plain(note.delta), contains('Quoted note.'));
+    });
+
     test('shapes that take package:markdown quadratic time are refused', () {
       for (final markdown in [
         '*a* ' * 40000,
@@ -1113,6 +1189,13 @@ void main() {
         List.generate(20000, (i) => '[r$i]: http://x/$i').join('\n'),
         '${List.generate(20000, (i) => 'x[^$i]').join(' ')}\n\n'
             '${List.generate(20000, (i) => '[^$i]: n').join('\n')}',
+        // Each definition reads the rest of its block again, which goes on
+        // through empty list items; labels may hold escaped brackets and
+        // line breaks.
+        List.generate(3000, (i) => '[r$i]: /x').join('\n'),
+        List.generate(3000, (i) => '[r$i]: /x\n* ').join('\n'),
+        List.generate(3000, (i) => '[r\\]$i]: /x').join('\n'),
+        List.generate(2000, (i) => '[r\n$i]: /x').join('\n'),
       ]) {
         final watch = Stopwatch()..start();
         expect(() => _read(markdown), fails());
@@ -1203,13 +1286,48 @@ void main() {
             '${List.generate(20000, (i) => '[^n$i]: note').join('\n\n')}\n',
         // Every label is copied once per capital letter.
         '[${'Ä' * 999}]\n\n' * 4000,
+        '[${'Ä' * 999}]: /x\n\n' * 4000,
         // The alt text of a picture is read as any other text.
         '![${'a' * 100000}]($_pngUri)\n',
+        // Every bracket reads the labels of all footnotes.
+        '${List.filled(3000, '[a]').join('\n\n')}\n\n'
+            '${List.generate(600, (i) => '[^${'k' * 6000}$i]: n').join('\n\n')}\n',
       ]) {
         final watch = Stopwatch()..start();
         expect(() => _read(markdown), fails());
         expect(watch.elapsed, lessThan(const Duration(seconds: 20)));
       }
+      for (final markdown in [
+        '[${'a' * 999}]: /x\n\n' * 4000,
+        '${List.filled(6000, '[a]').join('\n\n')}\n\n'
+            '${List.generate(600, (i) => '[^note$i]: n').join('\n\n')}\n',
+      ]) {
+        expect(() => _read(markdown), returnsNormally);
+      }
+    });
+
+    test('HTML made again for every reference is counted', () {
+      for (final markdown in [
+        // A definition's destination is processed again on each use.
+        '${List.filled(20, '[x]').join('\n\n')}\n\n'
+            '[x]: https://example.com/${'a' * 3000000}\n',
+        '${List.filled(5, '![x]').join('\n\n')}\n\n'
+            '[x]: ${_screenshot(3000000, 1)}\n',
+        // A footnote reference repeats its label, percent-encoded, three
+        // times.
+        '${List.filled(1000, '[^${'你' * 998}]').join(' ')}\n\n'
+            '[^${'你' * 998}]: x\n',
+      ]) {
+        final watch = Stopwatch()..start();
+        expect(() => _read(markdown), fails());
+        expect(watch.elapsed, lessThan(const Duration(seconds: 20)));
+      }
+      // A picture or a link used a few times opens.
+      final logo = _read(
+        '${List.filled(10, '![Logo][logo] and the [site][].').join('\n\n')}'
+        '\n\n[logo]: ${_screenshot(30000, 2)}\n[site]: https://example.com/\n',
+      );
+      expect(_pictures(logo.delta), 10);
     });
 
     test('paragraphs with many links and tags open', () {
@@ -1266,6 +1384,29 @@ void main() {
       ].join('\n');
       final report = _read('# Crash report\n\nServer log:\n\n```\n$log\n```\n');
       expect(_lines(report.delta), hasLength(3002));
+      // Fences inside list items, or indented, are left to package:markdown.
+      final mappings = [
+        for (var i = 0; i < 3000; i++)
+          '[12:00:00 INFO]: [ViaVersion] Loading mappings for 1.20.$i, '
+              'please wait',
+      ];
+      final steps = _read(
+        '1. Start the server.\n2. Join and look at the log:\n\n   ```\n'
+        '${[for (final line in mappings.take(2000)) '   $line'].join('\n')}'
+        '\n   ```\n\n3. The client crashes.\n',
+      );
+      expect(_lines(steps.delta), hasLength(2003));
+      expect(_run(steps.delta, 'mappings for 1.20.1999,'), {
+        'font': 'Courier New',
+      });
+      expect(_lines(steps.delta).last, [
+        'The client crashes.',
+        {'list': 'ordered'},
+      ]);
+      final indented = _read(
+        ' ```\n${[for (final line in mappings) ' $line'].join('\n')}\n ```\n',
+      );
+      expect(_lines(indented.delta), hasLength(3000));
       for (final markdown in [
         'Intro\n\n${'* ' * 101}\n\nOutro',
         '```\n${'- ' * 101}\n```',

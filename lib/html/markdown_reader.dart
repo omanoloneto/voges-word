@@ -11,9 +11,10 @@ const maxMarkdownText = 4 * 1024 * 1024;
 
 const _maxNesting = 100;
 
-/// Cost of runs of link reference definitions: package:markdown rereads the
-/// rest of the run for each one.
-const _maxDefinitionWork = 300000000;
+/// Work package:markdown may do rereading runs of link reference
+/// definitions on each pass over the blocks, about a nanosecond a unit: see
+/// [_Definitions].
+const _maxDefinitionWork = 2500000000;
 
 /// Sum over inline blocks of the square of their delimiters, brackets and
 /// lines; package:markdown takes quadratic time on some of them.
@@ -45,9 +46,10 @@ typedef MarkdownHtml = ({String html, Set<DocumentNotice> notices});
 
 /// GitHub flavored Markdown as HTML. package:markdown recurses on nesting and
 /// is slow on some shapes, so the text is checked first: nesting depth,
-/// reference definitions, tables and, on a first parse of its blocks, how
-/// much work each inline block would take; brackets are counted as they are
-/// parsed. Front matter and the content of fenced code never reach it.
+/// the labels of reference definitions, tables and, on a first parse of its
+/// blocks, how much work each inline block would take; runs of reference
+/// definitions and brackets are counted as they are parsed. Front matter
+/// and the content of fenced code never reach it.
 MarkdownHtml markdownHtml(String markdown) {
   final text = markdown.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   var pictures = 0;
@@ -210,7 +212,8 @@ List<String>? _takeOutCode(List<String> lines, List<String> code) {
 /// mark ends up outside a code block, because package:markdown saw the
 /// fences otherwise.
 MarkdownHtml? _parse(List<String> lines, List<String> code) {
-  _checkLines(lines);
+  final work = _LinkWork();
+  _checkLines(lines, work);
   _checkInlines(
     md.BlockParser(
       lines.map(md.Line.new).toList(),
@@ -218,21 +221,73 @@ MarkdownHtml? _parse(List<String> lines, List<String> code) {
     ).parseLines(),
   );
   final renderer = _Renderer(code);
-  final html = renderer.render(_document(_LinkWork()).parseLines(lines));
+  final html = renderer.render(_document(work).parseLines(lines));
   return renderer.misplaced ? null : (html: html, notices: renderer.notices);
 }
 
 /// GitHub's extensions, with GitHub's e-mail links (an address that doesn't
-/// end with a letter, like `react@18.3`, stays text) and links whose work is
-/// counted in [work].
+/// end with a letter, like `react@18.3`, stays text) and footnotes (the
+/// first definition of a label wins), and with the work on reference
+/// definitions and on links counted, the latter in [work].
 md.Document _document(_LinkWork work) => md.Document(
-  extensionSet: md.ExtensionSet(md.ExtensionSet.gitHubFlavored.blockSyntaxes, [
-    for (final syntax in md.ExtensionSet.gitHubFlavored.inlineSyntaxes)
-      syntax is md.AutolinkExtensionSyntax ? _Autolinks() : syntax,
-    _Links(work),
-    _Pictures(work),
-  ]),
+  extensionSet: md.ExtensionSet(
+    [
+      _Definitions(),
+      for (final syntax in md.ExtensionSet.gitHubFlavored.blockSyntaxes)
+        syntax is md.FootnoteDefSyntax ? _Footnotes() : syntax,
+    ],
+    [
+      for (final syntax in md.ExtensionSet.gitHubFlavored.inlineSyntaxes)
+        syntax is md.AutolinkExtensionSyntax ? _Autolinks() : syntax,
+      _Links(work),
+      _Pictures(work),
+    ],
+  ),
 );
+
+/// Counts what package:markdown does on runs of link reference definitions
+/// as it does it: for each definition it reads the rest of the block,
+/// checking every line for the start of another block, about a microsecond,
+/// and copying its characters, 5 nanoseconds each. It goes before every
+/// other syntax, so it sees each check of a line, and it never parses one.
+class _Definitions extends md.BlockSyntax {
+  var _work = 0;
+
+  @override
+  RegExp get pattern => _nothing;
+
+  @override
+  bool canParse(md.BlockParser parser) {
+    if (!parser.isDone &&
+        parser.currentSyntax is md.LinkReferenceDefinitionSyntax) {
+      _work += 1000 + parser.current.content.length * 5;
+      if (_work > _maxDefinitionWork) {
+        throw const FormatException('Too many link definitions in a row.');
+      }
+    }
+    return false;
+  }
+
+  @override
+  md.Node? parse(md.BlockParser parser) => null;
+}
+
+final _nothing = RegExp(r'[^\s\S]');
+
+/// Footnote definitions after the first of their label are left out, as
+/// GitHub does: package:markdown would give each of them a back-link to
+/// every reference.
+class _Footnotes extends md.FootnoteDefSyntax {
+  final _labels = <String>{};
+
+  @override
+  md.Node? parse(md.BlockParser parser) {
+    final footnote = super.parse(parser);
+    final label = footnote is md.Element ? footnote.footnoteLabel : null;
+    if (label != null && !_labels.add(label.toLowerCase())) return md.Text('');
+    return footnote;
+  }
+}
 
 class _Autolinks extends md.AutolinkExtensionSyntax {
   @override
@@ -246,35 +301,26 @@ class _Autolinks extends md.AutolinkExtensionSyntax {
 }
 
 final _letter = RegExp('[A-Za-z]');
-final _definition = RegExp(r'^\[[^\]]*\]:');
 
-void _checkLines(List<String> lines) {
-  var definitions = 0;
-  var characters = 0;
-  var work = 0;
+/// Checks nesting and tables, and counts in [work] the labels of reference
+/// definitions, which package:markdown normalizes on both passes over the
+/// blocks.
+void _checkLines(List<String> lines, _LinkWork work) {
   var cells = 0;
   var columns = 0;
-  void endBlock() {
-    work += definitions * characters;
-    definitions = 0;
-    characters = 0;
-    columns = 0;
-    if (work > _maxDefinitionWork) {
-      throw const FormatException('Too many link definitions in a row.');
-    }
-  }
-
-  for (final line in lines) {
+  for (var index = 0; index < lines.length; index++) {
+    final line = lines[index];
     final (:depth, :content) = _containers(line);
     if (depth > _maxNesting) {
       throw const FormatException('The Markdown nests too deeply.');
     }
     if (content.trim().isEmpty) {
-      endBlock();
+      columns = 0;
       continue;
     }
-    characters += line.length;
-    if (_definition.hasMatch(content)) definitions++;
+    if (content.codeUnitAt(0) == 0x5B) {
+      work.add(_definitionLabel(lines, index, content) * 2);
+    }
     _delimiterRow(line);
     // A table's header and every line up to a blank one get as many cells
     // as its widest delimiter row.
@@ -288,13 +334,45 @@ void _checkLines(List<String> lines) {
       throw DocumentProblemException(DocumentProblem.tooLarge);
     }
   }
-  endBlock();
 }
 
-/// The most containers (quotes and list items) a line can be inside: one per
-/// marker, and one per two columns of indentation before or between them,
-/// since a list item needs at least that much to go on. Lines without
-/// markers open nothing, and neither does a thematic break.
+/// What normalizing the label of a reference definition that may start
+/// [content], the rest of line [index] of [lines], costs package:markdown:
+/// the label is read as [md.LinkParser] reads it, across lines, and copied
+/// once per character that may fold; 0 when no definition starts there.
+int _definitionLabel(List<String> lines, int index, String content) {
+  var text = content;
+  var position = 1;
+  var length = 0;
+  var folded = 0;
+  int? next() {
+    if (position == text.length) {
+      if (++index == lines.length) return null;
+      text = '\n${lines[index]}';
+      position = 0;
+    }
+    final char = text.codeUnitAt(position++);
+    length++;
+    if (_folds(char)) folded++;
+    return char;
+  }
+
+  for (var steps = 0; steps <= _maxLabel; steps++) {
+    final char = next();
+    if (char == null || char == 0x5B) return 0;
+    if (char == 0x5D) {
+      final colon = position < text.length && text.codeUnitAt(position) == 0x3A;
+      return colon ? (length - 1) * (50 + folded) : 0;
+    }
+    if (char == 0x5C && next() == null) return 0;
+  }
+  return 0;
+}
+
+/// The most containers (quotes, list items and footnotes) a line can be
+/// inside: one per marker, and one per two columns of indentation before or
+/// between them, since a list item needs at least that much to go on. Lines
+/// without markers open nothing, and neither does a thematic break.
 ({int depth, String content}) _containers(String line) {
   final rule = _ruleStart(line);
   var index = 0;
@@ -308,6 +386,12 @@ void _checkLines(List<String> lines) {
       columns += 4;
     } else if (char == 0x3E) {
       markers++;
+    } else if (char == 0x5B) {
+      final footnote = _footnoteStart.matchAsPrefix(line, index);
+      if (footnote == null) break;
+      markers++;
+      index = footnote.end;
+      continue;
     } else if (index >= rule) {
       break;
     } else if ((char == 0x2D || char == 0x2B || char == 0x2A) &&
@@ -342,6 +426,10 @@ void _checkLines(List<String> lines) {
     content: line.substring(index),
   );
 }
+
+/// The label that starts a footnote definition, whose content
+/// package:markdown parses as blocks of their own.
+final _footnoteStart = RegExp(r'\[\^[^\] \r\n\x00\t]+\]:[ \t]*');
 
 /// Where the rest of [line] is a thematic break (`* * *`, `---`): three or
 /// more of one of `*`, `-` or `_` with only spaces between them. The line's
@@ -618,9 +706,21 @@ int _autolinkEnd(String text, int index) {
 /// Counts what package:markdown does on brackets before it does it, in
 /// about nanoseconds: reading a destination or a label takes 10 a
 /// character, normalizing a label for a lookup 50 a character plus a copy
-/// of it per character it may fold, and the lookup 30 per footnote.
+/// of it per character it may fold, and the lookup 30 per footnote plus a
+/// character of their labels. HTML made again from the same text, as a
+/// definition's destination and title on each use after the first or the
+/// label of a footnote on each reference, takes [_repeated] a character,
+/// read by the HTML reader afterwards.
 class _LinkWork {
   var _work = 0;
+
+  /// Work of looking a label up among the footnotes.
+  int get lookup => _lookup;
+  var _lookup = 0;
+
+  /// Uses so far of the destination of each reference definition, by
+  /// identity: package:markdown passes on the definition's own string.
+  Map<String, int>? _uses;
 
   void add(int work) {
     _work += work;
@@ -628,13 +728,40 @@ class _LinkWork {
       throw const FormatException('The Markdown is too complex.');
     }
   }
+
+  /// The brackets of [document] are being parsed, after all its reference
+  /// definitions and footnotes.
+  void start(md.Document document) {
+    if (_uses != null) return;
+    _uses = Map.identity();
+    for (final definition in document.linkReferences.values) {
+      _uses![definition.destination] = 0;
+    }
+    for (final label in document.footnoteReferences.keys) {
+      _lookup += 30 + label.length;
+    }
+  }
+
+  /// A link or picture to [destination] with [title] is being made.
+  void link(String destination, String? title) {
+    final uses = _uses?[destination];
+    if (uses == null) return;
+    if (uses > 0) {
+      add((destination.length + (title?.length ?? 0)) * _repeated);
+    }
+    _uses![destination] = uses + 1;
+  }
 }
+
+/// Work, in [_LinkWork]'s units, on each character of HTML made again.
+const _repeated = 100;
 
 /// Brackets whose cost is counted before package:markdown resolves them. A
 /// bracket that isn't an inline link has its whole text normalized as a
 /// reference, copied once per capital letter, and compared with every
 /// footnote; a text longer than [_maxLabel] is no reference at all, so it
-/// isn't looked up.
+/// isn't looked up. A footnote reference repeats its label, percent-encoded,
+/// in its link, its id and its back-link.
 mixin _Counted on md.LinkSyntax {
   _LinkWork get work;
 
@@ -646,6 +773,7 @@ mixin _Counted on md.LinkSyntax {
     String? tag,
     required List<md.Node> Function() getChildren,
   }) {
+    work.start(parser.document);
     final text = parser.source;
     final end = parser.pos;
     final next = end + 1 < text.length ? text.codeUnitAt(end + 1) : null;
@@ -673,13 +801,16 @@ mixin _Counted on md.LinkSyntax {
     }
     if (stop - start > _maxLabel) return null;
     var folded = 0;
+    var encoded = 0;
     for (var index = start; index < stop; index++) {
-      if (_folds(text.codeUnitAt(index))) folded++;
+      final char = text.codeUnitAt(index);
+      if (_folds(char)) folded++;
+      encoded += char < 0x80 ? 3 : (char < 0x800 ? 6 : 9);
     }
-    work.add(
-      (stop - start) * (50 + folded) +
-          parser.document.footnoteReferences.length * 30,
-    );
+    work.add((stop - start) * (50 + folded) + work.lookup);
+    if (stop > start && text.codeUnitAt(start) == 0x5E) {
+      work.add((130 + encoded * 3) * _repeated);
+    }
     return super.close(
       parser,
       opener,
@@ -720,6 +851,7 @@ class _Links extends md.LinkSyntax with _Counted {
     String? title, {
     required List<md.Node> Function() getChildren,
   }) {
+    work.link(destination, title);
     final link =
         super.createNode(destination, title, getChildren: getChildren)
             as md.Element;
@@ -735,6 +867,16 @@ class _Pictures extends md.ImageSyntax with _Counted {
 
   @override
   final _LinkWork work;
+
+  @override
+  md.Element createNode(
+    String destination,
+    String? title, {
+    required List<md.Node> Function() getChildren,
+  }) {
+    work.link(destination, title);
+    return super.createNode(destination, title, getChildren: getChildren);
+  }
 }
 
 final _escaped = RegExp(r'''\\([!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~])''');
@@ -904,6 +1046,7 @@ class _Renderer {
             ..add(md.Element('p', rest))
             ..add(box);
         case final md.Element element:
+          if (element.tag == 'ol') _renumber(element);
           _start(element, out);
           final children = element.children;
           if (children == null || element.tag == 'input') {
@@ -922,6 +1065,22 @@ class _Renderer {
       }
     }
     return out.toString();
+  }
+
+  /// Gives the first item after task items of a numbered [list] its number:
+  /// the HTML reader takes task items out of the numbering, as ☑ and ☐
+  /// levels, and the items after them would be numbered on from the ones
+  /// before.
+  static void _renumber(md.Element list) {
+    var number = int.tryParse(list.attributes['start'] ?? '') ?? 1;
+    var afterTask = false;
+    for (final item in list.children ?? const <md.Node>[]) {
+      if (item is! md.Element || item.tag != 'li') continue;
+      final task = item.attributes['class'] == 'task-list-item';
+      if (afterTask && !task) item.attributes['value'] = '$number';
+      afterTask = task;
+      number++;
+    }
   }
 
   void _start(md.Element element, StringBuffer out) {
