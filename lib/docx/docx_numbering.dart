@@ -298,16 +298,6 @@ class DocxNumbering {
   WordLevel? abstractLevel(int numId, int level) =>
       _abstracts[_lists[numId]?.abstractId]?[level];
 
-  /// Whether list [numId] numbers on its abstract list's levels, restarting
-  /// some at most: it has one and redefines none of its levels.
-  bool usesAbstractLevels(int numId) {
-    final list = _lists[numId];
-    return list != null &&
-        list.abstractId != null &&
-        _abstracts.containsKey(list.abstractId) &&
-        list.redefined.isEmpty;
-  }
-
   /// Whether the part has abstract list [id].
   bool hasAbstract(int id) => _abstracts.containsKey(id);
 
