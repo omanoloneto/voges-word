@@ -402,4 +402,18 @@ void main() {
       'Bold and a link\nsecond\n',
     );
   });
+
+  test('sections can number their pages their own way', () {
+    final spec = DocumentSpec(page: const PageSpec(firstNumber: 1))
+      ..body.addAll([
+        const ParagraphSpec([TextSpec('front matter')]),
+        const SectionBreakSpec(PageSpec(numberFormat: NumberFormat.lowerRoman)),
+        const ParagraphSpec([TextSpec('chapter one')]),
+      ]);
+    final document = DocxBuilder(spec).build().text('word/document.xml')!;
+
+    expect(document, contains('<w:pgNumType w:fmt="lowerRoman"/><w:cols'));
+    expect(document, contains('<w:pgNumType w:start="1"/><w:cols'));
+    expect(XmlDocument.parse(document), isNotNull);
+  });
 }

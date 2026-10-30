@@ -19,6 +19,8 @@ class PageSpec {
     this.footerDistance = 35.4,
     this.columns = 1,
     this.columnSpacing = 35.4,
+    this.numberFormat,
+    this.firstNumber,
   });
 
   final double width;
@@ -28,6 +30,12 @@ class PageSpec {
   final double footerDistance;
   final int columns;
   final double columnSpacing;
+
+  /// How the section numbers its pages; null keeps 1, 2, 3.
+  final NumberFormat? numberFormat;
+
+  /// The number of the section's first page; null continues the numbering.
+  final int? firstNumber;
 
   double get textWidth => width - margins.left - margins.right;
   double get textHeight => height - margins.top - margins.bottom;
@@ -758,6 +766,13 @@ class DocxBuilder {
     final columns = page.columns > 1
         ? ' w:num="${math.min(page.columns, 45)}"'
         : '';
+    final numbers = [
+      if (page.numberFormat case final format?
+          when format != NumberFormat.bullet)
+        ' w:fmt="${format.name}"',
+      if (page.firstNumber case final first?)
+        ' w:start="${first.clamp(0, 32767)}"',
+    ].join();
     return '<w:sectPr>$_references$type'
         '<w:pgSz w:w="${_twips(page.width)}" w:h="${_twips(page.height)}"'
         '${landscape ? ' w:orient="landscape"' : ''}/>'
@@ -767,6 +782,7 @@ class DocxBuilder {
         'w:left="${_twips(margins.left)}" '
         'w:header="${_twips(page.headerDistance)}" '
         'w:footer="${_twips(page.footerDistance)}" w:gutter="0"/>'
+        '${numbers.isEmpty ? '' : '<w:pgNumType$numbers/>'}'
         '<w:cols w:space="${_twips(page.columnSpacing)}"$columns/>'
         '${spec.differentFirstPage ? '<w:titlePg/>' : ''}'
         '</w:sectPr>';
