@@ -105,9 +105,15 @@ class MarkdownWriter {
     // is at the top.
     int? codeLevel;
     var continued = false;
+    // The top-level delimiter or bullet of the list written last, while
+    // nothing has been written after it.
+    String? listBefore;
+    var listBeforeAt = -1;
     void endList() {
       if (items.isEmpty) return;
       chunks.add(items.join('\n'));
+      listBefore = levels.firstOrNull?.delimiter;
+      listBeforeAt = chunks.length;
       items.clear();
       levels.clear();
       continued = false;
@@ -134,7 +140,16 @@ class MarkdownWriter {
       final block = blocks[index];
       if (block is LineBlock && block.list != null) {
         endCode();
-        items.add(_item(block, levels, continued: continued));
+        items.add(
+          _item(
+            block,
+            levels,
+            continued: continued,
+            after: items.isEmpty && chunks.length == listBeforeAt
+                ? listBefore
+                : null,
+          ),
+        );
         continued = false;
         continue;
       }
@@ -315,7 +330,14 @@ class MarkdownWriter {
   /// as part of the text above. Items nest under the open item of a level
   /// above theirs, and items of one level stay side by side, however deep
   /// the list starts.
-  String _item(LineBlock line, List<_Level> levels, {bool continued = false}) {
+  /// [after] is the top-level delimiter or bullet of a list that ends right
+  /// before this item's list, with nothing written between them.
+  String _item(
+    LineBlock line,
+    List<_Level> levels, {
+    bool continued = false,
+    String? after,
+  }) {
     final wordLevel = WordListCounter.levelOf(line);
     var level = 0;
     while (level < levels.length && levels[level].wordLevel < wordLevel) {
@@ -326,8 +348,8 @@ class MarkdownWriter {
     final parent = level == 0 ? null : levels[level - 1];
     final ordered = line.isOrdered;
     final key = ordered ? _counter.keyOf(line) : 'bullets';
-    var delimiter = '.';
-    var marker = '-';
+    var delimiter = ordered ? '.' : '-';
+    var marker = delimiter;
     var number = 1;
     final counted = _counter.count(line);
     // Numbered items of another level in the place of the open one start
@@ -337,16 +359,27 @@ class MarkdownWriter {
         (previous.ordered != ordered ||
             previous.key != key ||
             (ordered && previous.wordLevel != wordLevel));
+    // A list right after another one, at the same level or with only empty
+    // paragraphs between them, needs another delimiter or bullet, or
+    // Markdown joins them.
+    final joins = previous == null && level == 0 && after == delimiter;
     if (ordered) {
       if (previous != null && previous.ordered) {
-        // A list right after another one at the same level needs another
-        // delimiter, or Markdown joins them.
         delimiter = another
             ? (previous.delimiter == '.' ? ')' : '.')
             : previous.delimiter;
+      } else if (joins) {
+        delimiter = ')';
       }
       number = counted!;
       marker = '$number$delimiter';
+    } else {
+      if (previous != null && !previous.ordered) {
+        delimiter = previous.delimiter;
+      } else if (joins) {
+        delimiter = '*';
+      }
+      marker = delimiter;
     }
     final offset = indent + marker.length + 1;
     final (:checkbox, :pieces) = _task(line);
@@ -899,6 +932,8 @@ class _Level {
   final int offset;
   final Object key;
   final bool ordered;
+
+  /// The number's delimiter, or the bullet.
   final String delimiter;
 
   /// The item has no text, so an item under it doesn't follow a paragraph.

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voges_word/document/document_codec.dart';
@@ -138,5 +139,38 @@ void main() {
     expect(markdown, startsWith('1. First\n2. Second\n\n<table'));
     expect(markdown, contains('<ol start="3"><li>Third</li>'));
     expect(markdown, endsWith('</table>\n\n5. Fifth\n'));
+  });
+
+  test('lists with only empty paragraphs between them stay apart', () {
+    final docx = DocxCodec(TableStore());
+    final codec = MarkdownCodec(docx);
+    final loaded = _openWord(
+      docx,
+      [
+        _item('A1', 1),
+        _item('A2', 1),
+        '<w:p/>',
+        _item('B1', 2),
+        _item('B2', 2),
+      ].join(),
+      '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start '
+      'w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/>'
+      '</w:lvl></w:abstractNum>'
+      '<w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:start '
+      'w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/>'
+      '</w:lvl></w:abstractNum>'
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'
+      '<w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>',
+    );
+    final numbered = utf8.decode(
+      codec.encode(loaded.delta, source: loaded.source),
+    );
+    expect(numbered, '1. A1\n2. A2\n\n1) B1\n2) B2\n');
+
+    final reopened = codec.decode(Uint8List.fromList(utf8.encode(numbered)));
+    expect(
+      utf8.decode(codec.encode(reopened.delta, source: reopened.source)),
+      numbered,
+    );
   });
 }
