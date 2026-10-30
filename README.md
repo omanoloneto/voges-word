@@ -67,6 +67,7 @@ What already exists and what is missing compared to Word's most used features is
 - The macros of a `.docm` are kept when it is saved and are never run. **Save as** leaves them out, because Word refuses a `.docx` with macros.
 - A file opens by its content, not by its name: a `.doc` that is really RTF or a web page opens as one, and a Word document with macros named `.docx` opens as a `.docm`, so saving keeps them.
 - Text files are read as UTF-8, UTF-16 or Windows' Western code page, and saved as UTF-8.
+- Files are read in the background while a progress window shows, so the app stays responsive. A file that takes more than a minute to read is refused as too large or too complex.
 - Share sends a `.docx`, a PDF or, when the format of the file is one Voges Word saves, the document in that format.
 
 ## Fidelity when opening and saving
@@ -165,7 +166,7 @@ The text editor is [flutter_quill](https://pub.dev/packages/flutter_quill) 11.5.
 ## Structure
 
 - `lib/docx/` — reading and writing `.docx` (zip package, styles, numbering, conversion to the editor's model and back).
-- `lib/formats/` — the reader and writer of each format, and how a file's content tells its format.
+- `lib/formats/` — the reader and writer of each format, how a file's content tells its format, and reading files on a background isolate with a time limit (`background_open.dart`).
 - `lib/odt/`, `lib/rtf/`, `lib/html/` (web pages and Markdown) and `lib/doc/` (Word 97–2003, read only) — the other formats. Their readers build a `.docx` package in memory, which the `.docx` reader opens.
 - `lib/document/` — document model: formats, page appearance, tables and protected content.
 - `lib/editor/` — screen, pages, ribbon, File menu, tables, search and session (open, save, changes).
