@@ -522,15 +522,19 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get problemLegacyDoc =>
-      'Arquivos .doc antigos não são suportados. Abra no Word e salve como .docx.';
+      'Arquivos do Word 95 ou anteriores não são suportados. Abra no Word e salve como .docx.';
 
   @override
   String get problemUnsupportedFormat =>
-      'O Voges Word abre arquivos .docx e .txt.';
+      'O Voges Word abre arquivos .docx, .doc, .odt, .rtf, .html, .md e .txt.';
 
   @override
   String get problemNotWordDocument =>
       'O arquivo não é um documento do Word válido.';
+
+  @override
+  String get problemPasswordProtected =>
+      'O arquivo está protegido por senha. Tire a senha no programa que o criou e tente de novo.';
 
   @override
   String get problemTooLarge => 'O arquivo é grande demais para abrir.';
@@ -547,6 +551,14 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String get noticeCommentsHidden =>
       'Os comentários do documento não aparecem no Voges Word.';
+
+  @override
+  String get noticeContentNotImported =>
+      'Algumas partes do arquivo não aparecem no Voges Word e podem se perder ao salvar.';
+
+  @override
+  String get noticeSavesAsDocx =>
+      'Este arquivo está no formato do Word 97–2003. Ao salvar, é criada uma cópia .docx; o original continua como está.';
 
   @override
   String get recoverFailed => 'Não foi possível recuperar o documento.';

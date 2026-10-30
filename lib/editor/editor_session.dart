@@ -19,6 +19,7 @@ import '../document/plain_text_codec.dart';
 import '../document/tables.dart';
 import '../files/document_files.dart';
 import '../files/recovery.dart';
+import '../formats/document_codecs.dart';
 import '../l10n/app_language.dart';
 import '../l10n/l10n.dart';
 import 'document_commands.dart';
@@ -62,7 +63,8 @@ class EditorSession extends ChangeNotifier {
     SessionLocale? locale,
   }) : locale =
            locale ??
-           SessionLocale.of(lookupAppLocalizations(appLanguages.first)) {
+           SessionLocale.of(lookupAppLocalizations(appLanguages.first)),
+       codecs = DocumentCodecs(docx: docx, plainText: plainText) {
     _tableEdits = tables.edits.listen((_) => _markDirty());
     _load(
       docx.create(DocumentTemplate.blank, language: this.locale.language),
@@ -79,6 +81,7 @@ class EditorSession extends ChangeNotifier {
   final PlainTextCodec plainText;
   final DocumentFiles files;
   final TableStore tables;
+  final DocumentCodecs codecs;
 
   late QuillController controller;
   late final ValueNotifier<QuillController> activeController = ValueNotifier(
@@ -152,41 +155,60 @@ class EditorSession extends ChangeNotifier {
         format: DocumentFormat.docx,
       );
 
+  /// Templates open as new documents; formats that aren't saved will be
+  /// saved as .docx.
   void open(OpenedFile file) {
-    final format = DocumentFormat.fromFileName(file.name);
-    if (format == null) {
-      throw DocumentProblemException(
-        file.name.toLowerCase().endsWith('.doc')
-            ? DocumentProblem.legacyDoc
-            : DocumentProblem.unsupportedFormat,
-      );
+    final detected = detectFormat(file.name, file.bytes);
+    if (detected == null) {
+      throw DocumentProblemException(DocumentProblem.unsupportedFormat);
     }
+    final format = detected.format;
     final LoadedDocument loaded;
     try {
-      loaded = format == DocumentFormat.docx
-          ? docx.decode(file.bytes)
-          : plainText.decode(file.bytes);
+      loaded = codecs.decoder(format).decode(file.bytes);
     } on DocumentProblemException {
       rethrow;
     } on FormatException {
       throw DocumentProblemException(DocumentProblem.damaged);
     }
-    _load(loaded, name: file.name, path: file.path, format: format);
+    if (detected.template) {
+      _load(
+        loaded,
+        name: null,
+        path: null,
+        format: format.writable ? format : DocumentFormat.docx,
+      );
+      return;
+    }
+    _load(
+      format.writable
+          ? loaded
+          : loaded.withNotices([DocumentNotice.savesAsDocx]),
+      name: file.name,
+      path: file.path,
+      format: format,
+    );
   }
 
-  RecoverySnapshot snapshot() => RecoverySnapshot(
-    name: _name ?? '',
-    path: path,
-    format: format,
-    bytes: encode(format),
-    savedAt: DateTime.now(),
-  );
+  /// The copy is always a .docx (.docm for .docm files), which keeps
+  /// everything the editor has.
+  RecoverySnapshot snapshot() {
+    final content = format == DocumentFormat.docm
+        ? DocumentFormat.docm
+        : DocumentFormat.docx;
+    return RecoverySnapshot(
+      name: _name ?? '',
+      path: path,
+      format: format,
+      content: content,
+      bytes: encode(content),
+      savedAt: DateTime.now(),
+    );
+  }
 
   /// Reopens the recovery copy as a document that is not saved yet.
   void restore(RecoverySnapshot snapshot, {required bool keepPath}) {
-    final loaded = snapshot.format == DocumentFormat.docx
-        ? docx.decode(snapshot.bytes)
-        : plainText.decode(snapshot.bytes);
+    final loaded = codecs.decoder(snapshot.content).decode(snapshot.bytes);
     _load(
       loaded,
       name: snapshot.name.isEmpty ? null : snapshot.name,
@@ -200,6 +222,7 @@ class EditorSession extends ChangeNotifier {
 
   /// Returns false if the user canceled.
   Future<bool> save() async {
+    if (!format.writable) return saveAs(DocumentFormat.docx);
     final target = path;
     if (target != null && files.canSaveInPlace) {
       await files.write(target, encode(format));
@@ -223,9 +246,14 @@ class EditorSession extends ChangeNotifier {
     }
     var chosen = await files.chooseSaveLocation(suggested, target);
     if (chosen == null) return false;
-    final chosenFormat = DocumentFormat.fromFileName(chosen);
-    if (chosenFormat == null) chosen = '$chosen.${target.extension}';
-    final finalFormat = chosenFormat ?? target;
+    final typed = DocumentFormat.matchFileName(chosen);
+    final DocumentFormat finalFormat;
+    if (typed != null && !typed.template && typed.format.writable) {
+      finalFormat = typed.format;
+    } else {
+      finalFormat = target;
+      chosen = '$chosen.${target.extension}';
+    }
     await files.write(chosen, encode(finalFormat));
     path = chosen;
     name = chosen.split(RegExp(r'[\\/]')).last;
@@ -234,17 +262,15 @@ class EditorSession extends ChangeNotifier {
     return true;
   }
 
-  Uint8List encode(DocumentFormat target) {
-    final delta = controller.document.toDelta();
-    return target == DocumentFormat.docx
-        ? docx.encode(
-            delta,
-            source: _document.source,
-            pageSetup: _pageSetupChanged ? _look : null,
-            headersFooters: headersFooters,
-          )
-        : plainText.encode(delta);
-  }
+  Uint8List encode(DocumentFormat target) => codecs
+      .encoder(target)
+      .encode(
+        controller.document.toDelta(),
+        source: _document.source,
+        look: _look,
+        pageSetupChanged: _pageSetupChanged,
+        headersFooters: headersFooters,
+      );
 
   String plainTextContent() =>
       plainText.plainTextOf(controller.document.toDelta());

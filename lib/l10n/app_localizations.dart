@@ -1069,13 +1069,13 @@ abstract class AppLocalizations {
   /// No description provided for @problemLegacyDoc.
   ///
   /// In en, this message translates to:
-  /// **'Old .doc files aren’t supported. Open the file in Word and save it as .docx.'**
+  /// **'Files from Word 95 and older aren’t supported. Open the file in Word and save it as .docx.'**
   String get problemLegacyDoc;
 
   /// No description provided for @problemUnsupportedFormat.
   ///
   /// In en, this message translates to:
-  /// **'Voges Word opens .docx and .txt files.'**
+  /// **'Voges Word opens .docx, .doc, .odt, .rtf, .html, .md and .txt files.'**
   String get problemUnsupportedFormat;
 
   /// No description provided for @problemNotWordDocument.
@@ -1083,6 +1083,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The file isn’t a valid Word document.'**
   String get problemNotWordDocument;
+
+  /// No description provided for @problemPasswordProtected.
+  ///
+  /// In en, this message translates to:
+  /// **'The file is protected with a password. Remove the password in the app that created it and try again.'**
+  String get problemPasswordProtected;
 
   /// No description provided for @problemTooLarge.
   ///
@@ -1107,6 +1113,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The document’s comments don’t show in Voges Word.'**
   String get noticeCommentsHidden;
+
+  /// No description provided for @noticeContentNotImported.
+  ///
+  /// In en, this message translates to:
+  /// **'Some parts of the file don’t show in Voges Word and may be lost when you save it.'**
+  String get noticeContentNotImported;
+
+  /// No description provided for @noticeSavesAsDocx.
+  ///
+  /// In en, this message translates to:
+  /// **'This file is in the Word 97–2003 format. Saving creates a .docx copy; the original stays as it is.'**
+  String get noticeSavesAsDocx;
 
   /// No description provided for @recoverFailed.
   ///

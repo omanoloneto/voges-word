@@ -26,11 +26,37 @@ class Relationship {
 abstract final class RelationshipTypes {
   static const _base =
       'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  static const _office =
+      'http://schemas.microsoft.com/office/2006/relationships';
+  static const officeDocument = '$_base/officeDocument';
+  static const styles = '$_base/styles';
+  static const settings = '$_base/settings';
   static const image = '$_base/image';
   static const hyperlink = '$_base/hyperlink';
   static const numbering = '$_base/numbering';
   static const header = '$_base/header';
   static const footer = '$_base/footer';
+  static const footnotes = '$_base/footnotes';
+  static const endnotes = '$_base/endnotes';
+
+  /// Parts that hold or call macros.
+  static const macros = {
+    '$_office/vbaProject',
+    '$_office/keyMapCustomizations',
+    '$_office/attachedToolbars',
+  };
+}
+
+/// Kinds of main document part; templates open as documents.
+enum DocxFlavor {
+  document(
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml',
+  ),
+  macroEnabled('application/vnd.ms-word.document.macroEnabled.main+xml');
+
+  const DocxFlavor(this.contentType);
+
+  final String contentType;
 }
 
 /// An open .docx file: every part of the zip, so saving loses nothing.
@@ -170,6 +196,75 @@ class DocxPackage {
         ]),
       );
     }
+    setText(path, document.toXmlString());
+  }
+
+  /// Gives the main part the content type of [flavor]. A plain document also
+  /// loses its macros: Word refuses a .docx that has them.
+  void convertTo(DocxFlavor flavor) {
+    final main = mainDocumentPath;
+    _setContentType('/$main', flavor.contentType);
+    if (flavor == DocxFlavor.document) _removeMacros(main);
+  }
+
+  void _removeMacros(String main) {
+    final macros = relationships(main)
+        .where((r) => !r.external && RelationshipTypes.macros.contains(r.type))
+        .toList();
+    if (macros.isEmpty) return;
+    final removed = <String>{};
+    for (final relationship in macros) {
+      final part = resolve(main, relationship.target);
+      for (final linked in relationships(part)) {
+        if (!linked.external) removed.add(resolve(part, linked.target));
+      }
+      removed.add(part);
+    }
+    for (final part in removed) {
+      parts
+        ..remove(part)
+        ..remove(relationshipsPath(part));
+    }
+    final ids = {for (final relationship in macros) relationship.id};
+    final rels = xml(relationshipsPath(main))!;
+    rels.rootElement.children.removeWhere(
+      (node) => node is XmlElement && ids.contains(node.getAttribute('Id')),
+    );
+    setText(relationshipsPath(main), rels.toXmlString());
+    final types = xml('[Content_Types].xml');
+    if (types == null) return;
+    final names = {for (final part in removed) '/$part'.toLowerCase()};
+    types.rootElement.children.removeWhere(
+      (node) =>
+          node is XmlElement &&
+          node.name.local == 'Override' &&
+          names.contains(node.getAttribute('PartName')?.toLowerCase()),
+    );
+    setText('[Content_Types].xml', types.toXmlString());
+  }
+
+  void _setContentType(String partName, String type) {
+    const path = '[Content_Types].xml';
+    final document = xml(path);
+    if (document == null) return;
+    final root = document.rootElement;
+    for (final element in root.childElements) {
+      if (element.name.local != 'Override' ||
+          element.getAttribute('PartName')?.toLowerCase() !=
+              partName.toLowerCase()) {
+        continue;
+      }
+      if (element.getAttribute('ContentType') == type) return;
+      element.setAttribute('ContentType', type);
+      setText(path, document.toXmlString());
+      return;
+    }
+    root.children.add(
+      XmlElement(XmlName.parts('Override'), [
+        XmlAttribute(XmlName.parts('PartName'), partName),
+        XmlAttribute(XmlName.parts('ContentType'), type),
+      ]),
+    );
     setText(path, document.toXmlString());
   }
 

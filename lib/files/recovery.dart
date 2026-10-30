@@ -14,11 +14,17 @@ class RecoverySnapshot {
     required this.bytes,
     required this.savedAt,
     this.path,
-  });
+    DocumentFormat? content,
+  }) : content = content ?? format;
 
   final String name;
   final String? path;
+
+  /// Format of the document's file.
   final DocumentFormat format;
+
+  /// Format of [bytes].
+  final DocumentFormat content;
   final Uint8List bytes;
   final DateTime savedAt;
 }
@@ -44,6 +50,7 @@ class RecoveryStore {
           'name': snapshot.name,
           'path': snapshot.path,
           'format': snapshot.format.name,
+          'content': snapshot.content.name,
           'savedAt': snapshot.savedAt.toIso8601String(),
           'sha256': sha256.convert(snapshot.bytes).toString(),
         }),
@@ -67,6 +74,11 @@ class RecoveryStore {
         name: json['name'] as String,
         path: json['path'] as String?,
         format: DocumentFormat.values.byName(json['format'] as String),
+        // copies from 1.2.0 have no content: the bytes are in their format
+        content: switch (json['content']) {
+          final String content => DocumentFormat.values.byName(content),
+          _ => null,
+        },
         bytes: bytes,
         savedAt: DateTime.parse(json['savedAt'] as String),
       );

@@ -12,16 +12,19 @@ import 'docx_template.dart';
 import 'docx_writer.dart';
 
 class DocxCodec implements DocumentCodec {
-  DocxCodec(this.tables);
+  DocxCodec(this.tables, {this.flavor = DocxFlavor.document});
 
   final TableStore tables;
 
-  @override
-  DocumentFormat get format => DocumentFormat.docx;
+  /// Kind of package written; .docm keeps its macros.
+  final DocxFlavor flavor;
 
   @override
-  LoadedDocument decode(Uint8List bytes) =>
-      DocxReader(DocxPackage.decode(bytes), tables).read();
+  LoadedDocument decode(Uint8List bytes) => read(DocxPackage.decode(bytes));
+
+  /// Opens a package built in memory, like the ones made from other formats.
+  LoadedDocument read(DocxPackage package) =>
+      DocxReader(package, tables).read();
 
   LoadedDocument createEmpty() => create(DocumentTemplate.blank);
 
@@ -41,12 +44,14 @@ class DocxCodec implements DocumentCodec {
   Uint8List encode(
     Delta delta, {
     Object? source,
-    DocumentLook? pageSetup,
+    DocumentLook look = const DocumentLook(),
+    bool pageSetupChanged = false,
     HeadersFooters? headersFooters,
   }) => DocxWriter(tables).write(
     delta,
-    source is DocxPackage ? source : newDocumentPackage(),
-    pageSetup: pageSetup,
+    (source is DocxPackage ? source : newDocumentPackage()).copy()
+      ..convertTo(flavor),
+    pageSetup: pageSetupChanged ? look : null,
     headersFooters: headersFooters,
   );
 }

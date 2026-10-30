@@ -376,6 +376,9 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
                     context.l10n.noticeTrackedChangesAccepted,
                   DocumentNotice.commentsHidden =>
                     context.l10n.noticeCommentsHidden,
+                  DocumentNotice.contentNotImported =>
+                    context.l10n.noticeContentNotImported,
+                  DocumentNotice.savesAsDocx => context.l10n.noticeSavesAsDocx,
                 },
             ].join('\n'),
           ),
@@ -432,6 +435,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
       DocumentProblem.legacyDoc => l10n.problemLegacyDoc,
       DocumentProblem.unsupportedFormat => l10n.problemUnsupportedFormat,
       DocumentProblem.notWordDocument => l10n.problemNotWordDocument,
+      DocumentProblem.passwordProtected => l10n.problemPasswordProtected,
       DocumentProblem.tooLarge => l10n.problemTooLarge,
       DocumentProblem.damaged => l10n.problemDamaged(name),
     };

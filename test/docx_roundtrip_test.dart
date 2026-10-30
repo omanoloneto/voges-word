@@ -230,7 +230,8 @@ void main() {
       final bytes = codec.encode(
         document.delta,
         source: document.source,
-        pageSetup: landscape,
+        look: landscape,
+        pageSetupChanged: true,
       );
       _expectValidPackage(bytes);
       final xml = DocxPackage.decode(bytes).text('word/document.xml')!;

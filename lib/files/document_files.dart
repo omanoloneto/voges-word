@@ -49,7 +49,7 @@ class DocumentFiles {
       !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
 
   static final _extensions = [
-    for (final format in DocumentFormat.values) format.extension,
+    for (final format in DocumentFormat.values) ...format.extensions,
   ];
 
   Future<OpenedFile?> pickDocument() async {
