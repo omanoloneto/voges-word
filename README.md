@@ -87,6 +87,10 @@ Known limitations:
 - Comments are not shown; tracked changes are accepted on open.
 - Hanging indent (the opposite of a first-line indent) is kept in the file, but the screen shows the paragraph without it.
 - Word 97–2003 files (`.doc`, `.dot`) open but are not saved in their own format: saving creates a `.docx` copy. Files from Word 95 and older don't open.
+- When an `.odt`, `.rtf` or `.doc` file has different headers or footers in different sections, only those of the last section are kept, and a notice says so.
+- Web pages and Markdown files keep only the pictures stored inside them. Voges Word never downloads anything from a file it opens, so a picture that is a link shows its description instead, with a notice.
+- Horizontal lines (`<hr>` in web pages, `---` in Markdown) aren't kept. Markdown has no page break: it is saved as a `---` line, which doesn't come back as a page break.
+- RTF files and web pages saved in a Chinese, Japanese or Korean code page instead of Unicode open with that text replaced, and a notice says so.
 - Pages (`.pages`) and WordPerfect (`.wpd`) files don't open, and PDF is only exported.
 
 ## Shortcuts
