@@ -6,6 +6,7 @@ import 'package:archive/archive.dart';
 import 'package:flutter/painting.dart' show Color, EdgeInsets;
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/document_look.dart';
 import 'package:voges_word/document/embeds.dart';
@@ -43,6 +44,119 @@ Map<String, String> _parts(Uint8List bytes) => {
 
 HeaderFooterStory _story(Delta delta) =>
     HeaderFooterStory(delta: delta, edited: true);
+
+XmlDocument _xml(Uint8List bytes, String part) =>
+    XmlDocument.parse(_parts(bytes)[part]!);
+
+Iterable<XmlElement> _elements(XmlNode root, String name) =>
+    root.descendantElements.where((element) => element.name.qualified == name);
+
+/// The paragraph that holds [text], the innermost one when they nest.
+XmlElement _paragraphWith(XmlNode root, String text) => root.descendantElements
+    .where(
+      (element) =>
+          (element.name.qualified == 'text:p' ||
+              element.name.qualified == 'text:h') &&
+          element.innerText.contains(text),
+    )
+    .last;
+
+/// Properties of the style named [name], as attributes of [kind] (e.g.
+/// `style:paragraph-properties`).
+Map<String, String> _styleProperties(XmlNode root, String? name, String kind) {
+  final style = _elements(
+    root,
+    'style:style',
+  ).firstWhere((element) => element.getAttribute('style:name') == name);
+  return {
+    for (final attribute
+        in style.getElement(kind)?.attributes ?? const <XmlAttribute>[])
+      attribute.name.qualified: attribute.value,
+  };
+}
+
+const _wordNamespaces =
+    'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+    'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+    'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+    'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" '
+    'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+    'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
+    'xmlns:v="urn:schemas-microsoft-com:vml" '
+    'xmlns:o="urn:schemas-microsoft-com:office:office"';
+
+const _letterSection =
+    '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" '
+    'w:right="1440" w:bottom="1440" w:left="1440" w:header="720" '
+    'w:footer="720" w:gutter="0"/></w:sectPr>';
+
+/// Relationships as (id, type, target); web addresses are external.
+String _wordRelationships(List<(String, String, String)> relationships) {
+  final entries = [
+    for (final (id, type, target) in relationships)
+      '<Relationship Id="$id" Type="http://schemas.openxmlformats.org/'
+          'officeDocument/2006/relationships/$type" Target="$target"'
+          '${target.startsWith('http') ? ' TargetMode="External"' : ''}/>',
+  ];
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      '${entries.join()}</Relationships>';
+}
+
+/// A .docx whose body is [body] and [section]; [relationships] belong to the
+/// main part and [parts] are added as they are.
+Uint8List _docxFile(
+  String body, {
+  String section = _letterSection,
+  List<(String, String, String)> relationships = const [],
+  Map<String, Object> parts = const {},
+}) => zipOf({
+  '[Content_Types].xml':
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+      '<Default Extension="xml" ContentType="application/xml"/>'
+      '<Default Extension="png" ContentType="image/png"/>'
+      '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+      '</Types>',
+  '_rels/.rels': _wordRelationships([
+    ('rId1', 'officeDocument', 'word/document.xml'),
+  ]),
+  'word/document.xml':
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      '<w:document $_wordNamespaces><w:body>$body$section</w:body></w:document>',
+  'word/styles.xml':
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      '<w:styles $_wordNamespaces><w:docDefaults><w:rPrDefault><w:rPr>'
+      '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/>'
+      '<w:lang w:val="pt-BR" w:eastAsia="en-US" w:bidi="ar-SA"/></w:rPr>'
+      '</w:rPrDefault></w:docDefaults>'
+      '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+      '<w:name w:val="Normal"/></w:style></w:styles>',
+  'word/_rels/document.xml.rels': _wordRelationships([
+    ('rIdStyles', 'styles', 'styles.xml'),
+    ...relationships,
+  ]),
+  ...parts,
+});
+
+String _wordParagraph(String content) => '<w:p>$content</w:p>';
+
+String _wordRun(String text, [String properties = '']) =>
+    '<w:r>$properties<w:t xml:space="preserve">$text</w:t></w:r>';
+
+/// What the .docx in [bytes] becomes when it is saved as .odt.
+Uint8List _docxToOdt(Uint8List bytes) {
+  final codec = DocxCodec(TableStore());
+  final loaded = codec.decode(bytes);
+  return OdtCodec(codec).encode(
+    loaded.delta,
+    source: loaded.source,
+    look: loaded.look,
+    headersFooters: loaded.headersFooters,
+  );
+}
 
 TableCellModel _cell(
   TableStore tables,
@@ -477,5 +591,664 @@ void main() {
     expect(output, contains('<b>bold</b>'));
     expect(output, contains('text &amp; &lt;symbols&gt;'));
     expect(output, contains('<li'));
+  });
+
+  test('Word charts, equations, objects and link fields stay visible', () {
+    const chart =
+        '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">'
+        '<wp:extent cx="5486400" cy="3200400"/><wp:docPr id="1" name="Chart 1"/>'
+        '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">'
+        '<c:chart r:id="rIdChart"/></a:graphicData></a:graphic></wp:inline>'
+        '</w:drawing></w:r>';
+    const equation =
+        '<m:oMath><m:r><m:t>E=m</m:t></m:r><m:sSup><m:e><m:r><m:t>c</m:t>'
+        '</m:r></m:e><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup></m:oMath>';
+    const object =
+        '<w:r><w:object w:dxaOrig="4320" w:dyaOrig="2160">'
+        '<v:shape id="_x0000_i1025" type="#_x0000_t75" '
+        'style="width:216pt;height:108pt" o:ole="">'
+        '<v:imagedata r:id="rIdPreview" o:title=""/></v:shape>'
+        '<o:OLEObject Type="Embed" ProgID="Excel.Sheet.12" '
+        'ShapeID="_x0000_i1025" DrawAspect="Content" ObjectID="_1234567890" '
+        'r:id="rIdObject"/></w:object></w:r>';
+    const link =
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        '<w:r><w:instrText xml:space="preserve"> HYPERLINK '
+        '"https://example.com/report?a=1&amp;b=2" </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        '<w:r><w:t>the report</w:t></w:r>'
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
+    final bytes = _docxToOdt(
+      _docxFile(
+        _wordParagraph(_wordRun('Sales chart: ') + chart) +
+            _wordParagraph(_wordRun('Formula: ') + equation) +
+            _wordParagraph(_wordRun('Budget sheet: ') + object) +
+            _wordParagraph(_wordRun('Read ') + link),
+        relationships: [
+          ('rIdChart', 'chart', 'charts/chart1.xml'),
+          ('rIdPreview', 'image', 'media/image1.png'),
+          ('rIdObject', 'oleObject', 'embeddings/oleObject1.bin'),
+        ],
+        parts: {
+          'word/charts/chart1.xml':
+              '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"/>',
+          'word/media/image1.png': pngPixel,
+          'word/embeddings/oleObject1.bin': [0xD0, 0xCF, 0x11, 0xE0],
+        },
+      ),
+    );
+    final content = _xml(bytes, 'content.xml');
+
+    final placeholder = _elements(
+      _paragraphWith(content, 'Sales chart'),
+      'text:placeholder',
+    ).single;
+    expect(placeholder.getAttribute('text:placeholder-type'), 'object');
+    expect(placeholder.innerText, '<chart>');
+
+    final formula = _paragraphWith(content, 'Formula');
+    expect(formula.innerText, 'Formula: E=mc2');
+    final square = _elements(
+      formula,
+      'text:span',
+    ).firstWhere((span) => span.innerText == '2');
+    expect(
+      _styleProperties(
+        content,
+        square.getAttribute('text:style-name'),
+        'style:text-properties',
+      ),
+      containsPair('style:text-position', 'super 58%'),
+    );
+
+    final frame = _elements(
+      _paragraphWith(content, 'Budget sheet'),
+      'draw:frame',
+    ).single;
+    expect(frame.getAttribute('svg:width'), '216pt');
+    expect(frame.getAttribute('svg:height'), '108pt');
+    expect(
+      _parts(bytes).keys,
+      contains(frame.getElement('draw:image')!.getAttribute('xlink:href')),
+    );
+
+    final anchor = _elements(_paragraphWith(content, 'Read'), 'text:a').single;
+    expect(
+      anchor.getAttribute('xlink:href'),
+      'https://example.com/report?a=1&b=2',
+    );
+    expect(anchor.innerText, 'the report');
+
+    // The editor shows nothing for a text watermark in the header, and
+    // neither does the file.
+    final watermark = OpaqueContent(
+      xml:
+          '<w:r><w:pict><v:shape style="position:absolute;width:400pt;'
+          'height:100pt"><v:textpath string="DRAFT"/></v:shape></w:pict></w:r>',
+      text: '',
+    );
+    final styles = _xml(
+      OdtCodec(DocxCodec(TableStore())).encode(
+        Delta()..insert('Body\n'),
+        headersFooters: HeadersFooters(
+          headers: {
+            PageVariant.normal: _story(
+              Delta()
+                ..insert({EmbedTypes.opaqueInline: watermark.encode()})
+                ..insert('Header\n'),
+            ),
+          },
+        ),
+      ),
+      'styles.xml',
+    );
+    expect(_elements(styles, 'text:placeholder'), isEmpty);
+  });
+
+  test('pictures of Word fields and objects are kept, cut as Word crops '
+      'them', () {
+    const field =
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        '<w:r><w:instrText xml:space="preserve"> INCLUDEPICTURE '
+        '"https://example.com/a.png" \\* MERGEFORMATINET </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        '<w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="457200"/>'
+        '<wp:docPr id="5" name="Picture 5"/><a:graphic><a:graphicData '
+        'uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        '<pic:pic><pic:blipFill><a:blip r:embed="rIdField"/></pic:blipFill>'
+        '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>'
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
+    const object =
+        '<w:r><w:object><v:shape style="width:36pt;height:36pt">'
+        '<v:imagedata r:id="rIdWide" cropright="0.5"/></v:shape></w:object></w:r>';
+    const watermark =
+        '<w:r><w:pict><v:shape style="position:absolute;width:400pt;'
+        'height:300pt;z-index:-1"><v:imagedata r:id="rIdMark"/></v:shape>'
+        '</w:pict></w:r>';
+    final bytes = _docxToOdt(
+      _docxFile(
+        _wordParagraph(_wordRun('Field ') + field) +
+            _wordParagraph(_wordRun('Cropped ') + object) +
+            _wordParagraph('${_wordRun('Mark')}<w:r><w:footnoteRef/></w:r>'),
+        section:
+            '<w:sectPr><w:headerReference w:type="default" r:id="rIdHeader"/>'
+            '</w:sectPr>',
+        relationships: [
+          ('rIdField', 'image', 'media/field.png'),
+          ('rIdWide', 'image', 'media/wide.png'),
+          ('rIdHeader', 'header', 'header1.xml'),
+        ],
+        parts: {
+          'word/media/field.png': pngPixel,
+          'word/media/wide.png': img.encodePng(img.Image(width: 4, height: 2)),
+          'word/header1.xml':
+              '<w:hdr $_wordNamespaces>'
+              '${_wordParagraph(watermark + _wordRun('Header'))}</w:hdr>',
+          'word/_rels/header1.xml.rels': _wordRelationships([
+            ('rIdMark', 'image', 'media/field.png'),
+          ]),
+        },
+      ),
+    );
+    final content = _xml(bytes, 'content.xml');
+
+    // A floating watermark would push the header's text down.
+    final header = _elements(_xml(bytes, 'styles.xml'), 'style:header').single;
+    expect(header.innerText, 'Header');
+    expect(_elements(header, 'draw:frame'), isEmpty);
+
+    final picture = _elements(
+      _paragraphWith(content, 'Field'),
+      'draw:frame',
+    ).single;
+    expect(picture.getAttribute('svg:width'), '72pt');
+    expect(picture.getAttribute('svg:height'), '36pt');
+
+    final cropped = _elements(
+      _paragraphWith(content, 'Cropped'),
+      'draw:frame',
+    ).single;
+    expect(cropped.getAttribute('svg:width'), '36pt');
+    expect(cropped.getAttribute('svg:height'), '36pt');
+    final stored = ZipDecoder()
+        .decodeBytes(bytes)
+        .findFile(
+          cropped.getElement('draw:image')!.getAttribute('xlink:href')!,
+        )!;
+    expect(imagePixelSize(stored.content), (width: 2, height: 2));
+
+    expect(_paragraphWith(content, 'Mark').childElements, isEmpty);
+  });
+
+  test('notes keep their formatting and links', () {
+    void expectFormattedNote(XmlDocument content) {
+      final body = _elements(content, 'text:note-body').single;
+      expect(body.innerText, 'See The Book, online.');
+      final italic = _elements(
+        body,
+        'text:span',
+      ).firstWhere((span) => span.innerText == 'The Book');
+      expect(
+        _styleProperties(
+          content,
+          italic.getAttribute('text:style-name'),
+          'style:text-properties',
+        ),
+        containsPair('fo:font-style', 'italic'),
+      );
+      final link = _elements(body, 'text:a').single;
+      expect(link.getAttribute('xlink:href'), 'https://example.com/source');
+      expect(link.innerText, 'online');
+    }
+
+    final codec = OdtCodec(DocxCodec(TableStore()));
+    final loaded = codec.decode(
+      odtFile(
+        automatic:
+            '<style:style style:name="T1" style:family="text">'
+            '<style:text-properties fo:font-style="italic"/></style:style>',
+        body:
+            '<text:p>Claim<text:note text:note-class="footnote">'
+            '<text:note-citation>1</text:note-citation><text:note-body>'
+            '<text:p>See <text:span text:style-name="T1">The Book</text:span>, '
+            '<text:a xlink:type="simple" xlink:href="https://example.com/source">'
+            'online</text:a>.</text:p></text:note-body></text:note> made.</text:p>',
+      ),
+    );
+    expectFormattedNote(
+      _xml(codec.encode(loaded.delta, source: loaded.source), 'content.xml'),
+    );
+
+    final footnotes =
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:footnotes $_wordNamespaces>'
+        '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/>'
+        '</w:r></w:p></w:footnote><w:footnote w:id="1"><w:p><w:r><w:rPr>'
+        '<w:vertAlign w:val="superscript"/></w:rPr><w:footnoteRef/></w:r>'
+        '${_wordRun(' See ')}${_wordRun('The Book', '<w:rPr><w:i/></w:rPr>')}'
+        '${_wordRun(', ')}<w:hyperlink r:id="rIdLink"><w:r><w:t>online</w:t>'
+        '</w:r></w:hyperlink>${_wordRun('.')}</w:p></w:footnote></w:footnotes>';
+    expectFormattedNote(
+      _xml(
+        _docxToOdt(
+          _docxFile(
+            _wordParagraph(
+              '${_wordRun('Claim')}<w:r><w:rPr><w:vertAlign w:val="superscript"/>'
+              '</w:rPr><w:footnoteReference w:id="1"/></w:r>${_wordRun(' made.')}',
+            ),
+            relationships: [('rIdNotes', 'footnotes', 'footnotes.xml')],
+            parts: {
+              'word/footnotes.xml': footnotes,
+              'word/_rels/footnotes.xml.rels': _wordRelationships([
+                ('rIdLink', 'hyperlink', 'https://example.com/source'),
+              ]),
+            },
+          ),
+        ),
+        'content.xml',
+      ),
+    );
+  });
+
+  test('Header and Footer styles stop tabs at the center and the right '
+      'margin', () {
+    final styles = _xml(
+      OdtCodec(DocxCodec(TableStore())).encode(
+        Delta()..insert('Body\n'),
+        look: const DocumentLook(
+          pageWidth: 612,
+          pageHeight: 792,
+          margins: EdgeInsets.fromLTRB(72, 72, 72, 72),
+        ),
+        headersFooters: HeadersFooters(
+          headers: {
+            PageVariant.normal: _story(
+              Delta()..insert('Left\tCenter\tRight\n'),
+            ),
+          },
+        ),
+      ),
+      'styles.xml',
+    );
+    for (final name in ['Header', 'Footer']) {
+      final style = _elements(
+        styles,
+        'style:style',
+      ).firstWhere((element) => element.getAttribute('style:name') == name);
+      expect(
+        [
+          for (final stop in _elements(style, 'style:tab-stop'))
+            (
+              stop.getAttribute('style:type'),
+              stop.getAttribute('style:position'),
+            ),
+        ],
+        [('center', '234pt'), ('right', '468pt')],
+        reason: name,
+      );
+    }
+  });
+
+  test('a floating header logo keeps its place and leaves the header text '
+      'alone', () {
+    const anchored =
+        '<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="114300" '
+        'distR="114300" simplePos="0" relativeHeight="251658240" behindDoc="0" '
+        'locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+        '<wp:positionH relativeFrom="margin"><wp:align>right</wp:align>'
+        '</wp:positionH><wp:positionV relativeFrom="page">'
+        '<wp:posOffset>228600</wp:posOffset></wp:positionV>'
+        '<wp:extent cx="1371600" cy="914400"/><wp:wrapNone/>'
+        '<wp:docPr id="7" name="Logo"/><a:graphic><a:graphicData '
+        'uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        '<pic:pic><pic:blipFill><a:blip r:embed="rIdLogo"/></pic:blipFill>'
+        '</pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>';
+    final styles = _xml(
+      OdtCodec(DocxCodec(TableStore())).encode(
+        Delta()..insert('Dear customer\n'),
+        look: const DocumentLook(
+          pageWidth: 612,
+          pageHeight: 792,
+          margins: EdgeInsets.fromLTRB(72, 72, 72, 72),
+        ),
+        headersFooters: HeadersFooters(
+          headers: {
+            PageVariant.normal: _story(
+              Delta()
+                ..insert(
+                  {EmbedTypes.image: dataUriFromMime(pngPixel, 'image/png')},
+                  {
+                    'width': '108',
+                    'height': '72',
+                    HiddenAttributes.drawing: anchored,
+                  },
+                )
+                ..insert('ACME Corp\n'),
+            ),
+          },
+          headerDistance: 36,
+        ),
+      ),
+      'styles.xml',
+    );
+    final frame = _elements(
+      _elements(styles, 'style:header').single,
+      'draw:frame',
+    ).single;
+    expect(frame.getAttribute('text:anchor-type'), 'paragraph');
+    expect(frame.getAttribute('svg:width'), '108pt');
+    expect(frame.getAttribute('svg:y'), '18pt');
+    expect(
+      _styleProperties(
+        styles,
+        frame.getAttribute('draw:style-name'),
+        'style:graphic-properties',
+      ),
+      allOf(
+        containsPair('style:wrap', 'run-through'),
+        containsPair('style:horizontal-pos', 'right'),
+        containsPair('style:horizontal-rel', 'page-content'),
+        containsPair('style:vertical-pos', 'from-top'),
+        containsPair('style:vertical-rel', 'page'),
+      ),
+    );
+  });
+
+  test('list items, and paragraphs Word keeps together, add no space '
+      'between them', () {
+    final delta = Delta()..insert('Shopping:\n');
+    for (final item in ['milk', 'bread', 'eggs']) {
+      delta
+        ..insert(item)
+        ..insert('\n', {'list': 'bullet'});
+    }
+    delta.insert('Done.\n');
+    for (final text in ['first', 'second', 'third']) {
+      delta
+        ..insert(text)
+        ..insert('\n', {HiddenAttributes.contextualGroup: 'Compact'});
+    }
+    delta.insert('after\n');
+    final content = _xml(
+      OdtCodec(DocxCodec(TableStore())).encode(delta),
+      'content.xml',
+    );
+    Map<String, String> spacing(String text) => _styleProperties(
+      content,
+      _paragraphWith(content, text).getAttribute('text:style-name'),
+      'style:paragraph-properties',
+    );
+
+    for (final item in ['milk', 'bread', 'eggs']) {
+      expect(spacing(item), containsPair('fo:margin-top', '0pt'));
+    }
+    expect(spacing('milk'), containsPair('fo:margin-bottom', '0pt'));
+    expect(spacing('bread'), containsPair('fo:margin-bottom', '0pt'));
+    expect(spacing('eggs'), isNot(contains('fo:margin-bottom')));
+    expect(spacing('first'), isNot(contains('fo:margin-top')));
+    expect(spacing('first'), containsPair('fo:margin-bottom', '0pt'));
+    expect(spacing('second'), containsPair('fo:margin-top', '0pt'));
+    expect(spacing('second'), containsPair('fo:margin-bottom', '0pt'));
+    expect(spacing('third'), containsPair('fo:margin-top', '0pt'));
+    expect(spacing('third'), isNot(contains('fo:margin-bottom')));
+  });
+
+  test('a table keeps its column widths when the grid has more columns than '
+      'its rows use', () {
+    final tables = TableStore();
+    final table = TableModel(
+      id: tables.nextId(),
+      bordered: true,
+      columnWidths: [1000, 6000, 2000],
+      rows: [
+        TableRowModel(
+          cells: [_cell(tables, 'No.'), _cell(tables, 'Description')],
+        ),
+        TableRowModel(cells: [_cell(tables, '1'), _cell(tables, 'First')]),
+      ],
+    );
+    tables.add(table);
+    final content = _xml(
+      OdtCodec(DocxCodec(tables)).encode(
+        Delta()
+          ..insert({EmbedTypes.table: encodeTableId(table.id)})
+          ..insert('\n'),
+      ),
+      'content.xml',
+    );
+    expect(
+      [
+        for (final column in _elements(content, 'table:table-column'))
+          _styleProperties(
+            content,
+            column.getAttribute('table:style-name'),
+            'style:table-column-properties',
+          )['style:column-width'],
+      ],
+      ['50pt', '300pt'],
+    );
+  });
+
+  test('sections keep their page number format and restart', () {
+    String section(String numbers) =>
+        '<w:sectPr><w:footerReference w:type="default" r:id="rIdFooter"/>'
+        '<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" '
+        'w:right="1440" w:bottom="1440" w:left="1440" w:header="720" '
+        'w:footer="720" w:gutter="0"/>$numbers</w:sectPr>';
+    const footer =
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:ftr $_wordNamespaces><w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r>'
+        '<w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t>'
+        '</w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:ftr>';
+    final bytes = _docxToOdt(
+      _docxFile(
+        '${_wordParagraph(_wordRun('Preface'))}<w:p><w:pPr>'
+        '${section('<w:pgNumType w:fmt="lowerRoman" w:start="1"/>')}'
+        '</w:pPr></w:p>${_wordParagraph(_wordRun('Chapter one'))}'
+        '${_wordParagraph('${_wordRun('Page ')}<w:fldSimple w:instr=" PAGE \\* ROMAN ">${_wordRun('I')}</w:fldSimple>')}',
+        section: section('<w:pgNumType w:start="5"/>'),
+        relationships: [('rIdFooter', 'footer', 'footer1.xml')],
+        parts: {'word/footer1.xml': footer},
+      ),
+    );
+    final content = _xml(bytes, 'content.xml');
+    final styles = _xml(bytes, 'styles.xml');
+
+    for (final (text, master, number) in [
+      ('Preface', 'Section1', '1'),
+      ('Chapter one', 'Standard', '5'),
+    ]) {
+      final name = _paragraphWith(
+        content,
+        text,
+      ).getAttribute('text:style-name');
+      final style = _elements(
+        content,
+        'style:style',
+      ).firstWhere((element) => element.getAttribute('style:name') == name);
+      expect(style.getAttribute('style:master-page-name'), master);
+      expect(
+        _styleProperties(content, name, 'style:paragraph-properties'),
+        containsPair('style:page-number', number),
+      );
+    }
+    String? format(String master) {
+      final page = _elements(
+        styles,
+        'style:master-page',
+      ).firstWhere((element) => element.getAttribute('style:name') == master);
+      return _elements(styles, 'style:page-layout')
+          .firstWhere(
+            (layout) =>
+                layout.getAttribute('style:name') ==
+                page.getAttribute('style:page-layout-name'),
+          )
+          .getElement('style:page-layout-properties')!
+          .getAttribute('style:num-format');
+    }
+
+    expect(format('Section1'), 'i');
+    expect(format('Standard'), isNull);
+    final footerNumber = _elements(
+      _elements(styles, 'style:footer').first,
+      'text:page-number',
+    ).single;
+    expect(footerNumber.getAttribute('style:num-format'), isNull);
+    expect(
+      _elements(
+        _paragraphWith(content, 'Page'),
+        'text:page-number',
+      ).single.getAttribute('style:num-format'),
+      'I',
+    );
+  });
+
+  test('the look is bold and italic in every script', () {
+    final styles = _xml(
+      OdtCodec(DocxCodec(TableStore())).encode(
+        Delta()
+          ..insert('عنوان')
+          ..insert('\n', {'header': 1})
+          ..insert('中文\n'),
+        look: const DocumentLook(
+          body: TextLook(fontSize: 11, fontFamily: 'Georgia', italic: true),
+          headings: {
+            1: TextLook(fontSize: 20, fontFamily: 'Arial', bold: true),
+          },
+        ),
+      ),
+      'styles.xml',
+    );
+    expect(
+      _styleProperties(styles, 'Heading_20_1', 'style:text-properties'),
+      allOf(
+        containsPair('style:font-weight-asian', 'bold'),
+        containsPair('style:font-weight-complex', 'bold'),
+        containsPair('style:font-name-asian', 'Arial'),
+        containsPair('style:font-name-complex', 'Arial'),
+      ),
+    );
+    expect(
+      _styleProperties(styles, 'Standard', 'style:text-properties'),
+      allOf(
+        containsPair('style:font-style-asian', 'italic'),
+        containsPair('style:font-style-complex', 'italic'),
+      ),
+    );
+  });
+
+  test('pictures keep their title and description', () {
+    const drawing =
+        '<w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/>'
+        '<wp:docPr id="3" name="Picture 3" title="Company logo" '
+        'descr="Red square logo of ACME &amp; Co"/></wp:inline></w:drawing></w:r>';
+    final frame = _elements(
+      _xml(
+        OdtCodec(DocxCodec(TableStore())).encode(
+          Delta()
+            ..insert(
+              {EmbedTypes.image: dataUriFromMime(pngPixel, 'image/png')},
+              {
+                'width': '72',
+                'height': '72',
+                HiddenAttributes.drawing: drawing,
+              },
+            )
+            ..insert('\n'),
+        ),
+        'content.xml',
+      ),
+      'draw:frame',
+    ).single;
+    expect(frame.getElement('svg:title')?.innerText, 'Company logo');
+    expect(
+      frame.getElement('svg:desc')?.innerText,
+      'Red square logo of ACME & Co',
+    );
+
+    final codec = OdtCodec(DocxCodec(TableStore()));
+    final loaded = codec.decode(
+      odtFile(
+        body:
+            '<text:p><draw:frame svg:width="1cm" svg:height="1cm" '
+            'text:anchor-type="as-char"><draw:image xlink:href="Pictures/a.png"/>'
+            '<svg:desc>Red square</svg:desc></draw:frame></text:p>',
+        extra: {'Pictures/a.png': pngPixel},
+      ),
+    );
+    expect(
+      _elements(
+        _xml(codec.encode(loaded.delta, source: loaded.source), 'content.xml'),
+        'svg:desc',
+      ).single.innerText,
+      'Red square',
+    );
+  });
+
+  test('the document language is kept', () {
+    XmlElement defaults(Uint8List bytes) => _elements(
+      _xml(bytes, 'styles.xml'),
+      'style:default-style',
+    ).single.getElement('style:text-properties')!;
+
+    final codec = OdtCodec(DocxCodec(TableStore()));
+    final loaded = codec.decode(odtFile(body: '<text:p>Olá</text:p>'));
+    final odt = defaults(codec.encode(loaded.delta, source: loaded.source));
+    expect(odt.getAttribute('fo:language'), 'pt');
+    expect(odt.getAttribute('fo:country'), 'BR');
+
+    final word = defaults(
+      _docxToOdt(_docxFile(_wordParagraph(_wordRun('Olá')))),
+    );
+    expect(
+      {
+        for (final name in [
+          'fo:language',
+          'fo:country',
+          'style:language-asian',
+          'style:country-asian',
+          'style:language-complex',
+          'style:country-complex',
+        ])
+          name: word.getAttribute(name),
+      },
+      {
+        'fo:language': 'pt',
+        'fo:country': 'BR',
+        'style:language-asian': 'en',
+        'style:country-asian': 'US',
+        'style:language-complex': 'ar',
+        'style:country-complex': 'SA',
+      },
+    );
+  });
+
+  test('negative page margins are written as the distances OpenDocument '
+      'allows', () {
+    final styles = _xml(
+      OdtCodec(DocxCodec(TableStore())).encode(
+        Delta()..insert('Body\n'),
+        look: const DocumentLook(
+          margins: EdgeInsets.fromLTRB(50, -60, 40, -65),
+        ),
+        headersFooters: HeadersFooters(
+          headers: {PageVariant.normal: _story(Delta()..insert('Header\n'))},
+          headerDistance: 30,
+        ),
+      ),
+      'styles.xml',
+    );
+    final page = _elements(styles, 'style:page-layout-properties').single;
+    final header = _elements(styles, 'style:header-footer-properties').single;
+    expect(page.getAttribute('fo:margin-top'), '30pt');
+    expect(page.getAttribute('fo:margin-bottom'), '65pt');
+    expect(header.getAttribute('fo:min-height'), '30pt');
+    for (final element in [page, header]) {
+      for (final attribute in element.attributes) {
+        expect(attribute.value, isNot(startsWith('-')), reason: '$attribute');
+      }
+    }
   });
 }

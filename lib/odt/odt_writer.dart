@@ -6,20 +6,24 @@ import 'package:archive/archive.dart';
 import 'package:flutter/painting.dart' show Color, EdgeInsets;
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:xml/xml.dart';
+import 'package:xml/xml_events.dart'
+    show XmlEndElementEvent, XmlStartElementEvent, parseEvents;
 
 import '../document/delta_blocks.dart';
 import '../document/document_look.dart';
 import '../document/embeds.dart';
 import '../document/headers_footers.dart';
+import '../document/picture_crop.dart';
 import '../document/tables.dart';
 import '../docx/docx_builder.dart' show safeLinkTarget;
+import '../docx/docx_codec.dart';
 import '../docx/docx_package.dart';
 import '../docx/image_formats.dart';
 import '../docx/word_xml.dart';
 import 'odf_xml.dart';
 import 'odt_package.dart' show odtMimeType;
 
-enum _Place { body, cell, header, footer, note }
+enum _Place { body, header, footer, footnote, endnote }
 
 const _namespaces =
     'xmlns:office="${OdfNamespaces.office}" '
@@ -49,8 +53,53 @@ const _pictureTypes = {
   'image/x-wmf',
 };
 
+/// Pictures in the text sit on the baseline.
+const _inlinePicture =
+    ' style:vertical-pos="top" style:vertical-rel="baseline"';
+
 String _attribute(String value) =>
     escapeXmlAttribute(stripInvalidXmlChars(value));
+
+/// fo:[local] and the Asian and complex-script versions LibreOffice applies
+/// to those scripts.
+String _inEveryScript(String local, String value) =>
+    ' fo:$local="$value" style:$local-asian="$value" '
+    'style:$local-complex="$value"';
+
+String _fontNames(String font) {
+  final name = _attribute(font);
+  return ' style:font-name="$name" style:font-name-asian="$name" '
+      'style:font-name-complex="$name"';
+}
+
+/// A stored fragment of Word XML, under one root; null when it is malformed.
+XmlElement? _fragment(Object? xml) {
+  if (xml is! String || xml.isEmpty) return null;
+  try {
+    return XmlDocument.parse('<x>$xml</x>').rootElement;
+  } catch (_) {
+    return null;
+  }
+}
+
+XmlElement? _child(XmlElement? parent, String local) {
+  if (parent == null) return null;
+  for (final element in parent.childElements) {
+    if (element.name.local == local) return element;
+  }
+  return null;
+}
+
+XmlElement? _descendant(XmlElement? root, String local) {
+  if (root == null) return null;
+  for (final element in root.descendantElements) {
+    if (element.name.local == local) return element;
+  }
+  return null;
+}
+
+double? _positive(double? value) =>
+    value != null && value.isFinite && value > 0 ? value : null;
 
 /// Writes the editor's content as an OpenDocument Text file (ODF 1.3).
 class OdtWriter {
@@ -64,15 +113,24 @@ class OdtWriter {
     HeadersFooters? headersFooters,
     Object? source,
   }) {
-    final document = _Document(tables, look, source);
+    final document = _Document(look, source);
     final contentStyles = _Styles('');
     final masterStyles = _Styles('M');
     final stories = headersFooters ?? const HeadersFooters();
 
-    final sections = _sections(documentBlocks(delta));
-    final body = _StoryWriter(document, contentStyles, _Place.body);
+    final sections = _sections(documentBlocks(delta), document.lastNumbering());
+    final body = _StoryWriter(
+      document,
+      contentStyles,
+      _Place.body,
+      tables,
+      part: document.mainPart,
+    );
     for (final (index, section) in sections.indexed) {
-      if (sections.length > 1) body.startSection(_masterName(index, sections));
+      final start = section.numbering.start;
+      if (sections.length > 1 || start != null) {
+        body.startSection(_masterName(index, sections), pageNumber: start);
+      }
       body.write(section.blocks);
     }
     final bodyXml = body.finish();
@@ -83,6 +141,8 @@ class OdtWriter {
         document,
         masterStyles,
         place,
+        tables,
+        part: story.partPath,
       )..write(documentBlocks(story.delta))).finish();
     }
 
@@ -133,6 +193,7 @@ class OdtWriter {
           footerDistance: page?.footer ?? stories.footerDistance,
           header: header,
           footer: footer,
+          numberFormat: section.numbering.format,
         ),
       );
       masters.write(
@@ -162,7 +223,7 @@ class OdtWriter {
     final styles =
         '$_declaration<office:document-styles $_namespaces office:version="1.3">'
         '<office:font-face-decls>$fontFaces</office:font-face-decls>'
-        '<office:styles>${_commonStyles(look)}</office:styles>'
+        '<office:styles>${_commonStyles(look, document.languages())}</office:styles>'
         '<office:automatic-styles>$layouts${masterStyles.xml}</office:automatic-styles>'
         '<office:master-styles>$masters</office:master-styles>'
         '</office:document-styles>';
@@ -221,37 +282,37 @@ class OdtWriter {
       index == sections.length - 1 ? 'Standard' : 'Section${index + 1}';
 
   /// Splits the body at section breaks that start a page; the last section
-  /// uses the document's page setup, the others the setup in their break.
-  static List<_Section> _sections(List<DocumentBlock> blocks) {
+  /// uses the document's page setup and [last] numbering, the others what
+  /// their break says.
+  static List<_Section> _sections(List<DocumentBlock> blocks, _Numbering last) {
     final sections = <_Section>[];
     var current = <DocumentBlock>[];
     for (final block in blocks) {
       if (block is EmbedBlock && block.type == EmbedTypes.sectionBreak) {
-        final page = _sectionPage(block.value);
-        if (page == null) continue;
-        sections.add((blocks: current, page: page));
+        final section = _sectionOf(block.value);
+        if (section == null) continue;
+        sections.add((
+          blocks: current,
+          page: section.page,
+          numbering: section.numbering,
+        ));
         current = [];
       } else {
         current.add(block);
       }
     }
-    sections.add((blocks: current, page: null));
+    sections.add((blocks: current, page: null, numbering: last));
     return sections;
   }
 
   /// The page of a Word section break; null for continuous ones, which
   /// OpenDocument can't start without a new page.
-  static _SectionPage? _sectionPage(Object? value) {
+  static ({_SectionPage page, _Numbering numbering})? _sectionOf(
+    Object? value,
+  ) {
     try {
       final root = parseFragment(sectionXmlOf(value));
-      XmlElement? child(String local) {
-        for (final element in root.childElements) {
-          if (element.name.local == local) return element;
-        }
-        return null;
-      }
-
-      if (child('type')?.getAttribute('val', namespaceUri: '*') ==
+      if (_child(root, 'type')?.getAttribute('val', namespaceUri: '*') ==
           'continuous') {
         return null;
       }
@@ -263,23 +324,44 @@ class OdtWriter {
       }
 
       const defaults = DocumentLook();
-      final size = child('pgSz');
-      final margins = child('pgMar');
+      final size = _child(root, 'pgSz');
+      final margins = _child(root, 'pgMar');
+      final numbers = _child(root, 'pgNumType');
       return (
-        width: points(size, 'w') ?? defaults.pageWidth,
-        height: points(size, 'h') ?? defaults.pageHeight,
-        margins: EdgeInsets.fromLTRB(
-          points(margins, 'left') ?? defaults.margins.left,
-          points(margins, 'top') ?? defaults.margins.top,
-          points(margins, 'right') ?? defaults.margins.right,
-          points(margins, 'bottom') ?? defaults.margins.bottom,
+        page: (
+          width: points(size, 'w') ?? defaults.pageWidth,
+          height: points(size, 'h') ?? defaults.pageHeight,
+          margins: EdgeInsets.fromLTRB(
+            points(margins, 'left') ?? defaults.margins.left,
+            points(margins, 'top') ?? defaults.margins.top,
+            points(margins, 'right') ?? defaults.margins.right,
+            points(margins, 'bottom') ?? defaults.margins.bottom,
+          ),
+          header: points(margins, 'header'),
+          footer: points(margins, 'footer'),
         ),
-        header: points(margins, 'header'),
-        footer: points(margins, 'footer'),
+        numbering: _numbering(
+          (name) => numbers?.getAttribute(name, namespaceUri: '*'),
+        ),
       );
     } catch (_) {
       return null;
     }
+  }
+
+  /// Word's w:pgNumType, from its attributes.
+  static _Numbering _numbering(String? Function(String name) attribute) {
+    final start = int.tryParse(attribute('start')?.trim() ?? '');
+    return (
+      format: switch (attribute('fmt')) {
+        'lowerRoman' => 'i',
+        'upperRoman' => 'I',
+        'lowerLetter' => 'a',
+        'upperLetter' => 'A',
+        _ => null,
+      },
+      start: start?.clamp(0, 32767),
+    );
   }
 
   /// The header and footer are measured from the page's edge, and the body
@@ -293,33 +375,42 @@ class OdtWriter {
     required double footerDistance,
     required bool header,
     required bool footer,
+    String? numberFormat,
   }) {
-    final top = header ? math.min(headerDistance, margins.top) : margins.top;
+    double distance(double value) => value.isFinite && value > 0 ? value : 0.0;
+    // A negative top or bottom margin only tells Word the body never moves
+    // for the header; OpenDocument takes the distance.
+    final marginTop = distance(margins.top.abs());
+    final marginBottom = distance(margins.bottom.abs());
+    final top = header
+        ? math.min(distance(headerDistance), marginTop)
+        : marginTop;
     final bottom = footer
-        ? math.min(footerDistance, margins.bottom)
-        : margins.bottom;
+        ? math.min(distance(footerDistance), marginBottom)
+        : marginBottom;
     final out = StringBuffer(
       '<style:page-layout style:name="$name">'
       '<style:page-layout-properties fo:page-width="${odfPoints(width)}" '
       'fo:page-height="${odfPoints(height)}" '
+      '${numberFormat == null ? '' : 'style:num-format="$numberFormat" '}'
       'style:print-orientation="${width > height ? 'landscape' : 'portrait'}" '
       'fo:margin-top="${odfPoints(top)}" '
       'fo:margin-bottom="${odfPoints(bottom)}" '
-      'fo:margin-left="${odfPoints(margins.left)}" '
-      'fo:margin-right="${odfPoints(margins.right)}" '
+      'fo:margin-left="${odfPoints(distance(margins.left))}" '
+      'fo:margin-right="${odfPoints(distance(margins.right))}" '
       'style:writing-mode="lr-tb"/>',
     );
     if (header) {
       out.write(
         '<style:header-style><style:header-footer-properties '
-        'fo:min-height="${odfPoints(math.max(margins.top - top, 0))}" '
+        'fo:min-height="${odfPoints(marginTop - top)}" '
         'fo:margin-bottom="0pt"/></style:header-style>',
       );
     }
     if (footer) {
       out.write(
         '<style:footer-style><style:header-footer-properties '
-        'fo:min-height="${odfPoints(math.max(margins.bottom - bottom, 0))}" '
+        'fo:min-height="${odfPoints(marginBottom - bottom)}" '
         'fo:margin-top="0pt"/></style:footer-style>',
       );
     }
@@ -327,13 +418,24 @@ class OdtWriter {
     return out.toString();
   }
 
-  static String _commonStyles(DocumentLook look) {
+  static String _commonStyles(DocumentLook look, String languages) {
     final body = look.body;
+    final width = look.contentWidth;
+    // The stops of Word's and LibreOffice's own Header and Footer styles,
+    // which the editor also draws.
+    final tabs = width.isFinite && width > 0
+        ? '<style:paragraph-properties><style:tab-stops>'
+              '<style:tab-stop style:position="${odfPoints(width / 2)}" '
+              'style:type="center"/>'
+              '<style:tab-stop style:position="${odfPoints(width)}" '
+              'style:type="right"/>'
+              '</style:tab-stops></style:paragraph-properties>'
+        : '';
     final out = StringBuffer(
       '<style:default-style style:family="paragraph">'
       '<style:paragraph-properties style:tab-stop-distance="35.4pt" '
       'style:writing-mode="page"/>'
-      '<style:text-properties${_lookText(body, withStyle: false)}/>'
+      '<style:text-properties${_lookText(body, withStyle: false)}$languages/>'
       '</style:default-style>'
       '<style:style style:name="Standard" style:family="paragraph" '
       'style:class="text">'
@@ -358,14 +460,11 @@ class OdtWriter {
         '</style:style>',
       );
     }
-    for (final (name, display) in [
-      ('Header', 'Header'),
-      ('Footer', 'Footer'),
-    ]) {
+    for (final name in ['Header', 'Footer']) {
       out.write(
-        '<style:style style:name="$name" style:display-name="$display" '
+        '<style:style style:name="$name" style:display-name="$name" '
         'style:family="paragraph" style:parent-style-name="Standard" '
-        'style:class="extra"/>',
+        'style:class="extra">$tabs</style:style>',
       );
     }
     for (final name in ['Footnote', 'Endnote']) {
@@ -406,16 +505,15 @@ class OdtWriter {
 
   static String _lookText(TextLook look, {required bool withStyle}) {
     final font = _font(look.fontFamily);
-    final size = odfPoints(look.fontSize);
-    return '${font == null ? '' : ' style:font-name="${_attribute(font)}"'}'
-        ' fo:font-size="$size" style:font-size-asian="$size" '
-        'style:font-size-complex="$size" fo:color="#${_colorHex(look.color)}"'
+    return '${font == null ? '' : _fontNames(font)}'
+        '${_inEveryScript('font-size', odfPoints(look.fontSize))}'
+        ' fo:color="#${_colorHex(look.color)}"'
         '${withStyle ? _lookWeight(look, explicit: true) : ''}';
   }
 
   static String _lookWeight(TextLook look, {bool explicit = false}) =>
-      '${look.bold || explicit ? ' fo:font-weight="${look.bold ? 'bold' : 'normal'}"' : ''}'
-      '${look.italic || explicit ? ' fo:font-style="${look.italic ? 'italic' : 'normal'}"' : ''}';
+      '${look.bold || explicit ? _inEveryScript('font-weight', look.bold ? 'bold' : 'normal') : ''}'
+      '${look.italic || explicit ? _inEveryScript('font-style', look.italic ? 'italic' : 'normal') : ''}';
 
   static String? _font(Object? value) {
     if (value is! String) return null;
@@ -435,95 +533,235 @@ typedef _SectionPage = ({
   double? footer,
 });
 
-typedef _Section = ({List<DocumentBlock> blocks, _SectionPage? page});
+/// How a section numbers its pages: an OpenDocument number format (`i`,
+/// `A`...) and the number of its first page; null keeps 1, 2, 3 and goes on
+/// counting.
+typedef _Numbering = ({String? format, int? start});
+
+const _Numbering _unnumbered = (format: null, start: null);
+
+typedef _Section = ({
+  List<DocumentBlock> blocks,
+  _SectionPage? page,
+  _Numbering numbering,
+});
 
 /// What every part of the file shares: fonts, pictures, names and counters.
 class _Document {
-  _Document(this.tables, this.look, this.source);
+  _Document(this.look, Object? source)
+    : package = source is DocxPackage ? source : null;
 
-  final TableStore tables;
   final DocumentLook look;
 
-  /// The opened package, where the text of footnotes is.
-  final Object? source;
+  /// The opened package: notes, the pictures of protected content and the
+  /// last section's numbering come from it.
+  final DocxPackage? package;
   final fonts = <String>{};
   final pictures = <String, ({Uint8List bytes, String mime})>{};
-  final _pictureByUri = <String, String>{};
+  final _pictureByKey = <String, String>{};
   final bookmarks = <String>{};
-  final tablesInProgress = <String>{};
+
+  /// Identity keeps a table from containing itself, whatever store it is in.
+  final tablesInProgress = <TableModel>{};
   var tableCount = 0;
   var frameCount = 0;
   var footnotes = 0;
   var endnotes = 0;
-  final _notes = <String, Map<String, List<String>>>{};
+
+  /// Tables of notes, read apart so saving leaves the editor's tables alone.
+  final noteTables = TableStore();
+  final _notes = <String, Map<String, Delta>>{};
+  final _relationships = <String, Map<String, Relationship>>{};
+
+  late final String? mainPart = () {
+    try {
+      return package?.mainDocumentPath;
+    } catch (_) {
+      return null;
+    }
+  }();
 
   /// The path of a picture given as a data URI; null for anything else.
   ({String path, Uint8List bytes, String mime})? picture(String uri) {
-    final known = _pictureByUri[uri];
-    if (known != null) {
-      final picture = pictures[known]!;
-      return (path: known, bytes: picture.bytes, mime: picture.mime);
-    }
+    final known = _known(uri);
+    if (known != null) return known;
     final decoded = decodeDataUri(uri);
-    if (decoded == null ||
-        decoded.bytes.isEmpty ||
-        !_pictureTypes.contains(decoded.mime)) {
-      return null;
-    }
-    final path =
-        'Pictures/image${pictures.length + 1}.${extensionForMime(decoded.mime)}';
-    pictures[path] = (bytes: decoded.bytes, mime: decoded.mime);
-    _pictureByUri[uri] = path;
-    return (path: path, bytes: decoded.bytes, mime: decoded.mime);
+    if (decoded == null) return null;
+    return addPicture(uri, decoded.bytes, decoded.mime);
   }
 
-  /// The paragraphs of a Word footnote or endnote of the opened package.
-  List<String>? noteText(String kind, String id, String? packageId) {
-    final package = source;
-    if (package is! DocxPackage || package.id != packageId) return null;
+  /// [key] names the picture, so each one is stored once.
+  ({String path, Uint8List bytes, String mime})? addPicture(
+    String key,
+    Uint8List bytes,
+    String mime,
+  ) {
+    final known = _known(key);
+    if (known != null) return known;
+    if (bytes.isEmpty || !_pictureTypes.contains(mime)) return null;
+    final path =
+        'Pictures/image${pictures.length + 1}.${extensionForMime(mime)}';
+    pictures[path] = (bytes: bytes, mime: mime);
+    _pictureByKey[key] = path;
+    return (path: path, bytes: bytes, mime: mime);
+  }
+
+  ({String path, Uint8List bytes, String mime})? _known(String key) {
+    final path = _pictureByKey[key];
+    if (path == null) return null;
+    final picture = pictures[path]!;
+    return (path: path, bytes: picture.bytes, mime: picture.mime);
+  }
+
+  /// A footnote or endnote ([kind]) of the opened package, read like the
+  /// body.
+  Delta? note(String kind, String id, String? packageId) {
+    final package = this.package;
+    if (package == null || package.id != packageId) return null;
     return (_notes[kind] ??= _readNotes(package, kind))[id];
   }
 
-  static Map<String, List<String>> _readNotes(
-    DocxPackage package,
-    String kind,
-  ) {
+  Map<String, Delta> _readNotes(DocxPackage package, String kind) {
     try {
-      final main = package.mainDocumentPath;
-      String? path;
-      for (final relationship in package.relationships(main)) {
-        if (relationship.hasType('${kind}s') && !relationship.external) {
-          path = DocxPackage.resolve(main, relationship.target);
-        }
-      }
-      final root = path == null ? null : package.xml(path)?.rootElement;
-      if (root == null) return const {};
-      return {
-        for (final note in root.childElements)
-          if (note.name.local == kind)
-            note.getAttribute('id', namespaceUri: '*') ?? '': [
-              for (final paragraph in note.descendantElements)
-                if (paragraph.name.local == 'p') _plainText(paragraph),
-            ],
-      };
+      return DocxCodec(noteTables).notes(package, kind);
     } catch (_) {
       return const {};
     }
   }
 
-  static String _plainText(XmlElement paragraph) {
-    final out = StringBuffer();
-    for (final element in paragraph.descendantElements) {
-      switch (element.name.local) {
-        case 't':
-          out.write(element.innerText);
-        case 'tab':
-          out.write('\t');
-        case 'br' || 'cr':
-          out.write(' ');
+  /// The part with the footnotes or endnotes.
+  String? notePart(String kind) {
+    final main = mainPart;
+    if (main == null) return null;
+    for (final relationship in _relationshipsOf(main).values) {
+      if (relationship.hasType('${kind}s') && !relationship.external) {
+        return DocxPackage.resolve(main, relationship.target);
       }
     }
-    return out.toString();
+    return null;
+  }
+
+  /// The picture [id] stands for in [part].
+  String? picturePath(String part, String? id) {
+    final relationship = id == null ? null : _relationshipsOf(part)[id];
+    if (relationship == null ||
+        relationship.external ||
+        !relationship.hasType('image')) {
+      return null;
+    }
+    return DocxPackage.resolve(part, relationship.target);
+  }
+
+  Map<String, Relationship> _relationshipsOf(String part) =>
+      _relationships[part] ??= () {
+        try {
+          return {
+            for (final relationship
+                in package?.relationships(part) ?? const <Relationship>[])
+              relationship.id: relationship,
+          };
+        } catch (_) {
+          return <String, Relationship>{};
+        }
+      }();
+
+  /// The languages Word checks the spelling in, as fo:language and the like.
+  String languages() {
+    final package = this.package;
+    final main = mainPart;
+    if (package == null || main == null) return '';
+    try {
+      final styles = _relationshipsOf(main).values
+          .where((relationship) => relationship.hasType('styles'))
+          .firstOrNull;
+      if (styles == null || styles.external) return '';
+      final root = package
+          .xml(DocxPackage.resolve(main, styles.target))
+          ?.rootElement;
+      final language = _child(
+        _child(_child(_child(root, 'docDefaults'), 'rPrDefault'), 'rPr'),
+        'lang',
+      );
+      if (language == null) return '';
+      final out = StringBuffer();
+      for (final (attribute, script) in [
+        ('val', null),
+        ('eastAsia', 'asian'),
+        ('bidi', 'complex'),
+      ]) {
+        final tag = _languageTag(
+          language.getAttribute(attribute, namespaceUri: '*'),
+        );
+        if (tag == null) continue;
+        out.write(
+          script == null
+              ? ' fo:language="${tag.language}"'
+              : ' style:language-$script="${tag.language}"',
+        );
+        if (tag.country case final country?) {
+          out.write(
+            script == null
+                ? ' fo:country="$country"'
+                : ' style:country-$script="$country"',
+          );
+        }
+      }
+      return out.toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static ({String language, String? country})? _languageTag(String? tag) {
+    final parts = tag?.trim().split(RegExp('[-_]')) ?? const [];
+    if (parts.isEmpty || !RegExp(r'^[a-zA-Z]{2,3}$').hasMatch(parts.first)) {
+      return null;
+    }
+    return (
+      language: parts.first.toLowerCase(),
+      country: parts
+          .skip(1)
+          .where((part) => RegExp(r'^([a-zA-Z]{2}|\d{3})$').hasMatch(part))
+          .firstOrNull
+          ?.toUpperCase(),
+    );
+  }
+
+  /// How the last section numbers its pages, from the body's own w:sectPr,
+  /// which the editor keeps in the package.
+  _Numbering lastNumbering() {
+    final main = mainPart;
+    final text = main == null ? null : package?.text(main);
+    if (text == null || !text.contains('pgNumType')) return _unnumbered;
+    try {
+      final path = <String>[];
+      var numbering = _unnumbered;
+      for (final event in parseEvents(text)) {
+        if (event is XmlStartElementEvent) {
+          final local = event.localName;
+          final inBody = path.length >= 2 && path[1] == 'body';
+          if (inBody && path.length == 2 && local == 'sectPr') {
+            numbering = _unnumbered;
+          } else if (inBody &&
+              path.length == 3 &&
+              path[2] == 'sectPr' &&
+              local == 'pgNumType') {
+            numbering = OdtWriter._numbering(
+              (name) => event.attributes
+                  .where((attribute) => attribute.localName == name)
+                  .firstOrNull
+                  ?.value,
+            );
+          }
+          if (!event.isSelfClosing) path.add(local);
+        } else if (event is XmlEndElementEvent && path.isNotEmpty) {
+          path.removeLast();
+        }
+      }
+      return numbering;
+    } catch (_) {
+      return _unnumbered;
+    }
   }
 }
 
@@ -538,8 +776,8 @@ class _Styles {
   final _lists = <String, String>{};
   final _columns = <String, String>{};
   final _cells = <String, String>{};
+  final _graphics = <String, String>{};
   var _tables = 0;
-  String? _graphic;
 
   String get xml => _xml.toString();
 
@@ -583,11 +821,13 @@ class _Styles {
     double width, {
     required bool breakBefore,
     String? master,
+    int? pageNumber,
   }) => _define(
     '${prefix}Table${++_tables}',
     'table',
     '<style:table-properties style:width="${odfPoints(width)}" '
-        'table:align="left"${breakBefore ? ' fo:break-before="page"' : ''}/>',
+        'table:align="left"${breakBefore ? ' fo:break-before="page"' : ''}'
+        '${pageNumber == null ? '' : ' style:page-number="$pageNumber"'}/>',
     master: master,
   );
 
@@ -611,11 +851,10 @@ class _Styles {
             '${fill == null ? '' : ' fo:background-color="#$fill"'}/>',
       );
 
-  String graphic() => _graphic ??= _define(
-    '${prefix}fr1',
+  String graphic(String properties) => _graphics[properties] ??= _define(
+    '${prefix}fr${_graphics.length + 1}',
     'graphic',
-    '<style:graphic-properties style:vertical-pos="top" '
-        'style:vertical-rel="baseline"/>',
+    '<style:graphic-properties$properties/>',
   );
 
   /// Bullets, numbers or check boxes, ten levels deep.
@@ -715,13 +954,27 @@ class _TextEncoder {
   }
 }
 
-/// Writes blocks of the body, a cell, a header or footer, or a note.
+/// Writes blocks of the body, a header or footer, or a note, and the cells
+/// of their tables.
 class _StoryWriter {
-  _StoryWriter(this.document, this.styles, this.place, [this.depth = 0]);
+  _StoryWriter(
+    this.document,
+    this.styles,
+    this.place,
+    this.tables, {
+    this.part,
+    this.depth = 0,
+  });
 
   final _Document document;
   final _Styles styles;
   final _Place place;
+
+  /// Where the tables of the content are.
+  final TableStore tables;
+
+  /// The Word part whose relationships protected content uses.
+  final String? part;
 
   /// Tables around the content.
   final int depth;
@@ -729,35 +982,56 @@ class _StoryWriter {
   final _lists = <_OpenList>[];
   var _pendingBreak = false;
   String? _pendingMaster;
+  int? _pendingNumber;
 
-  String get _parent => switch (place) {
-    _Place.header => 'Header',
-    _Place.footer => 'Footer',
-    _Place.note => 'Footnote',
-    _Place.body || _Place.cell => 'Standard',
-  };
+  String get _parent => depth > 0
+      ? 'Standard'
+      : switch (place) {
+          _Place.header => 'Header',
+          _Place.footer => 'Footer',
+          _Place.footnote => 'Footnote',
+          _Place.endnote => 'Endnote',
+          _Place.body => 'Standard',
+        };
 
-  /// The next block starts a page with [master].
-  void startSection(String master) {
+  bool get _inHeaderFooter => place == _Place.header || place == _Place.footer;
+
+  /// The next block starts a page with [master], numbered [pageNumber] when
+  /// the section restarts its numbering.
+  void startSection(String master, {int? pageNumber}) {
     _closeLists();
     _pendingMaster = master;
+    _pendingNumber = pageNumber;
     _pendingBreak = false;
   }
 
   void write(List<DocumentBlock> blocks) {
-    for (final block in blocks) {
+    for (final (index, block) in blocks.indexed) {
+      final previous = index > 0 ? blocks[index - 1] : null;
+      final next = index + 1 < blocks.length ? blocks[index + 1] : null;
       switch (block) {
         case LineBlock(list: final String _):
-          _listLine(block);
+          _listLine(block, following: next);
         case LineBlock():
           _closeLists();
-          _line(block);
+          // Paragraphs of a Word style with contextual spacing add no space
+          // between one another, as in the editor.
+          final group = block.attributes[HiddenAttributes.contextualGroup];
+          _line(
+            block,
+            collapseBefore: group != null && _group(previous) == group,
+            collapseAfter: group != null && _group(next) == group,
+          );
         case EmbedBlock():
           _closeLists();
           _embedBlock(block);
       }
     }
   }
+
+  static Object? _group(DocumentBlock? block) => block is LineBlock
+      ? block.attributes[HiddenAttributes.contextualGroup]
+      : null;
 
   /// Every story ends with a paragraph, which cells and the body need.
   String finish() {
@@ -777,11 +1051,17 @@ class _StoryWriter {
         } catch (_) {
           return;
         }
-        final table = document.tables[id];
+        final table = tables[id];
         if (table != null) _table(table);
       case EmbedTypes.opaqueBlock:
         final content = _opaque(block.value);
         if (content == null || content.hidden) return;
+        if (content.text.isEmpty) {
+          _writeParagraph(null, [
+            EmbedPiece(EmbedTypes.opaqueInline, block.value, const {}),
+          ], heading: null);
+          return;
+        }
         for (final line in content.text.split('\n')) {
           _writeParagraph(null, [TextPiece(line, const {})], heading: null);
         }
@@ -798,7 +1078,12 @@ class _StoryWriter {
 
   /// Page breaks inside a line split it: the text after one starts the next
   /// page.
-  void _line(LineBlock line, {bool inList = false}) {
+  void _line(
+    LineBlock line, {
+    bool inList = false,
+    bool collapseBefore = false,
+    bool collapseAfter = false,
+  }) {
     final segments = <List<InlinePiece>>[[]];
     for (final piece in line.pieces) {
       if (piece is EmbedPiece && piece.type == EmbedTypes.pageBreak) {
@@ -809,7 +1094,9 @@ class _StoryWriter {
     }
     var bookmarks = true;
     for (final (index, segment) in segments.indexed) {
-      if (index > 0 && place == _Place.body) _pendingBreak = true;
+      if (index > 0 && place == _Place.body && depth == 0) {
+        _pendingBreak = true;
+      }
       if (segment.isEmpty && segments.length > 1) continue;
       _writeParagraph(
         line,
@@ -817,12 +1104,14 @@ class _StoryWriter {
         heading: line.heading,
         inList: inList,
         bookmarks: bookmarks,
+        collapseBefore: collapseBefore,
+        collapseAfter: collapseAfter,
       );
       bookmarks = false;
     }
   }
 
-  void _listLine(LineBlock line) {
+  void _listLine(LineBlock line, {DocumentBlock? following}) {
     final kind = line.list!;
     final level = line.indent.clamp(0, 9);
     while (_lists.isNotEmpty && _lists.last.level > level) {
@@ -856,7 +1145,16 @@ class _StoryWriter {
     }
     _out.write('<text:list-item>');
     _lists.last.itemOpen = true;
-    _line(line, inList: true);
+    // Like the editor and Word's List Paragraph style, a list adds space
+    // after its last item only; numbered headings keep their own.
+    final spaced = line.heading != null;
+    _line(
+      line,
+      inList: true,
+      collapseBefore: !spaced,
+      collapseAfter:
+          !spaced && following is LineBlock && following.list != null,
+    );
   }
 
   void _closeItem(_OpenList list) {
@@ -882,13 +1180,15 @@ class _StoryWriter {
     required int? heading,
     bool inList = false,
     bool bookmarks = false,
+    bool collapseBefore = false,
+    bool collapseAfter = false,
   }) {
     final level = heading?.clamp(1, 10);
-    final master = _pendingMaster;
-    _pendingMaster = null;
+    final (master, number) = _takeMaster();
     final style = styles.paragraph(
       level == null ? _parent : 'Heading_20_$level',
-      _paragraphProperties(line, inList: inList),
+      '${_paragraphProperties(line, inList: inList, collapseBefore: collapseBefore, collapseAfter: collapseAfter)}'
+      '${number == null ? '' : ' style:page-number="$number"'}',
       master: master,
     );
     final tag = level == null ? 'text:p' : 'text:h';
@@ -900,7 +1200,14 @@ class _StoryWriter {
     );
   }
 
-  String _paragraphProperties(LineBlock? line, {required bool inList}) {
+  /// List items take the list's spacing, not their own, as in the editor;
+  /// [collapseBefore] and [collapseAfter] take the space away.
+  String _paragraphProperties(
+    LineBlock? line, {
+    required bool inList,
+    required bool collapseBefore,
+    required bool collapseAfter,
+  }) {
     final out = StringBuffer();
     if (line != null) {
       switch (line.align) {
@@ -922,10 +1229,12 @@ class _StoryWriter {
       if (line.firstLine case final first? when !inList) {
         out.write(' fo:text-indent="${odfPoints(first)}"');
       }
-      if (line.spaceBefore case final before?) {
+      final before = collapseBefore ? 0.0 : (inList ? null : line.spaceBefore);
+      final after = collapseAfter ? 0.0 : (inList ? null : line.spaceAfter);
+      if (before != null) {
         out.write(' fo:margin-top="${odfPoints(math.max(before, 0))}"');
       }
-      if (line.spaceAfter case final after?) {
+      if (after != null) {
         out.write(' fo:margin-bottom="${odfPoints(math.max(after, 0))}"');
       }
       if (line.lineHeight case final height? when height > 0) {
@@ -968,13 +1277,7 @@ class _StoryWriter {
       final link = _safeLink(piece.attributes['link']);
       if (link != openLink) {
         if (openLink != null) out.write('</text:a>');
-        if (link != null) {
-          out.write(
-            '<text:a xlink:type="simple" xlink:href="${_attribute(link)}" '
-            'text:style-name="Internet_20_link" '
-            'text:visited-style-name="Visited_20_Internet_20_Link">',
-          );
-        }
+        if (link != null) out.write(_linkStart(link));
         openLink = link;
       }
       out.write(switch (piece) {
@@ -988,6 +1291,11 @@ class _StoryWriter {
     if (openLink != null) out.write('</text:a>');
     return out.toString();
   }
+
+  static String _linkStart(String link) =>
+      '<text:a xlink:type="simple" xlink:href="${_attribute(link)}" '
+      'text:style-name="Internet_20_link" '
+      'text:visited-style-name="Visited_20_Internet_20_Link">';
 
   static String? _safeLink(Object? link) {
     if (link is! String) return null;
@@ -1006,16 +1314,10 @@ class _StoryWriter {
   String _textProperties(Map<String, dynamic> attributes) {
     final out = StringBuffer();
     if (attributes['bold'] == true) {
-      out.write(
-        ' fo:font-weight="bold" style:font-weight-asian="bold" '
-        'style:font-weight-complex="bold"',
-      );
+      out.write(_inEveryScript('font-weight', 'bold'));
     }
     if (attributes['italic'] == true) {
-      out.write(
-        ' fo:font-style="italic" style:font-style-asian="italic" '
-        'style:font-style-complex="italic"',
-      );
+      out.write(_inEveryScript('font-style', 'italic'));
     }
     if (attributes['underline'] == true) {
       out.write(
@@ -1032,16 +1334,12 @@ class _StoryWriter {
     }
     final size = _size(attributes['size']);
     if (size != null) {
-      final value = odfPoints(size);
-      out.write(
-        ' fo:font-size="$value" style:font-size-asian="$value" '
-        'style:font-size-complex="$value"',
-      );
+      out.write(_inEveryScript('font-size', odfPoints(size)));
     }
     final font = OdtWriter._font(attributes['font']);
     if (font != null) {
       document.fonts.add(font);
-      out.write(' style:font-name="${_attribute(font)}"');
+      out.write(_fontNames(font));
     }
     if (_hex(attributes['color']) case final color?) {
       out.write(' fo:color="#$color"');
@@ -1086,63 +1384,441 @@ class _StoryWriter {
         return frame;
       case EmbedTypes.pageNumber:
         encoder.object();
-        return _span(piece.attributes, _pageNumber);
+        final value = piece.value;
+        return _span(
+          piece.attributes,
+          _pageNumber(value is String ? value : null),
+        );
       case EmbedTypes.opaqueInline:
         final content = _opaque(piece.value);
         if (content == null || content.hidden) return '';
-        switch (fieldNameOf(content.xml)) {
-          case 'PAGE':
-            encoder.object();
-            return _span(piece.attributes, _pageNumber);
-          case 'NUMPAGES' || 'SECTIONPAGES':
-            encoder.object();
-            return _span(
-              piece.attributes,
-              '<text:page-count>1</text:page-count>',
-            );
-        }
-        if (content.label == OpaqueLabels.note) {
-          final note = _note(content);
-          if (note != null) {
-            encoder.object();
-            return note;
-          }
-        }
-        return _span(piece.attributes, encoder.encode(content.text));
+        return _protected(content, piece.attributes, encoder);
       default:
         return '';
     }
   }
 
-  static const _pageNumber =
-      '<text:page-number text:select-page="current">1</text:page-number>';
+  /// Word content the editor keeps as it came: fields and notes become their
+  /// OpenDocument kind; the rest keeps its text, its picture or a placeholder
+  /// that shows something was there.
+  String _protected(
+    OpaqueContent content,
+    Map<String, dynamic> attributes,
+    _TextEncoder encoder,
+  ) {
+    switch (fieldNameOf(content.xml)) {
+      case 'PAGE':
+        encoder.object();
+        return _span(attributes, _pageNumber(_instruction(content.xml)));
+      case 'NUMPAGES' || 'SECTIONPAGES':
+        encoder.object();
+        return _span(attributes, '<text:page-count>1</text:page-count>');
+      case 'HYPERLINK':
+        final text = _span(attributes, encoder.encode(content.text));
+        final link = attributes['link'] == null
+            ? _hyperlink(_instruction(content.xml))
+            : null;
+        return link == null || text.isEmpty
+            ? text
+            : '${_linkStart(link)}$text</text:a>';
+      case _?:
+        // Fields like INCLUDEPICTURE show a picture.
+        final picture = _hasPicture(content.xml)
+            ? _preview(_fragment(content.xml), content)
+            : '';
+        if (picture.isNotEmpty) encoder.object();
+        return '$picture${_span(attributes, encoder.encode(content.text))}';
+    }
+    if (content.label == OpaqueLabels.note) {
+      final note = _note(content);
+      if (note != null) {
+        encoder.object();
+        return note;
+      }
+      return _span(attributes, encoder.encode(content.text));
+    }
+    return _object(content, attributes, encoder);
+  }
+
+  String _object(
+    OpaqueContent content,
+    Map<String, dynamic> attributes,
+    _TextEncoder encoder,
+  ) {
+    final xml = content.xml;
+    // A note's own mark only means something inside the note, where
+    // OpenDocument writes it.
+    if (RegExp(r'<w:(?:footnote|endnote)Ref\b').hasMatch(xml)) return '';
+    final root =
+        xml.contains('oMath') || xml.contains('sym') || _hasPicture(xml)
+        ? _fragment(xml)
+        : null;
+    final top = root?.childElements.firstOrNull?.name.local;
+    if (content.label == OpaqueLabels.equation ||
+        top == 'oMath' ||
+        top == 'oMathPara') {
+      final math = _math(root, attributes, encoder);
+      if (math.isNotEmpty) return math;
+    }
+    final symbol = _symbol(root, attributes, encoder);
+    if (symbol.isNotEmpty) return symbol;
+    final picture = _preview(root, content);
+    if (picture.isNotEmpty) {
+      encoder.object();
+      return '$picture${_span(attributes, encoder.encode(content.text))}';
+    }
+    if (content.text.isNotEmpty) {
+      return _span(attributes, encoder.encode(content.text));
+    }
+    // The editor shows nothing for these in headers and footers.
+    if (_inHeaderFooter) return '';
+    encoder.object();
+    return _span(attributes, _placeholder(content.label));
+  }
+
+  /// The text of a Word equation, with its superscripts and subscripts.
+  String _math(
+    XmlElement? root,
+    Map<String, dynamic> attributes,
+    _TextEncoder encoder,
+  ) {
+    final runs = <({String text, String? script})>[];
+    void add(String text, String? script) {
+      if (text.isEmpty) return;
+      if (runs.isNotEmpty && runs.last.script == script) {
+        runs.last = (text: runs.last.text + text, script: script);
+      } else {
+        runs.add((text: text, script: script));
+      }
+    }
+
+    String plain(XmlElement? element) => [
+      for (final text in element?.descendantElements ?? <XmlElement>[])
+        if (text.name.local == 't') text.innerText,
+    ].join();
+
+    void walk(XmlElement? element, String? script, int depth) {
+      if (element == null || depth > 64) return;
+      final local = element.name.local;
+      if (local.endsWith('Pr')) return;
+      void each(String name, String? script) =>
+          walk(_child(element, name), script, depth + 1);
+      String? setting(String name) => _child(
+        _child(element, '${local}Pr'),
+        name,
+      )?.getAttribute('val', namespaceUri: '*');
+      void grouped(String name) {
+        final part = _child(element, name);
+        final long = plain(part).runes.length > 1;
+        if (long) add('(', script);
+        walk(part, script, depth + 1);
+        if (long) add(')', script);
+      }
+
+      switch (local) {
+        case 't':
+          add(element.innerText, script);
+        case 'sSup' || 'sSub' || 'sSubSup':
+          each('e', script);
+          each('sub', 'sub');
+          each('sup', 'super');
+        case 'sPre':
+          each('sub', 'sub');
+          each('sup', 'super');
+          each('e', script);
+        case 'f':
+          grouped('num');
+          add('/', script);
+          grouped('den');
+        case 'rad':
+          each('deg', 'super');
+          add('√', script);
+          grouped('e');
+        case 'd':
+          add(setting('begChr') ?? '(', script);
+          for (final (index, item)
+              in element.childElements
+                  .where((child) => child.name.local == 'e')
+                  .indexed) {
+            if (index > 0) add(setting('sepChr') ?? '|', script);
+            walk(item, script, depth + 1);
+          }
+          add(setting('endChr') ?? ')', script);
+        case 'nary':
+          add(setting('chr') ?? '∫', script);
+          each('sub', 'sub');
+          each('sup', 'super');
+          each('e', script);
+        case 'oMathPara' || 'eqArr':
+          for (final (index, line)
+              in element.childElements
+                  .where((child) => !child.name.local.endsWith('Pr'))
+                  .indexed) {
+            if (index > 0) add(' ', script);
+            walk(line, script, depth + 1);
+          }
+        default:
+          for (final child in element.childElements) {
+            walk(child, script, depth + 1);
+          }
+      }
+    }
+
+    walk(root, null, 0);
+    return [
+      for (final run in runs)
+        _span(
+          run.script == null
+              ? attributes
+              : {...attributes, 'script': run.script},
+          encoder.encode(run.text),
+        ),
+    ].join();
+  }
+
+  /// A character of a symbol font (w:sym).
+  String _symbol(
+    XmlElement? root,
+    Map<String, dynamic> attributes,
+    _TextEncoder encoder,
+  ) {
+    final symbol = _descendant(root, 'sym');
+    final code = int.tryParse(
+      symbol?.getAttribute('char', namespaceUri: '*') ?? '',
+      radix: 16,
+    );
+    if (code == null || code < 0x20 || code > 0xFFFD) return '';
+    return _span({
+      ...attributes,
+      'font': ?symbol?.getAttribute('font', namespaceUri: '*'),
+    }, encoder.encode(String.fromCharCode(code)));
+  }
+
+  /// The picture Word shows for an object, a legacy picture or a shape.
+  String _preview(XmlElement? root, OpaqueContent content) {
+    final package = document.package;
+    final part = this.part;
+    if (root == null ||
+        package == null ||
+        part == null ||
+        content.packageId != package.id) {
+      return '';
+    }
+    for (final element in root.descendantElements) {
+      final local = element.name.local;
+      if (local != 'imagedata' && local != 'blip') continue;
+      final vml = local == 'imagedata';
+      final style = (element.parentElement?.getAttribute('style') ?? '')
+          .replaceAll(' ', '')
+          .toLowerCase();
+      // Floating shapes of headers, like watermarks, would push the text.
+      if (_inHeaderFooter &&
+          (style.contains('position:absolute') ||
+              _descendant(root, 'anchor') != null)) {
+        return '';
+      }
+      final path = document.picturePath(
+        part,
+        vml
+            ? element.getAttribute('id', namespaceUri: '*') ??
+                  element.getAttribute('relid', namespaceUri: '*')
+            : element.getAttribute('embed', namespaceUri: '*'),
+      );
+      final bytes = path == null ? null : package.parts[path];
+      if (path == null || bytes == null) continue;
+
+      final object = _descendant(root, 'object');
+      final extent = _descendant(root, 'extent');
+      double? twips(XmlElement? element, String name) {
+        final value = double.tryParse(
+          element?.getAttribute(name, namespaceUri: '*') ?? '',
+        );
+        return value == null ? null : value / 20;
+      }
+
+      double? emus(String name) {
+        final value = double.tryParse(extent?.getAttribute(name) ?? '');
+        return value == null ? null : value / 12700;
+      }
+
+      var width = _positive(
+        vml
+            ? _cssLength(style, 'width') ?? twips(object, 'dxaOrig')
+            : emus('cx'),
+      );
+      var height = _positive(
+        vml
+            ? _cssLength(style, 'height') ?? twips(object, 'dyaOrig')
+            : emus('cy'),
+      );
+
+      final crop = vml ? _vmlCrop(element) : _drawingCrop(element);
+      var picture = (bytes: bytes, mime: mimeForPath(path));
+      if (crop.any((value) => value > 0)) {
+        final cropped = cropPicture(
+          bytes,
+          picture.mime,
+          left: crop[0],
+          top: crop[1],
+          right: crop[2],
+          bottom: crop[3],
+        );
+        if (cropped != null) {
+          picture = cropped;
+        } else if (width != null &&
+            height != null &&
+            crop[0] + crop[2] < 1 &&
+            crop[1] + crop[3] < 1) {
+          // The whole picture, made to fit the box without stretching it.
+          final whole = (
+            width: width / (1 - crop[0] - crop[2]),
+            height: height / (1 - crop[1] - crop[3]),
+          );
+          final scale = math.min(width / whole.width, height / whole.height);
+          width = whole.width * scale;
+          height = whole.height * scale;
+        }
+      }
+      final stored = document.addPicture(
+        '${package.id}/$path/${crop.join(',')}',
+        picture.bytes,
+        picture.mime,
+      );
+      if (stored == null) continue;
+      return _pictureFrame(stored, width: width, height: height);
+    }
+    return '';
+  }
+
+  static bool _hasPicture(String xml) =>
+      xml.contains('imagedata') || xml.contains('blip');
+
+  static double? _cssLength(String style, String name) =>
+      odfLength(RegExp('(?:^|;)$name:([^;]+)').firstMatch(style)?.group(1));
+
+  static double _cropFraction(double? value) =>
+      value != null && value.isFinite ? value.clamp(0.0, 1.0).toDouble() : 0;
+
+  /// Left, top, right and bottom cuts of v:imagedata: fractions, or 65536ths
+  /// when they end in `f`.
+  static List<double> _vmlCrop(XmlElement imageData) => [
+    for (final side in ['left', 'top', 'right', 'bottom'])
+      switch (imageData.getAttribute('crop$side')?.trim()) {
+        final String text when text.endsWith('f') => _cropFraction(
+          (double.tryParse(text.substring(0, text.length - 1)) ?? 0) / 65536,
+        ),
+        final text => _cropFraction(double.tryParse(text ?? '')),
+      },
+  ];
+
+  /// Left, top, right and bottom cuts of a:srcRect, in 100000ths.
+  static List<double> _drawingCrop(XmlElement blip) {
+    final source = _child(blip.parentElement, 'srcRect');
+    return [
+      for (final side in ['l', 't', 'r', 'b'])
+        _cropFraction(
+          (double.tryParse(source?.getAttribute(side) ?? '') ?? 0) / 100000,
+        ),
+    ];
+  }
+
+  /// LibreOffice shows a placeholder field in grey, as the editor shows
+  /// protected content.
+  static String _placeholder(String? label) {
+    final (type, name) = switch (label) {
+      OpaqueLabels.chart => ('object', 'chart'),
+      OpaqueLabels.diagram => ('object', 'diagram'),
+      OpaqueLabels.equation => ('object', 'equation'),
+      OpaqueLabels.textBox => ('text-box', 'text box'),
+      OpaqueLabels.tableOfContents => ('text', 'table of contents'),
+      OpaqueLabels.coverPage => ('text', 'cover page'),
+      OpaqueLabels.bibliography => ('text', 'bibliography'),
+      OpaqueLabels.special => ('text', 'special content'),
+      null || OpaqueLabels.object || OpaqueLabels.note => ('object', 'object'),
+      final other => ('text', other),
+    };
+    return '<text:placeholder text:placeholder-type="$type">'
+        '&lt;${escapeXmlText(stripInvalidXmlChars(name))}&gt;'
+        '</text:placeholder>';
+  }
+
+  /// The instruction of a Word field, as Word shows it.
+  static String? _instruction(String xml) {
+    final simple = RegExp(r'w:instr="([^"]*)"').firstMatch(xml)?.group(1);
+    final complex = RegExp(
+      r'<w:instrText[^>]*>([^<]*)</w:instrText>',
+    ).allMatches(xml).map((match) => match.group(1)).join();
+    final instruction = defaultEntityMapping.decode(simple ?? complex).trim();
+    return instruction.isEmpty ? null : instruction;
+  }
+
+  /// The address of a HYPERLINK field: a web address, a bookmark (`\l`) or
+  /// both.
+  static String? _hyperlink(String? instruction) {
+    if (instruction == null) return null;
+    final words = [
+      for (final match in RegExp(r'"([^"]*)"|(\S+)').allMatches(instruction))
+        match[1] ?? match[2]!,
+    ];
+    String? address;
+    String? bookmark;
+    for (var index = 1; index < words.length; index++) {
+      final word = words[index].toLowerCase();
+      if (const {r'\l', r'\o', r'\t'}.contains(word)) {
+        final value = index + 1 < words.length ? words[++index] : null;
+        if (word == r'\l') bookmark = value;
+      } else if (!word.startsWith(r'\')) {
+        address ??= words[index];
+      }
+    }
+    final anchor = bookmark == null || bookmark.isEmpty ? '' : '#$bookmark';
+    return address == null
+        ? _safeLink(anchor)
+        : safeLinkTarget('$address$anchor');
+  }
+
+  /// A PAGE field; without a format of its own it numbers pages as their
+  /// page style does.
+  static String _pageNumber(String? instruction) {
+    final format = RegExp(r'\\\*\s*(\w+)')
+        .allMatches(instruction ?? '')
+        .map((match) => match[1]!)
+        .map(
+          (name) => switch (name.toLowerCase()) {
+            'roman' => name == 'roman' ? 'i' : 'I',
+            'alphabetic' => name == 'alphabetic' ? 'a' : 'A',
+            'arabic' => '1',
+            _ => null,
+          },
+        )
+        .nonNulls
+        .firstOrNull;
+    return '<text:page-number text:select-page="current"'
+        '${format == null ? '' : ' style:num-format="$format"'}>1'
+        '</text:page-number>';
+  }
 
   String? _note(OpaqueContent content) {
-    if (place != _Place.body && place != _Place.cell) return null;
+    if (place != _Place.body) return null;
     final reference = RegExp(
       r'<w:(footnote|endnote)Reference\b[^>]*?\bw:id="(-?\d+)"',
     ).firstMatch(content.xml);
     if (reference == null) return null;
     final kind = reference[1]!;
-    final paragraphs = document.noteText(
-      kind,
-      reference[2]!,
-      content.packageId,
-    );
-    if (paragraphs == null) return null;
+    final note = document.note(kind, reference[2]!, content.packageId);
+    if (note == null) return null;
     final endnote = kind == 'endnote';
     final number = endnote ? ++document.endnotes : ++document.footnotes;
-    final style = endnote ? 'Endnote' : 'Footnote';
-    final body = [
-      for (final (index, text) in paragraphs.indexed)
-        '<text:p text:style-name="$style">'
-            '${_TextEncoder().encode(index == 0 ? text.trimLeft() : text, atEnd: true)}'
-            '</text:p>',
-    ].join();
+    final body = (_StoryWriter(
+      document,
+      styles,
+      endnote ? _Place.endnote : _Place.footnote,
+      document.noteTables,
+      part: document.notePart(kind),
+    )..write(documentBlocks(note))).finish();
     return '<text:note text:id="${endnote ? 'edn' : 'ftn'}$number" '
         'text:note-class="$kind"><text:note-citation>$number</text:note-citation>'
-        '<text:note-body>${body.isEmpty ? '<text:p text:style-name="$style"/>' : body}'
-        '</text:note-body></text:note>';
+        '<text:note-body>$body</text:note-body></text:note>';
   }
 
   String _frame(EmbedPiece piece) {
@@ -1150,6 +1826,22 @@ class _StoryWriter {
     if (value is! String) return '';
     final picture = document.picture(value);
     if (picture == null) return '';
+    return _pictureFrame(
+      picture,
+      width: _positive(pointsValue(piece.attributes['width'])),
+      height: _positive(pointsValue(piece.attributes['height'])),
+      drawing: _fragment(piece.attributes[HiddenAttributes.drawing]),
+    );
+  }
+
+  /// A picture in the text, or one Word floats in a header or footer, at the
+  /// place the editor draws it; [drawing] is Word's own description of it.
+  String _pictureFrame(
+    ({String path, Uint8List bytes, String mime}) picture, {
+    double? width,
+    double? height,
+    XmlElement? drawing,
+  }) {
     final pixels = imagePixelSize(picture.bytes);
     final natural = pixels == null
         ? null
@@ -1157,36 +1849,147 @@ class _StoryWriter {
     final ratio = natural == null || natural.width <= 0 || natural.height <= 0
         ? 1.0
         : natural.height / natural.width;
-    final givenWidth = _positive(pointsValue(piece.attributes['width']));
-    final givenHeight = _positive(pointsValue(piece.attributes['height']));
-    var width =
-        givenWidth ??
-        (givenHeight != null ? givenHeight / ratio : natural?.width ?? 72);
-    var height = givenHeight ?? width * ratio;
+    var w = width ?? (height != null ? height / ratio : natural?.width ?? 72);
+    var h = height ?? w * ratio;
+    final anchor = _inHeaderFooter ? _descendant(drawing, 'anchor') : null;
     final maxWidth = document.look.contentWidth;
-    if (width > maxWidth && maxWidth > 0) {
-      height = height * maxWidth / width;
-      width = maxWidth;
+    if (anchor == null && w > maxWidth && maxWidth > 0) {
+      h = h * maxWidth / w;
+      w = maxWidth;
     }
+    final floating = anchor == null ? null : _floating(anchor, h);
     final name = 'Image${++document.frameCount}';
-    return '<draw:frame draw:style-name="${styles.graphic()}" draw:name="$name" '
-        'text:anchor-type="as-char" svg:width="${odfPoints(width)}" '
-        'svg:height="${odfPoints(height)}" draw:z-index="0">'
+    return '<draw:frame draw:style-name="${styles.graphic(floating?.properties ?? _inlinePicture)}" '
+        'draw:name="$name" '
+        'text:anchor-type="${floating == null ? 'as-char' : 'paragraph'}"'
+        '${floating?.position ?? ''} svg:width="${odfPoints(w)}" '
+        'svg:height="${odfPoints(h)}" draw:z-index="0">'
         '<draw:image xlink:href="${picture.path}" xlink:type="simple" '
         'xlink:show="embed" xlink:actuate="onLoad" '
-        'draw:mime-type="${picture.mime}"/></draw:frame>';
+        'draw:mime-type="${picture.mime}"/>${_altText(drawing)}</draw:frame>';
   }
 
-  static double? _positive(double? value) =>
-      value != null && value.isFinite && value > 0 ? value : null;
+  /// Word's place for a floating picture ([anchor] is its wp:anchor), as the
+  /// header painter computes it.
+  ({String properties, String position}) _floating(
+    XmlElement anchor,
+    double height,
+  ) {
+    ({String from, String? align, double offset}) position(String axis) {
+      final element = _child(anchor, axis);
+      final align = _child(element, 'align')?.innerText.trim();
+      final offset = double.tryParse(
+        _child(element, 'posOffset')?.innerText.trim() ?? '',
+      );
+      return (
+        from: element?.getAttribute('relativeFrom') ?? 'margin',
+        align: align == null || align.isEmpty ? null : align,
+        offset: offset == null || !offset.isFinite ? 0 : offset / 12700,
+      );
+    }
+
+    final horizontal = position('positionH');
+    final horizontalPosition = switch (horizontal.align) {
+      'left' || 'inside' => 'left',
+      'center' => 'center',
+      'right' || 'outside' => 'right',
+      _ => 'from-left',
+    };
+    final horizontalArea = switch (horizontal.from) {
+      'page' => 'page',
+      'leftMargin' => 'page-start-margin',
+      'rightMargin' => 'page-end-margin',
+      _ => 'page-content',
+    };
+
+    final vertical = position('positionV');
+    final look = document.look;
+    final margins = look.margins;
+    final range = switch (vertical.from) {
+      'page' => (0.0, look.pageHeight),
+      'margin' => (margins.top, look.pageHeight - margins.bottom),
+      'topMargin' => (0.0, margins.top),
+      'bottomMargin' => (look.pageHeight - margins.bottom, look.pageHeight),
+      _ => null,
+    };
+    final String verticalPosition;
+    final String verticalArea;
+    double? y;
+    if (range case (final top, final bottom)) {
+      // OpenDocument measures its page area from the header down, so the
+      // place is given from the page's edge.
+      verticalPosition = 'from-top';
+      verticalArea = 'page';
+      y = switch (vertical.align) {
+        'center' => (top + bottom - height) / 2,
+        'bottom' || 'outside' => bottom - height,
+        'top' || 'inside' => top,
+        _ => top + vertical.offset,
+      };
+    } else {
+      verticalArea = 'paragraph';
+      verticalPosition = switch (vertical.align) {
+        'top' || 'inside' => 'top',
+        'center' => 'middle',
+        'bottom' || 'outside' => 'bottom',
+        _ => 'from-top',
+      };
+      if (verticalPosition == 'from-top') y = vertical.offset;
+    }
+
+    final behind = const {
+      '1',
+      'true',
+      'on',
+    }.contains(anchor.getAttribute('behindDoc'));
+    final wrap = behind
+        ? 'run-through'
+        : switch (anchor.childElements
+              .map((element) => element.name.local)
+              .where((name) => name.startsWith('wrap'))
+              .firstOrNull) {
+            'wrapSquare' => 'parallel',
+            'wrapTight' || 'wrapThrough' => 'dynamic',
+            'wrapTopAndBottom' => 'none',
+            _ => 'run-through',
+          };
+    return (
+      properties:
+          ' style:wrap="$wrap"'
+          '${wrap == 'run-through' ? ' style:run-through="${behind ? 'background' : 'foreground'}"' : ''}'
+          ' style:vertical-pos="$verticalPosition" '
+          'style:vertical-rel="$verticalArea" '
+          'style:horizontal-pos="$horizontalPosition" '
+          'style:horizontal-rel="$horizontalArea" style:flow-with-text="false"',
+      position:
+          '${horizontalPosition == 'from-left' ? ' svg:x="${odfPoints(horizontal.offset)}"' : ''}'
+          '${y == null ? '' : ' svg:y="${odfPoints(y)}"'}',
+    );
+  }
+
+  /// The title and description Word keeps for screen readers.
+  static String _altText(XmlElement? drawing) {
+    final properties = _descendant(drawing, 'docPr');
+    if (properties == null) return '';
+    String part(String attribute, String element) {
+      final text = stripInvalidXmlChars(
+        properties.getAttribute(attribute) ?? '',
+      ).trim();
+      return text.isEmpty
+          ? ''
+          : '<svg:$element>${escapeXmlText(text)}</svg:$element>';
+    }
+
+    return '${part('title', 'title')}${part('descr', 'desc')}';
+  }
 
   void _table(TableModel table) {
     if (depth >= 32 || table.rows.isEmpty) return;
-    if (!document.tablesInProgress.add(table.id)) return;
+    if (!document.tablesInProgress.add(table)) return;
     try {
       _out.write(_tableXml(table));
     } finally {
-      document.tablesInProgress.remove(table.id);
+      document.tablesInProgress.remove(table);
     }
   }
 
@@ -1205,7 +2008,11 @@ class _StoryWriter {
       for (final row in rows)
         row.cells.fold<int>(0, (sum, cell) => sum + math.max(cell.gridSpan, 1)),
     ].fold<int>(1, math.max);
-    var widths = [for (final width in table.columnWidths) width / 20];
+    // Word's grid may have more columns than the rows use; the cells take
+    // the first ones, as in the editor.
+    var widths = [
+      for (final width in table.columnWidths.take(columns)) width / 20,
+    ];
     if (widths.length != columns ||
         widths.any((width) => !width.isFinite || width <= 0)) {
       widths = List.filled(
@@ -1235,9 +2042,10 @@ class _StoryWriter {
       }
     }
 
+    final (master, number) = _takeMaster();
     final out = StringBuffer(
       '<table:table table:name="Table${++document.tableCount}" '
-      'table:style-name="${styles.table(widths.fold(0, (sum, width) => sum + width), breakBefore: _takeBreak(), master: _takeMaster())}">',
+      'table:style-name="${styles.table(widths.fold(0, (sum, width) => sum + width), breakBefore: _takeBreak(), master: master, pageNumber: number)}">',
     );
     for (final width in widths) {
       out.write(
@@ -1260,8 +2068,14 @@ class _StoryWriter {
           continue;
         }
         final rowSpan = rowSpans[(r, c)] ?? 1;
-        final content = _StoryWriter(document, styles, _Place.cell, depth + 1)
-          ..write(documentBlocks(cell.controller.document.toDelta()));
+        final content = _StoryWriter(
+          document,
+          styles,
+          place,
+          tables,
+          part: part,
+          depth: depth + 1,
+        )..write(documentBlocks(cell.controller.document.toDelta()));
         final fill = cell.fill == null ? null : _colorHex(cell.fill!);
         out.write(
           '<table:table-cell table:style-name="${styles.cell(bordered: table.bordered, fill: fill)}" '
@@ -1285,9 +2099,12 @@ class _StoryWriter {
     return pending;
   }
 
-  String? _takeMaster() {
+  /// The page style the next block starts, and the number of its first page.
+  (String?, int?) _takeMaster() {
     final master = _pendingMaster;
+    final number = master == null ? null : _pendingNumber;
     _pendingMaster = null;
-    return master;
+    _pendingNumber = null;
+    return (master, number);
   }
 }
