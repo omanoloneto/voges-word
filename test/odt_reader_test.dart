@@ -5,12 +5,15 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:voges_word/document/delta_blocks.dart';
 import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/embeds.dart';
 import 'package:voges_word/document/headers_footers.dart';
 import 'package:voges_word/document/tables.dart';
 import 'package:voges_word/docx/docx_codec.dart';
+import 'package:voges_word/docx/docx_numbering.dart';
 import 'package:voges_word/docx/docx_package.dart';
+import 'package:voges_word/docx/word_list_counter.dart';
 import 'package:voges_word/formats/document_codecs.dart';
 import 'package:voges_word/odt/odt_codec.dart';
 
@@ -24,6 +27,17 @@ LoadedDocument _decode(Uint8List bytes) {
 }
 
 DocxPackage _package(LoadedDocument loaded) => loaded.source! as DocxPackage;
+
+/// Each paragraph's list label as Word counts it, which every writer shows.
+Map<String, String?> _labels(LoadedDocument loaded) {
+  final counter = WordListCounter(DocxNumbering.of(loaded.source));
+  final labels = <String, String?>{};
+  for (final line in documentBlocks(loaded.delta).whereType<LineBlock>()) {
+    counter.count(line);
+    labels[line.plainText] = counter.textOf(line);
+  }
+  return labels;
+}
 
 String _plain(Delta delta) => [
   for (final operation in delta.toList())
@@ -779,6 +793,52 @@ void main() {
     final numbering = _package(loaded).text('word/numbering.xml')!;
     expect(numbering, contains('<w:lvl w:ilvl="1"><w:start w:val="3"/>'));
     expect(numbering, contains('<w:lvl w:ilvl="0"><w:start w:val="10"/>'));
+  });
+
+  test("a list header that holds items counts at its level's start", () {
+    final loaded = _decode(
+      odtFile(
+        automatic:
+            '<text:list-style style:name="L1">'
+            '<text:list-level-style-number text:level="1" style:num-suffix="." style:num-format="1"/>'
+            '<text:list-level-style-number text:level="2" style:num-suffix=")" style:num-format="a" text:display-levels="2"/>'
+            '<text:list-level-style-number text:level="3" style:num-suffix=")" style:num-format="i"/>'
+            '</text:list-style>',
+        body:
+            '<text:list text:style-name="L1">'
+            '<text:list-header><text:p>heading</text:p></text:list-header>'
+            '<text:list-item><text:p>one</text:p>'
+            '<text:list><text:list-header><text:p>header</text:p>'
+            '<text:list><text:list-item><text:p>below</text:p></text:list-item></text:list>'
+            '</text:list-header>'
+            '<text:list-item><text:p>after</text:p></text:list-item></text:list>'
+            '</text:list-item>'
+            '<text:list-item><text:p>two</text:p></text:list-item>'
+            '</text:list>'
+            '<text:list text:style-name="L1">'
+            '<text:list-header><text:p>holder</text:p>'
+            '<text:list><text:list-item><text:p>held</text:p></text:list-item></text:list>'
+            '</text:list-header>'
+            '<text:list-item text:start-value="5"><text:p>five</text:p></text:list-item>'
+            '<text:list-item><text:p>six</text:p></text:list-item>'
+            '</text:list>',
+      ),
+    );
+
+    // LibreOffice counts "header" and "holder" as 1, so "after" shows b) and
+    // "five" keeps its 5.
+    expect(_labels(loaded), {
+      'heading': null,
+      'one': '1.',
+      'header': null,
+      'below': 'i)',
+      'after': '1.b)',
+      'two': '2.',
+      'holder': null,
+      'held': '1.a)',
+      'five': '5.',
+      'six': '6.',
+    });
   });
 
   test('list levels keep what follows their number', () {

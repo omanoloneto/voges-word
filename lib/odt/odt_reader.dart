@@ -733,7 +733,13 @@ class OdtReader {
     final own = element.odfAttribute(_text, 'style-name');
     final inherited =
         parent != null && (own == null || own == parent.styleName);
-    final firstItem = element.odfChild(_text, 'list-item');
+    final listHeader = element.odfChild(_text, 'list-header');
+    // LibreOffice counts a header that holds items at its level's start, as
+    // Word counts the level for them, so the first item's start value then
+    // starts the numbering again at that item instead of starting the list.
+    final startItem = listHeader != null && _holdsItems(listHeader, level)
+        ? null
+        : element.odfChild(_text, 'list-item');
     var startsHere = false;
     _ListState state;
     if (inherited) {
@@ -751,7 +757,7 @@ class OdtReader {
       startsHere = continued == null;
       state = _ListState(
         styleName,
-        continued ?? _addList(_withStart(spec, level, _startOf(firstItem))),
+        continued ?? _addList(_withStart(spec, level, _startOf(startItem))),
         spec,
       );
     }
@@ -765,7 +771,7 @@ class OdtReader {
       final start = header ? null : _startOf(item);
       if (start != null &&
           level <= 8 &&
-          !(startsHere && identical(item, firstItem))) {
+          !(startsHere && identical(item, startItem))) {
         // The numbering starts again at this item.
         state = _ListState(
           state.styleName,
@@ -814,6 +820,21 @@ class OdtReader {
 
   static int? _startOf(XmlElement? item) =>
       int.tryParse(item?.odfAttribute(_text, 'start-value') ?? '');
+
+  /// Whether the lists in [header], a list header at [level], have items on
+  /// Word's levels below it.
+  static bool _holdsItems(XmlElement header, int level) =>
+      level < 8 &&
+      header.childElements.any(
+        (list) =>
+            list.isOdf(_text, 'list') &&
+            list.childElements.any(
+              (item) =>
+                  item.isOdf(_text, 'list-item') ||
+                  item.isOdf(_text, 'list-header') &&
+                      _holdsItems(item, level + 1),
+            ),
+      );
 
   static ListSpec _withStart(ListSpec spec, int level, int? start) =>
       start == null || level > 8 ? spec : _startingAt(spec, {level: start});
