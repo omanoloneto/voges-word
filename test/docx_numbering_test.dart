@@ -736,6 +736,27 @@ void main() {
     expect(line(saved.delta, 'deeper').list, 'ordered');
   });
 
+  test('a paragraph at Word\'s body text level opens in no list', () {
+    final docx = DocxCodec(TableStore());
+    final loaded = docx.read(
+      _package(
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/>'
+        '</w:numPr></w:pPr><w:r><w:t>one</w:t></w:r></w:p>'
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="9"/><w:numId w:val="1"/>'
+        '</w:numPr></w:pPr><w:r><w:t>body</w:t></w:r></w:p>',
+        _numbering(
+          '<w:abstractNum w:abstractNumId="0">${_level(0, 'decimal', '%1.')}'
+          '</w:abstractNum>${_list(1, 0)}',
+        ).toXmlString(),
+      ),
+    );
+    final body = documentBlocks(
+      loaded.delta,
+    ).whereType<LineBlock>().firstWhere((line) => line.plainText == 'body');
+    expect(body.list, isNull);
+    expect(body.attributes[HiddenAttributes.numbering], isNull);
+  });
+
   test('a numbering part of 20k lists sharing an abstract list of 20k levels '
       'saves quickly in every format', () {
     const count = 20000;

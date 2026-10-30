@@ -643,7 +643,8 @@ class _BlockReader {
     final level = c.styles.headingLevel(styleId);
     final header = level != null && level <= 6 ? level : null;
     final props = format.props;
-    final numId = props.numId;
+    // Word's body text level (9 and above) puts the paragraph in no list.
+    final numId = props.level > 8 ? null : props.numId;
     final list = numId == null || numId == 0
         ? null
         : c.numbering.kind(numId, props.level);
