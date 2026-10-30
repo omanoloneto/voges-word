@@ -129,7 +129,8 @@ class LineSpacing {
   final LineRule rule;
 }
 
-enum TabAlign { left, center, right, decimal }
+/// [clear] removes a tab stop the paragraph's style sets at that position.
+enum TabAlign { left, center, right, decimal, clear }
 
 enum TabLeader { none, dot, hyphen, underscore }
 
@@ -146,9 +147,12 @@ class TabStop {
   final TabLeader leader;
 }
 
-/// A paragraph's place in a list made with [DocumentSpec.addList].
+/// A paragraph's place in a list made with [DocumentSpec.addList];
+/// [ListRef.none] takes the paragraph out of the list its style gives.
 class ListRef {
   const ListRef(this.numId, [this.level = 0]);
+
+  static const none = ListRef(0);
 
   final int numId;
   final int level;
@@ -815,7 +819,7 @@ class DocxBuilder {
     _onOff(out, 'keepLines', format.keepLines);
     _onOff(out, 'pageBreakBefore', format.pageBreakBefore);
     final list = format.list;
-    if (list != null && list.numId >= 1 && list.numId <= spec.lists.length) {
+    if (list != null && list.numId >= 0 && list.numId <= spec.lists.length) {
       out.write(
         '<w:numPr><w:ilvl w:val="${list.level.clamp(0, 8)}"/>'
         '<w:numId w:val="${list.numId}"/></w:numPr>',

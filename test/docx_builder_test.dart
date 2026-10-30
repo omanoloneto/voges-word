@@ -416,4 +416,39 @@ void main() {
     expect(document, contains('<w:pgNumType w:start="1"/><w:cols'));
     expect(XmlDocument.parse(document), isNotNull);
   });
+
+  test('a paragraph can drop the list and tab stops its style gives', () {
+    final spec = DocumentSpec();
+    final list = spec.addList(ListSpec.numbered());
+    spec
+      ..styles.add(
+        StyleSpec.paragraph(
+          'Steps',
+          'Steps',
+          paragraph: ParagraphFormat(
+            list: ListRef(list),
+            tabs: const [TabStop(72)],
+          ),
+        ),
+      )
+      ..body.addAll(const [
+        ParagraphSpec([
+          TextSpec('numbered'),
+        ], format: ParagraphFormat(styleId: 'Steps')),
+        ParagraphSpec(
+          [TextSpec('plain')],
+          format: ParagraphFormat(
+            styleId: 'Steps',
+            list: ListRef.none,
+            tabs: [TabStop(72, align: TabAlign.clear)],
+          ),
+        ),
+      ]);
+    final package = DocxBuilder(spec).build();
+    final loaded = DocxCodec(TableStore()).read(package);
+
+    expect(package.text('word/document.xml'), contains('w:val="clear"'));
+    expect(_lineAttributes(loaded.delta, 'numbered')?['list'], 'ordered');
+    expect(_lineAttributes(loaded.delta, 'plain')?['list'], isNull);
+  });
 }
