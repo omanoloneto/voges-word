@@ -73,19 +73,31 @@ void main() {
 
   group('finding the apps', () {
     test('reads every package with one dpkg-query call', () async {
+      packages =
+          'voges-word\tinstalled\t1.1.0\nvoges-pencil\tinstalled\t0.9.0\n';
       final linux = platform();
 
       final copies = await linux.installed(vogesSuite, await linux.host());
 
       expect(runner.argvs, [
-        ['/usr/bin/dpkg-query', '-W', _showFormat, 'voges-word'],
+        [
+          '/usr/bin/dpkg-query',
+          '-W',
+          _showFormat,
+          'voges-word',
+          'voges-pencil',
+        ],
       ]);
-      final copy = copies.single;
-      expect(copy.app, same(vogesWord));
-      expect(copy.version, const ReleaseVersion(1, 1, 0));
-      expect(copy.location, _binary);
-      expect(copy.scope, InstallScope.user);
-      expect(copy.isHost, isTrue);
+      final [word, pencil] = copies;
+      expect(word.app, same(vogesWord));
+      expect(word.version, const ReleaseVersion(1, 1, 0));
+      expect(word.location, _binary);
+      expect(word.scope, InstallScope.user);
+      expect(word.isHost, isTrue);
+      expect(pencil.app, same(vogesPencil));
+      expect(pencil.version, const ReleaseVersion(0, 9, 0));
+      expect(pencil.location, '/usr/lib/voges-pencil/voges_pencil');
+      expect(pencil.isHost, isFalse);
     });
 
     test('counts only installed packages with strict versions', () async {

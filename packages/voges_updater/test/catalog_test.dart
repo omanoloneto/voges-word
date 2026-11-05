@@ -114,4 +114,21 @@ void main() {
       }
     }
   });
+
+  test('no two apps share what identifies an installed copy', () {
+    for (final identity in <String Function(SuiteApp app)>[
+      (app) => app.name,
+      (app) => app.repository,
+      (app) => app.macos.bundleId,
+      (app) => app.macos.bundleName,
+      (app) => app.windows.appId,
+      (app) => app.windows.executable.toLowerCase(),
+      (app) => app.linux.package,
+      (app) => app.linux.binary,
+      (app) => app.linux.launcher,
+    ]) {
+      final values = vogesSuite.map(identity).toList();
+      expect(values.toSet(), hasLength(values.length), reason: '$values');
+    }
+  });
 }
