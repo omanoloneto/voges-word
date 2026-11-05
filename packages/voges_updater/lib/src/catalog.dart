@@ -109,5 +109,27 @@ const vogesWord = SuiteApp(
   ),
 );
 
+const vogesPencil = SuiteApp(
+  name: 'Voges Pencil',
+  repository: 'omanoloneto/voges-pencil',
+  downloadPage: 'https://omanoloneto.pro/voges/pencil/',
+  macos: MacosTarget(
+    bundleId: 'com.omanoloneto.vogesPencil',
+    bundleName: 'Voges Pencil.app',
+    asset: 'VogesPencil-macos.dmg',
+  ),
+  windows: WindowsTarget(
+    appId: '{8A11B1A4-092A-4361-B2BE-A530D3024AD2}',
+    executable: 'voges_pencil.exe',
+    asset: 'VogesPencil-windows-setup.exe',
+  ),
+  linux: LinuxTarget(
+    package: 'voges-pencil',
+    binary: '/usr/lib/voges-pencil/voges_pencil',
+    launcher: '/usr/bin/voges-pencil',
+    asset: 'voges-pencil-linux-amd64.deb',
+  ),
+);
+
 /// Every app of the suite, in the order the updater lists them.
-const vogesSuite = [vogesWord];
+const vogesSuite = [vogesWord, vogesPencil];

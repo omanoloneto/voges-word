@@ -14,6 +14,12 @@ const _userKey =
 const _machineKey =
     r'HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall'
     r'\{237302D4-CF82-4A6D-B1A5-F3E8C553542A}_is1';
+const _pencilUserKey =
+    r'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+    r'\{8A11B1A4-092A-4361-B2BE-A530D3024AD2}_is1';
+const _pencilMachineKey =
+    r'HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+    r'\{8A11B1A4-092A-4361-B2BE-A530D3024AD2}_is1';
 
 List<String> _query(String key) => [
   _reg,
@@ -81,17 +87,28 @@ void main() {
   group('finding the apps', () {
     test('reads DisplayVersion of each hive with reg.exe', () async {
       registry[_userKey] = _found(_userKey, '1.1.0');
+      registry[_pencilMachineKey] = _found(_pencilMachineKey, '0.9.0');
       const host = UpdaterHost(app: vogesWord, reopenPath: r'C:\x.exe');
 
       final copies = await platform().installed(vogesSuite, host);
 
-      expect(runner.argvs, [_query(_userKey), _query(_machineKey)]);
-      final copy = copies.single;
-      expect(copy.app, same(vogesWord));
-      expect(copy.version, const ReleaseVersion(1, 1, 0));
-      expect(copy.scope, InstallScope.user);
-      expect(copy.location, _userKey);
-      expect(copy.isHost, isTrue);
+      expect(runner.argvs, [
+        _query(_userKey),
+        _query(_machineKey),
+        _query(_pencilUserKey),
+        _query(_pencilMachineKey),
+      ]);
+      final [word, pencil] = copies;
+      expect(word.app, same(vogesWord));
+      expect(word.version, const ReleaseVersion(1, 1, 0));
+      expect(word.scope, InstallScope.user);
+      expect(word.location, _userKey);
+      expect(word.isHost, isTrue);
+      expect(pencil.app, same(vogesPencil));
+      expect(pencil.version, const ReleaseVersion(0, 9, 0));
+      expect(pencil.scope, InstallScope.allUsers);
+      expect(pencil.location, _pencilMachineKey);
+      expect(pencil.isHost, isFalse);
     });
 
     test('lists an install in each hive', () async {
