@@ -30,8 +30,9 @@ The signature covers `voges-release v1`, the repository and the tag, followed by
 
 1. Add a `SuiteApp` to `vogesSuite` in `lib/src/catalog.dart`.
 2. Give its release workflow the same shape as Voges Word's: fixed asset names, `SHA256SUMS.txt`, a draft release signed with `tool/release_signing.dart`, and `--dart-define=VOGES_VERSION=<version>` in every build.
-3. In the app: call `runUpdater` from `main` when `UpdaterRequest.isUpdaterLaunch` is true, show `UpdateStatusChip`, register `UpdaterLocalizations.delegate`, and add the `voges/updater` channel to the macOS `AppDelegate` (see Voges Word's).
-4. On macOS, run `packaging/macos/embed_updater.sh` after the build, before making the `.dmg`.
+3. An app from another repository depends on this package through git (`url: https://github.com/omanoloneto/voges-word.git`, `path: packages/voges_updater`, `ref: <commit>`), commits its `pubspec.lock` and gets its packages with `flutter pub get --enforce-lockfile`, so the release is built with the locked commit. Sign it from this clone with `dart run tool/release_signing.dart publish <owner/repo> <vX.Y.Z> --clone <path to the app's clone>`: the tag must be in that clone and match GitHub, and the `voges_updater` commit that its `pubspec.lock` pins must have the same `lib/src/release_trust.dart` as this checkout (fetch voges-word first when that commit is newer).
+4. In the app: call `runUpdater` from `main` when `UpdaterRequest.isUpdaterLaunch` is true, show `UpdateStatusChip`, register `UpdaterLocalizations.delegate`, and add the `voges/updater` channel to the macOS `AppDelegate` (see Voges Word's).
+5. On macOS, run `packaging/macos/embed_updater.sh` after the build, before making the `.dmg`.
 
 An app learns about a new suite app only once its own embedded updater is that new.
 
