@@ -3,12 +3,19 @@
 ///
 ///     dart run tool/release_signing.dart init
 ///     dart run tool/release_signing.dart public-key
-///     dart run tool/release_signing.dart publish <owner/repo> <vX.Y.Z> [--dry-run]
+///     dart run tool/release_signing.dart publish <owner/repo> <vX.Y.Z> \
+///         [--clone <path>] [--dry-run]
 ///
 /// `init` creates the key once. `public-key` prints the public key that
 /// `releaseSigningKeys` must list. `publish` signs the checksums of a draft
 /// that the release workflow created, uploads the signature and publishes
 /// the draft.
+///
+/// The release tag must be in a local clone of the app: this one for
+/// omanoloneto/voges-word, which hosts this package, and the one given with
+/// `--clone` for the other apps. Those depend on this package through git,
+/// and the commit that their pubspec.lock pins at the tag must have the
+/// same `lib/src/release_trust.dart` as this checkout.
 library;
 
 import 'dart:convert';
@@ -95,12 +102,22 @@ final class ReleaseSigning {
   /// Who uploads every file of a release made by the release workflow.
   static const workflowBot = 'github-actions[bot]';
 
+  /// The repository that hosts this package, and the package's folder in
+  /// it. The other suite apps depend on the package through git.
+  static const packageRepository = 'omanoloneto/voges-word';
+  static const packagePath = 'packages/voges_updater';
+
   static const usage =
       'Usage:\n'
       '  dart run tool/release_signing.dart init\n'
       '  dart run tool/release_signing.dart public-key\n'
       '  dart run tool/release_signing.dart publish <owner/repo> <vX.Y.Z> '
-      '[--dry-run]';
+      '[--clone <path>] [--dry-run]\n'
+      '\n'
+      '--clone is the local clone of an app that is not in $packageRepository.';
+
+  static const _packageUrl = 'https://github.com/$packageRepository';
+  static final _commitSha = RegExp(r'^[0-9a-f]{40}$');
 
   /// errSecItemNotFound, as `security` reports it.
   static const _itemNotFound = 44;
@@ -114,19 +131,49 @@ final class ReleaseSigning {
           await init();
         case ['public-key']:
           out.writeln(await publicKeyOf(_seedOf(await _readKey())));
-        case ['publish', final repository, final tag]:
-          await publish(repository, tag);
-        case ['publish', final repository, final tag, '--dry-run']:
-          await publish(repository, tag, dryRun: true);
+        case ['publish', final repository, final tag, ...final flags]:
+          final options = _publishOptions(flags);
+          if (options == null) return _usage();
+          await publish(
+            repository,
+            tag,
+            clone: options.clone,
+            dryRun: options.dryRun,
+          );
         default:
-          err.writeln(usage);
-          return 64;
+          return _usage();
       }
       return 0;
     } on _Refused catch (refusal) {
       err.writeln(refusal.message);
       return 1;
     }
+  }
+
+  int _usage() {
+    err.writeln(usage);
+    return 64;
+  }
+
+  /// The flags of `publish` after the repository and the tag, in any order;
+  /// null when they are not `[--clone <path>] [--dry-run]`.
+  static ({String? clone, bool dryRun})? _publishOptions(List<String> flags) {
+    String? clone;
+    var dryRun = false;
+    for (var i = 0; i < flags.length; i++) {
+      final next = i + 1 < flags.length ? flags[i + 1] : '';
+      switch (flags[i]) {
+        case '--dry-run' when !dryRun:
+          dryRun = true;
+        case '--clone'
+            when clone == null && next.isNotEmpty && !next.startsWith('-'):
+          clone = next;
+          i++;
+        default:
+          return null;
+      }
+    }
+    return (clone: clone, dryRun: dryRun);
   }
 
   /// Creates the signing key in the login Keychain and prints its public
@@ -195,16 +242,18 @@ final class ReleaseSigning {
   }
 
   /// Signs the checksums of the draft [tag] of [repository] and, unless
-  /// [dryRun], uploads the signature and publishes the draft.
+  /// [dryRun], uploads the signature and publishes the draft. [clone] is
+  /// the local clone of an app that is not in [packageRepository].
   ///
   /// A stolen GitHub token could replace the draft's files before they are
   /// signed, so only files that the release workflow built from the owner's
-  /// tag are signed: the bot uploaded them, the tag is the same here and on
-  /// GitHub, and GitHub attests that this workflow made SHA256SUMS.txt from
-  /// that commit.
+  /// tag are signed: the bot uploaded them, the tag is the same in the
+  /// owner's clone and on GitHub, and GitHub attests that this workflow made
+  /// SHA256SUMS.txt from that commit.
   Future<void> publish(
     String repository,
     String tag, {
+    String? clone,
     bool dryRun = false,
   }) async {
     final gh =
@@ -215,6 +264,24 @@ final class ReleaseSigning {
     final version =
         ReleaseVersion.tryParseTag(tag) ??
         _refuse('$tag is not a release tag such as v1.2.0.');
+    final String? appClone;
+    if (repository == packageRepository) {
+      if (clone != null) {
+        _refuse(
+          '$repository hosts this package: publish its tags from this '
+          'clone, without --clone.',
+        );
+      }
+      appClone = null;
+    } else {
+      appClone = await _gitClone(
+        clone ??
+            _refuse(
+              '$repository is not in this clone: pass its local clone with '
+              '--clone <path>.',
+            ),
+      );
+    }
     final installers = {app.macos.asset, app.windows.asset, app.linux.asset};
 
     final release = _releaseOf(
@@ -247,8 +314,12 @@ final class ReleaseSigning {
       await _gh(gh, ['api', 'repos/$repository/releases/${release.id}']),
       built.toSet(),
     );
-    final commit = await _tagCommit(gh, repository, tag);
-    await _sameTrustedKeys(tag);
+    final commit = await _tagCommit(gh, repository, tag, clone: appClone);
+    if (appClone == null) {
+      await _sameTrustedKeys(tag);
+    } else {
+      await _sameTrustedKeysAsLocked(repository, tag, appClone);
+    }
 
     final folder = await Directory.systemTemp.createTemp('voges-release-');
     try {
@@ -355,19 +426,41 @@ final class ReleaseSigning {
     }
   }
 
-  /// The commit of [tag], which must be the same in this clone and on
-  /// GitHub: a tag moved on GitHub would point the build somewhere else.
-  Future<String> _tagCommit(String gh, String repository, String tag) async {
+  /// [path] made absolute, once git finds a repository there.
+  Future<String> _gitClone(String path) async {
+    final clone = p.normalize(p.absolute(path));
+    final result = await runner.run(git, [
+      '-C',
+      clone,
+      'rev-parse',
+      '--git-dir',
+    ]);
+    if (result.exitCode != 0) _refuse('$clone is not a git clone.');
+    return clone;
+  }
+
+  /// The commit of [tag], which must be the same in the owner's clone (this
+  /// one, or [clone]) and on GitHub: a tag moved on GitHub would point the
+  /// build somewhere else.
+  Future<String> _tagCommit(
+    String gh,
+    String repository,
+    String tag, {
+    String? clone,
+  }) async {
+    final (inClone, here) = clone == null
+        ? ('in this clone', 'here')
+        : ('in $clone', 'in $clone');
     final local = await runner.run(git, [
       '-C',
-      checkout,
+      clone ?? checkout,
       'rev-parse',
       '--verify',
       '$tag^{commit}',
     ]);
     if (local.exitCode != 0) {
       _refuse(
-        '$tag is not in this clone. Tag the commit you reviewed here and '
+        '$tag is not $inClone. Tag the commit you reviewed $here and '
         'push that tag: fetching it would trust the copy on GitHub.',
       );
     }
@@ -380,7 +473,7 @@ final class ReleaseSigning {
     ])).trim();
     if (remote != commit) {
       _refuse(
-        '$tag is $commit here but $remote on GitHub. Nothing was signed.',
+        '$tag is $commit $here but $remote on GitHub. Nothing was signed.',
       );
     }
     return commit;
@@ -389,32 +482,157 @@ final class ReleaseSigning {
   /// The release must trust the key it is signed with: the apps built from
   /// [tag] check updates against the releaseSigningKeys of that commit.
   Future<void> _sameTrustedKeys(String tag) async {
-    final atTag = await runner.run(git, [
+    switch (await _sameTrustFileAs(tag)) {
+      case null:
+        _refuse('$tag has no lib/src/release_trust.dart in this package.');
+      case false:
+        _refuse(
+          'lib/src/release_trust.dart here differs from $tag. Check out $tag '
+          'and run publish from there.',
+        );
+      case true:
+    }
+  }
+
+  /// [_sameTrustedKeys] for an app of another repository: its apps check
+  /// updates against the releaseSigningKeys of the voges_updater commit
+  /// that the pubspec.lock of [tag] pins.
+  Future<void> _sameTrustedKeysAsLocked(
+    String repository,
+    String tag,
+    String clone,
+  ) async {
+    final updater = await _lockedUpdater(repository, tag, clone);
+    final built = '$updater, the voges_updater of $repository $tag';
+    switch (await _sameTrustFileAs(updater)) {
+      case null:
+        _refuse(
+          'This clone has no lib/src/release_trust.dart at $built. Fetch '
+          'voges-word here and run publish again.',
+        );
+      case false:
+        _refuse(
+          'lib/src/release_trust.dart here differs from the one at $built: '
+          'that app trusts other keys. Update voges_updater in $repository '
+          'or run publish from a checkout with the same keys.',
+        );
+      case true:
+    }
+  }
+
+  /// Whether lib/src/release_trust.dart of this package at [revision] is
+  /// the one here; null when this clone has no such file at [revision].
+  Future<bool?> _sameTrustFileAs(String revision) async {
+    final exists = await runner.run(git, [
       '-C',
       checkout,
       'cat-file',
       '-e',
-      '$tag:./lib/src/release_trust.dart',
+      '$revision:./lib/src/release_trust.dart',
     ]);
-    if (atTag.exitCode != 0) {
-      _refuse('$tag has no lib/src/release_trust.dart in this package.');
-    }
+    if (exists.exitCode != 0) return null;
     final diff = await runner.run(git, [
       '-C',
       checkout,
       'diff',
       '--quiet',
-      tag,
+      revision,
       '--',
       'lib/src/release_trust.dart',
     ]);
-    if (diff.exitCode != 0) {
+    return diff.exitCode == 0;
+  }
+
+  /// The commit of this package that the pubspec.lock of [tag] in [clone]
+  /// pins: a git dependency on [packagePath] of [packageRepository].
+  Future<String> _lockedUpdater(
+    String repository,
+    String tag,
+    String clone,
+  ) async {
+    final result = await runner.run(git, [
+      '-C',
+      clone,
+      'show',
+      '$tag:pubspec.lock',
+    ]);
+    if (result.exitCode != 0) {
       _refuse(
-        'lib/src/release_trust.dart here differs from $tag. Check out $tag '
-        'and run publish from there.',
+        '$tag has no pubspec.lock in $clone, so the voges_updater it is '
+        'built with is unknown.',
       );
     }
+    final lock =
+        _readLock('${result.stdout}') ??
+        _refuse(
+          'The pubspec.lock of $repository $tag is not in the shape pub '
+          'writes.',
+        );
+    if (lock case {
+      'packages': {'voges_updater': final Map<String, Object> updater},
+    }) {
+      final locks = '$repository $tag locks voges_updater';
+      final source = updater['source'];
+      if (source != 'git') _refuse('$locks from $source, not from git.');
+      final description = updater['description'];
+      final fields = description is Map<String, Object>
+          ? description
+          : const <String, Object>{};
+      final url = fields['url'];
+      if (url != _packageUrl && url != '$_packageUrl.git') {
+        _refuse('$locks from $url, not from $_packageUrl.git.');
+      }
+      final path = fields['path'];
+      if (path != packagePath) {
+        _refuse('$locks from the folder $path, not $packagePath.');
+      }
+      final commit = fields['resolved-ref'];
+      if (commit is! String || !_commitSha.hasMatch(commit)) {
+        _refuse('$locks at $commit, which is not a full commit SHA.');
+      }
+      return commit;
+    }
+    _refuse(
+      'The pubspec.lock of $repository $tag does not list voges_updater.',
+    );
   }
+
+  /// A pubspec.lock as nested maps of strings. pub writes it in block
+  /// style, two spaces per level and one key per line, so it is read
+  /// without a YAML parser; null when a line breaks that shape or a key
+  /// repeats.
+  static Map<String, Object>? _readLock(String text) {
+    final root = <String, Object>{};
+    final open = [root];
+    for (final line in const LineSplitter().convert(text)) {
+      final content = line.trimLeft();
+      if (content.isEmpty || content.startsWith('#')) continue;
+      final indent = line.length - content.length;
+      final colon = content.indexOf(':');
+      if (indent.isOdd || indent ~/ 2 >= open.length || colon < 1) {
+        return null;
+      }
+      open.length = indent ~/ 2 + 1;
+      final key = content.substring(0, colon);
+      final value = content.substring(colon + 1).trim();
+      if (open.last.containsKey(key)) return null;
+      if (value.isEmpty) {
+        final child = <String, Object>{};
+        open.last[key] = child;
+        open.add(child);
+      } else {
+        open.last[key] = _unquote(value);
+      }
+    }
+    return root;
+  }
+
+  /// A scalar of pubspec.lock without its double quotes. Escapes are left
+  /// as they are: none of the values checked here has them.
+  static String _unquote(String value) =>
+      value.length > 1 && value.startsWith('"') && value.endsWith('"')
+      ? value.substring(1, value.length - 1)
+      : value;
 
   static void _uploadedByWorkflow(String json, Set<String> built) {
     final Object? release;
