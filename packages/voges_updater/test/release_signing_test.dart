@@ -14,7 +14,7 @@ const _gh = '/opt/fake/bin/gh';
 const _security = '/usr/bin/security';
 const _git = '/usr/bin/git';
 const _checkout = '/clone/packages/voges_updater';
-const _pencilClone = '/clones/voges-pencil';
+final _pencilClone = _absolute('/clones/voges-pencil');
 const _bot = 'github-actions[bot]';
 const _commit = '0123456789abcdef0123456789abcdef01234567';
 const _updaterCommit = 'fedcba9876543210fedcba9876543210fedcba98';
@@ -23,6 +23,9 @@ const _version = ReleaseVersion(1, 2, 0);
 final _repository = vogesWord.repository;
 final _installers = _installersOf(vogesWord);
 final _seed = Uint8List.fromList(List.generate(32, (i) => i * 7 % 256));
+
+/// [path] as the tool resolves --clone: on Windows it gains a drive letter.
+String _absolute(String path) => p.normalize(p.absolute(path));
 
 List<String> _installersOf(SuiteApp app) => [
   app.macos.asset,
@@ -755,13 +758,11 @@ void main() {
     });
 
     test('refuses a folder that is not a git clone', () async {
-      expect(
-        await run(['publish', pencil, _tag, '--clone', '/clones/nothing']),
-        1,
-      );
-      expect('$err', contains('/clones/nothing is not a git clone'));
+      final nothing = _absolute('/clones/nothing');
+      expect(await run(['publish', pencil, _tag, '--clone', nothing]), 1);
+      expect('$err', contains('$nothing is not a git clone'));
       expect(system.calls, [
-        [_git, '-C', '/clones/nothing', 'rev-parse', '--git-dir'],
+        [_git, '-C', nothing, 'rev-parse', '--git-dir'],
       ]);
     });
 
