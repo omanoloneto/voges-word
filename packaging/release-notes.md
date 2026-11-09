@@ -2,15 +2,8 @@ Voges Word: a lightweight document editor with .docx support, for macOS, Windows
 
 ## What's new
 
-- Opens and saves OpenDocument Text (`.odt`), Rich Text Format (`.rtf`), web pages (`.html`, `.htm`, `.xhtml`), Markdown (`.md`) and Word documents with macros (`.docm`), besides `.docx` and `.txt`. Macros are kept, but never run.
-- Opens Word 97–2003 documents (`.doc`). Saving one creates a `.docx` copy and leaves the original untouched.
-- Templates (`.dotx`, `.dotm`, `.dot` and `.ott`) open as new, untitled documents.
-- **Save as** still creates a `.docx`; the new **Other formats**, next to it in the File menu, saves as `.odt`, `.rtf`, `.html`, `.md` or `.txt`. The status bar says when the document's format keeps less than a `.docx` or saves differently.
-- A file opens by its content, so one with the wrong extension still opens.
-- Share can also send the document in the format of its file.
-- Voges Word shows up in "Open with" for all these formats, without becoming the default app.
-- Files open in the background, with a progress window you can cancel, so a slow file never freezes the app.
-- Fixes to editing: Enter or a paste over a selection in a centered or numbered heading, and Copy, Cut and Indent after splitting or joining paragraphs, now act on the right text.
+- Voges Updater now also offers the Voges apps you don't have yet, below the updates. They are never ticked for you: pick the ones you want, or follow the link to the app's page first.
+- Apps that join the suite from now on show up there without a new version of Voges Word. The updater reads them from a list on the Voges website, signed with the same key as the releases.
 
 ## Install
 

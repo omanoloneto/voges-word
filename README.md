@@ -12,7 +12,7 @@ The installers are in the [latest release](https://github.com/omanoloneto/voges-
 
 ### Updates
 
-From version 1.2.0 on, Voges Word checks for a new version every time it opens and says in the status bar whether it is up to date. When there is an update, clicking it asks about unsaved work, closes the app and opens **Voges Updater**, which lists every installed app of the Voges suite that has an update; update all of them or only some. When it finishes, Voges Word opens again. Earlier versions don't have the updater: install 1.2.0 by hand once.
+From version 1.2.0 on, Voges Word checks for a new version every time it opens and says in the status bar whether it is up to date. When there is an update, clicking it asks about unsaved work, closes the app and opens **Voges Updater**, which lists every installed app of the Voges suite that has an update; update all of them or only some. From 1.4.0 on it also offers the suite apps that are not installed yet. When it finishes, Voges Word opens again. Earlier versions don't have the updater: install 1.2.0 by hand once.
 
 - The check reads the number of the latest release from github.com; nothing about you or your documents is sent.
 - Every update is verified before it is installed: its files must match the `SHA256SUMS.txt` of the release, and that file must carry the Ed25519 signature of the project's key, which is built into the app. A download that doesn't match is never installed.
