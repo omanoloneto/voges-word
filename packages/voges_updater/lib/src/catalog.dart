@@ -131,5 +131,27 @@ const vogesPencil = SuiteApp(
   ),
 );
 
+const vogesTables = SuiteApp(
+  name: 'Voges Tables',
+  repository: 'omanoloneto/voges-tables',
+  downloadPage: 'https://omanoloneto.pro/voges/tables/',
+  macos: MacosTarget(
+    bundleId: 'com.omanoloneto.vogesTables',
+    bundleName: 'Voges Tables.app',
+    asset: 'VogesTables-macos.dmg',
+  ),
+  windows: WindowsTarget(
+    appId: '{1A75A94C-0C6B-4F0F-8F00-6056405F6F37}',
+    executable: 'voges_tables.exe',
+    asset: 'VogesTables-windows-setup.exe',
+  ),
+  linux: LinuxTarget(
+    package: 'voges-tables',
+    binary: '/usr/lib/voges-tables/voges_tables',
+    launcher: '/usr/bin/voges-tables',
+    asset: 'voges-tables-linux-amd64.deb',
+  ),
+);
+
 /// Every app of the suite, in the order the updater lists them.
-const vogesSuite = [vogesWord, vogesPencil];
+const vogesSuite = [vogesWord, vogesPencil, vogesTables];
