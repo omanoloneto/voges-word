@@ -28,8 +28,9 @@ final class SuiteApp {
   final WindowsTarget windows;
   final LinuxTarget linux;
 
-  /// "Voges" and one to three capitalised words, such as `Voges Tables`.
-  static final _conventionalName = RegExp(r'^Voges( [A-Z][a-z]+){1,3}$');
+  /// "Voges" and one to three capitalised words, such as `Voges Tables`,
+  /// short enough for the file names made from them.
+  static final _conventionalName = RegExp(r'^Voges( [A-Z][a-z]{1,20}){1,3}$');
 
   /// An Inno Setup AppId: an uppercase GUID in braces.
   static final _appId = RegExp(

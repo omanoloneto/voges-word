@@ -834,17 +834,62 @@ void main() {
       expect(h.downloader.calls, isEmpty);
     });
 
-    sessionTest('is offered when the check of an installed app failed', (
-      async,
-    ) {
+    sessionTest('waits while what is installed could not be checked, so the '
+        'check can be tried again', (async) {
       final h = UiHarness(latest: {vogesSheets: '1.0.1'});
       h.session.start();
       async.flushMicrotasks();
 
+      expect(h.session.stage, UpdaterStage.offline);
+      expect(h.session.rows.map((row) => row.app), [vogesWord]);
+      expect(h.platform.installableAsked, isEmpty);
+
+      h.feed.versions[vogesWord.repository] = version('1.1.0');
+      h.session.retry();
+      async.flushMicrotasks();
+
       expect(h.session.stage, UpdaterStage.choosing);
-      expect(h.row(vogesWord).checkFailed, isTrue);
-      expect(h.row(vogesSheets).selectable, isTrue);
-      expect(h.session.selectedCount, 0);
+      expect(h.session.rows.map((row) => row.app), [vogesSheets]);
+    });
+
+    sessionTest('is offered next to an update even when another check '
+        'failed', (async) {
+      const vogesNotes = SuiteApp(
+        name: 'Voges Notes',
+        repository: 'omanoloneto/voges-notes',
+        downloadPage: 'https://omanoloneto.pro/voges/notes/',
+        macos: MacosTarget(
+          bundleId: 'com.omanoloneto.vogesNotes',
+          bundleName: 'Voges Notes.app',
+          asset: 'VogesNotes-macos.dmg',
+        ),
+        windows: WindowsTarget(
+          appId: '{00000000-0000-0000-0000-000000000002}',
+          executable: 'voges_notes.exe',
+          asset: 'VogesNotes-windows-setup.exe',
+        ),
+        linux: LinuxTarget(
+          package: 'voges-notes',
+          binary: '/usr/lib/voges-notes/voges_notes',
+          launcher: '/usr/bin/voges-notes',
+          asset: 'voges-notes-linux-amd64.deb',
+        ),
+      );
+      final h = UiHarness(
+        copies: [
+          installedCopy(vogesWord, '1.1.0'),
+          installedCopy(vogesNotes, '1.0.0'),
+        ],
+        latest: {vogesWord: '1.2.0', vogesSheets: '1.0.1'},
+        suite: const FixedSuite([vogesWord, vogesNotes, vogesSheets]),
+      );
+      h.session.start();
+      async.flushMicrotasks();
+
+      expect(h.session.stage, UpdaterStage.choosing);
+      expect(h.row(vogesNotes).checkFailed, isTrue);
+      expect(h.row(vogesWord).selectable, isTrue);
+      expect(h.row(vogesSheets).isNew, isTrue);
     });
 
     sessionTest('is installed without waiting for apps to close, and the '
@@ -1004,6 +1049,7 @@ void main() {
       async.flushMicrotasks();
       expect(h.session.stage, UpdaterStage.offline);
 
+      h.feed.versions[vogesWord.repository] = version('1.1.0');
       h.feed.versions[vogesSheets.repository] = version('1.0.1');
       h.session.retry();
       async.flushMicrotasks();

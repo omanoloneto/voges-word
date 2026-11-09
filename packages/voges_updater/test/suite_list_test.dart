@@ -88,6 +88,7 @@ void main() {
       'a trailing newline': 'Voges Word\n',
       'a letter with an accent': 'Voges Café',
       'four words': 'Voges One Two Three Four',
+      'a word too long for a file name': 'Voges A${'b' * 21}',
       'nothing': '',
     };
     for (final MapEntry(key: reason, value: name) in badNames.entries) {
@@ -164,6 +165,9 @@ void main() {
       'a negative serial': _list(serial: -1),
       'a fractional serial': _list(serial: 1.5),
       'the serial as text': _list(serial: '1'),
+      'a serial that nothing could come after': _list(
+        serial: SuiteList.maxSerial + 1,
+      ),
       'apps that are not a list': _list(apps: {'name': 'Voges Slides'}),
       'no app': _list(apps: <Object?>[]),
       'more apps than the suite can have': _list(
@@ -229,6 +233,17 @@ void main() {
       ]) {
         expect(() => SuiteList.parse(bytes), throwsFormatException);
       }
+    });
+
+    test('accepts the longest word and the last serial', () {
+      final name = 'Voges A${'b' * 20}';
+      final list = SuiteList.parse(
+        _json(
+          _list(serial: SuiteList.maxSerial, apps: [_entry(name, _slidesId)]),
+        ),
+      );
+      expect(list.serial, SuiteList.maxSerial);
+      expect(list.apps.single.name, name);
     });
 
     test('accepts exactly as many apps as the limit', () {

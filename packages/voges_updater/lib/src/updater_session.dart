@@ -255,7 +255,13 @@ class UpdaterSession extends ChangeNotifier {
         rows.add(UpdateRow._(copy, version));
       }
     }
-    final unchecked = rows.any((row) => row.checkFailed);
+    if (rows.any((row) => row.checkFailed) &&
+        !rows.any((row) => row.selectable)) {
+      // what is installed comes first: new apps wait for a check that works
+      _rows = List.unmodifiable(rows);
+      _enter(UpdaterStage.offline);
+      return;
+    }
     for (final app in catalog) {
       final version = latest[app.repository];
       if (version == null ||
@@ -266,13 +272,11 @@ class UpdaterSession extends ChangeNotifier {
       if (place != null) rows.add(UpdateRow._(place, version));
     }
     _rows = List.unmodifiable(rows);
-    if (_rows.any((row) => row.selectable)) {
-      _enter(UpdaterStage.choosing);
-    } else if (unchecked) {
-      _enter(UpdaterStage.offline);
-    } else {
-      _enter(UpdaterStage.upToDate);
-    }
+    _enter(
+      _rows.any((row) => row.selectable)
+          ? UpdaterStage.choosing
+          : UpdaterStage.upToDate,
+    );
   }
 
   /// Where [app] would be installed; null when it can't be, which only

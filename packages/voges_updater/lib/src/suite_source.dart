@@ -32,9 +32,9 @@ final class FixedSuite implements SuiteSource {
 /// after it.
 ///
 /// A list is used only with a valid signature of the release key, and never
-/// when this computer has already seen a newer one. Without one that
-/// passes, the suite is the one of the build. Only called while holding the
-/// updater lock, which also guards the copy kept in [cache].
+/// when this computer remembers a newer one. Without one that passes, the
+/// suite is the one of the build. Only called while holding the updater
+/// lock, which also guards the copy kept in [cache].
 final class PublishedSuite implements SuiteSource {
   PublishedSuite({
     required this.verifier,
@@ -43,6 +43,7 @@ final class PublishedSuite implements SuiteSource {
     this.builtIn = vogesSuite,
     this.connectTimeout = const Duration(seconds: 5),
     this.timeout = const Duration(seconds: 8),
+    this.diskTimeout = const Duration(seconds: 2),
   }) : url = url ?? Uri.parse(address);
 
   /// The list of the website, or of the loopback origin in a test build.
@@ -71,6 +72,10 @@ final class PublishedSuite implements SuiteSource {
 
   final Duration connectTimeout;
 
+  /// The longest reading or writing the kept list may take: what sits in
+  /// its place may not be a file, and would never answer.
+  final Duration diskTimeout;
+
   /// Where the website publishes the list, next to its `.sig`.
   static const address = 'https://omanoloneto.pro/voges/suite.json';
 
@@ -80,8 +85,11 @@ final class PublishedSuite implements SuiteSource {
   static const listLimit = 64 * 1024;
   static const signatureLimit = 1024;
 
-  static const _listFile = 'suite.json';
-  static const _signatureFile = 'suite.json.sig';
+  /// The kept list: the signature in its first line and the list after it,
+  /// in one file so that neither is ever there without the other.
+  static const _keptFile = 'suite.signed';
+
+  static const _newline = 0x0A;
 
   @override
   Future<List<SuiteApp>> apps() async {
@@ -95,13 +103,13 @@ final class PublishedSuite implements SuiteSource {
     }
     final kept = await _accept(await _readKept(folder));
     final published = await _accept(await _download());
-    if (published != null && published.serial >= (kept?.serial ?? 0)) {
-      if (published.serial > (kept?.serial ?? 0)) {
-        await _keep(folder, published);
-      }
-      return published.apps;
+    // only a newer list takes the place of the kept one, so two lists
+    // signed with the same serial can't take turns
+    if (published == null || published.serial <= (kept?.serial ?? 0)) {
+      return kept?.apps ?? builtIn;
     }
-    return kept?.apps ?? builtIn;
+    await _keep(folder, published);
+    return published.apps;
   }
 
   /// The suite that [files] stand for; null unless they are a signed list
@@ -172,35 +180,48 @@ final class PublishedSuite implements SuiteSource {
 
   Future<_Files?> _readKept(Directory folder) async {
     try {
-      final list = File(p.join(folder.path, _listFile));
-      final signature = File(p.join(folder.path, _signatureFile));
-      if (await list.length() > listLimit ||
-          await signature.length() > signatureLimit) {
-        return null;
-      }
-      return _Files(await list.readAsBytes(), await signature.readAsBytes());
-    } on FileSystemException {
+      return await _read(
+        File(p.join(folder.path, _keptFile)),
+      ).timeout(diskTimeout);
+    } on Exception {
+      // missing, unreadable or silent, it is a list never seen
       return null;
     }
+  }
+
+  Future<_Files?> _read(File file) async {
+    if (await file.length() > signatureLimit + listLimit) return null;
+    final bytes = await file.readAsBytes();
+    final end = bytes.indexOf(_newline);
+    if (end < 0) return null;
+    return _Files(
+      Uint8List.sublistView(bytes, end + 1),
+      Uint8List.sublistView(bytes, 0, end),
+    );
   }
 
   /// Keeps [accepted] as the newest list seen. A copy that cannot be
   /// written only loses that memory, so the failure is not reported.
   Future<void> _keep(Directory folder, _Accepted accepted) async {
+    final _Files(:list, :signature) = accepted.files;
+    final bytes = Uint8List.fromList([
+      ...signature,
+      if (signature.last != _newline) _newline,
+      ...list,
+    ]);
     try {
-      await folder.create(recursive: true);
-      await _replace(folder, _signatureFile, accepted.files.signature);
-      await _replace(folder, _listFile, accepted.files.list);
-    } on FileSystemException {
+      await _replace(folder, bytes).timeout(diskTimeout);
+    } on Exception {
       // nothing else to do
     }
   }
 
   /// Writes through a temporary file, so a crash never leaves half a file.
-  Future<void> _replace(Directory folder, String name, Uint8List bytes) async {
-    final temporary = File(p.join(folder.path, '$name.new'));
+  Future<void> _replace(Directory folder, Uint8List bytes) async {
+    await folder.create(recursive: true);
+    final temporary = File(p.join(folder.path, '$_keptFile.new'));
     await temporary.writeAsBytes(bytes, flush: true);
-    await temporary.rename(p.join(folder.path, name));
+    await temporary.rename(p.join(folder.path, _keptFile));
   }
 }
 

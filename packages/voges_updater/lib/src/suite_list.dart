@@ -26,6 +26,9 @@ final class SuiteList {
   /// More apps than this is not the Voges suite.
   static const maxApps = 32;
 
+  /// A serial past this is a mistake: no list could come after it.
+  static const maxSerial = 1000000;
+
   /// Reads the bytes of a list. Any key, type or value out of place throws
   /// a [FormatException]: a list is taken whole or not at all.
   factory SuiteList.parse(Uint8List bytes) {
@@ -38,7 +41,7 @@ final class SuiteList {
       throw FormatException('Unknown format', root['format']);
     }
     final serial = root['serial'];
-    if (serial is! int || serial < 1) {
+    if (serial is! int || serial < 1 || serial > maxSerial) {
       throw FormatException('Not a serial', serial);
     }
     final entries = root['apps'];

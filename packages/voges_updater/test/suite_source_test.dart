@@ -57,21 +57,26 @@ void main() {
     route('.sig'): bytes(signed.signature),
   };
 
-  File kept(String name) => File(p.join(cache.path, name));
+  File kept() => File(p.join(cache.path, 'suite.signed'));
+
+  /// The one file a list is kept in: its signature line, then its bytes.
+  List<int> together(_Signed signed) => [...signed.signature, ...signed.list];
 
   void keep(_Signed signed) {
     cache.createSync(recursive: true);
-    kept('suite.json').writeAsBytesSync(signed.list);
-    kept('suite.json.sig').writeAsBytesSync(signed.signature);
+    kept().writeAsBytesSync(together(signed));
   }
 
-  PublishedSuite suite({Duration timeout = const Duration(seconds: 8)}) =>
-      PublishedSuite(
-        verifier: ReleaseVerifier(trustedKeys: [key]),
-        cache: () => cache,
-        url: server.origin.resolve('/voges/suite.json'),
-        timeout: timeout,
-      );
+  PublishedSuite suite({
+    Duration timeout = const Duration(seconds: 8),
+    Duration diskTimeout = const Duration(seconds: 2),
+  }) => PublishedSuite(
+    verifier: ReleaseVerifier(trustedKeys: [key]),
+    cache: () => cache,
+    url: server.origin.resolve('/voges/suite.json'),
+    timeout: timeout,
+    diskTimeout: diskTimeout,
+  );
 
   Future<List<String>> names() async => _names(await suite().apps());
 
@@ -89,9 +94,19 @@ void main() {
       final signed = await _sign(2, [...vogesSuite, _slides]);
       publish(signed);
       await suite().apps();
-      expect(kept('suite.json').readAsBytesSync(), signed.list);
-      expect(kept('suite.json.sig').readAsBytesSync(), signed.signature);
-      expect(cache.listSync(), hasLength(2));
+      expect(kept().readAsBytesSync(), together(signed));
+      expect(cache.listSync(), hasLength(1));
+    });
+
+    test('is kept the same when its signature has no line break', () async {
+      final signed = await _sign(2, [...vogesSuite, _slides]);
+      publish((
+        list: signed.list,
+        signature: signed.signature.sublist(0, signed.signature.length - 1),
+      ));
+      expect(await names(), [..._builtIn, 'Voges Slides']);
+      expect(kept().readAsBytesSync(), together(signed));
+      expect(await names(), [..._builtIn, 'Voges Slides']);
     });
 
     test('is ignored when signed by another key', () async {
@@ -217,8 +232,7 @@ void main() {
       keep(newest);
       publish(await _sign(3, [...vogesSuite, _slides]));
       expect(await names(), [..._builtIn, 'Voges Slides', 'Voges Flash']);
-      expect(kept('suite.json').readAsBytesSync(), newest.list);
-      expect(kept('suite.json.sig').readAsBytesSync(), newest.signature);
+      expect(kept().readAsBytesSync(), together(newest));
     });
 
     test('gives way to a newer one, which replaces it', () async {
@@ -226,17 +240,16 @@ void main() {
       final newer = await _sign(6, [...vogesSuite, _slides, _flash]);
       publish(newer);
       expect(await names(), [..._builtIn, 'Voges Slides', 'Voges Flash']);
-      expect(kept('suite.json').readAsBytesSync(), newer.list);
-      expect(kept('suite.json.sig').readAsBytesSync(), newer.signature);
-      expect(cache.listSync(), hasLength(2));
+      expect(kept().readAsBytesSync(), together(newer));
+      expect(cache.listSync(), hasLength(1));
     });
 
-    test('is not written again for the same serial', () async {
+    test('wins over another list signed with the same serial', () async {
       final seen = await _sign(5, [...vogesSuite, _slides]);
       keep(seen);
       publish(await _sign(5, [...vogesSuite, _flash]));
-      expect(await names(), [..._builtIn, 'Voges Flash']);
-      expect(kept('suite.json').readAsBytesSync(), seen.list);
+      expect(await names(), [..._builtIn, 'Voges Slides']);
+      expect(kept().readAsBytesSync(), together(seen));
     });
 
     test('is used when the website does not answer', () async {
@@ -259,23 +272,48 @@ void main() {
       final published = await _sign(2, [...vogesSuite, _slides]);
       publish(published);
       expect(await names(), [..._builtIn, 'Voges Slides']);
-      expect(kept('suite.json').readAsBytesSync(), published.list);
+      expect(kept().readAsBytesSync(), together(published));
     });
 
-    test('counts for nothing when a file is larger than it can be', () async {
+    test('counts for nothing when larger than it can be', () async {
       final seen = await _sign(5, [...vogesSuite, _slides]);
-      keep(seen);
-      kept(
-        'suite.json.sig',
-      ).writeAsBytesSync(Uint8List(PublishedSuite.signatureLimit + 1));
+      cache.createSync(recursive: true);
+      kept().writeAsBytesSync([
+        ...together(seen),
+        ...Uint8List(PublishedSuite.signatureLimit + PublishedSuite.listLimit),
+      ]);
       expect(await names(), _builtIn);
     });
 
-    test('counts for nothing with only one of its two files', () async {
-      keep(await _sign(5, [...vogesSuite, _slides]));
-      kept('suite.json.sig').deleteSync();
+    test('counts for nothing without its signature line', () async {
+      final seen = await _sign(5, [...vogesSuite, _slides]);
+      cache.createSync(recursive: true);
+      kept().writeAsBytesSync(seen.list);
+      expect(await names(), _builtIn);
+      kept().writeAsBytesSync(seen.signature);
       expect(await names(), _builtIn);
     });
+
+    test(
+      'counts for nothing when it never answers, and is replaced',
+      () async {
+        cache.createSync(recursive: true);
+        expect((await Process.run('mkfifo', [kept().path])).exitCode, 0);
+        // a writer that says nothing, so reading it never ends
+        final writer = kept().open(mode: FileMode.writeOnly);
+        addTearDown(() async => (await writer).close());
+        final published = await _sign(2, [...vogesSuite, _slides]);
+        publish(published);
+
+        final apps = await suite(
+          diskTimeout: const Duration(milliseconds: 300),
+        ).apps();
+        expect(_names(apps), [..._builtIn, 'Voges Slides']);
+        expect(kept().statSync().type, FileSystemEntityType.file);
+        expect(kept().readAsBytesSync(), together(published));
+      },
+      skip: Platform.isWindows ? 'no named pipes in a folder' : null,
+    );
   });
 
   test('without a cache folder the suite is the one of the build, and the '
