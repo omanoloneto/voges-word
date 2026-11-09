@@ -82,7 +82,7 @@ void main() {
       h.session.start();
       async.flushMicrotasks();
 
-      expect(h.feed.checks, [vogesWord.repository]);
+      expect(h.feed.checks, [vogesWord.repository, vogesSheets.repository]);
       expect(h.session.rows, hasLength(2));
 
       h.session.update();
@@ -147,7 +147,10 @@ void main() {
       h.session.retry();
       async.flushMicrotasks();
 
-      expect(h.feed.checks, hasLength(2));
+      expect(
+        h.feed.checks.where((checked) => checked == vogesWord.repository),
+        hasLength(2),
+      );
       expect(h.session.stage, UpdaterStage.choosing);
     });
 
@@ -772,6 +775,301 @@ void main() {
     });
   });
 
+  group('an app that is not installed', () {
+    UiHarness offering({String word = '1.2.0'}) =>
+        UiHarness(latest: {vogesWord: word, vogesSheets: '1.0.1'});
+
+    sessionTest('is offered after the updates, never selected', (async) {
+      final h = offering();
+      h.session.start();
+      async.flushMicrotasks();
+
+      expect(h.session.stage, UpdaterStage.choosing);
+      expect(h.session.rows.map((row) => (row.app, row.isNew)), [
+        (vogesWord, false),
+        (vogesSheets, true),
+      ]);
+      final sheets = h.row(vogesSheets);
+      expect(sheets.latest, version('1.0.1'));
+      expect(sheets.selectable, isTrue);
+      expect(sheets.selected, isFalse);
+      expect(h.session.selectedCount, 1);
+      expect(h.session.allSelected, isTrue);
+      expect(h.platform.installableAsked, [vogesSheets]);
+    });
+
+    sessionTest('stays out of select all', (async) {
+      final h = offering();
+      h.session.start();
+      async.flushMicrotasks();
+      final sheets = h.row(vogesSheets);
+
+      h.session.selectAll(false);
+      expect(h.session.selectedCount, 0);
+      h.session.selectAll(true);
+      expect(sheets.selected, isFalse);
+      expect(h.session.selectedCount, 1);
+
+      h.session.select(sheets, true);
+      expect(h.session.selectedCount, 2);
+      expect(h.session.allSelected, isTrue);
+      h.session.selectAll(false);
+      expect(sheets.selected, isTrue);
+      expect(h.session.selectedCount, 1);
+      expect(h.session.allSelected, isFalse);
+    });
+
+    sessionTest('is offered when every installed app is up to date', (async) {
+      final h = offering(word: '1.1.0');
+      h.session.start();
+      async.flushMicrotasks();
+
+      expect(h.session.stage, UpdaterStage.choosing);
+      expect(h.session.rows.map((row) => row.app), [vogesSheets]);
+      expect(h.session.selectedCount, 0);
+
+      h.session.update();
+      async.flushMicrotasks();
+      expect(h.session.stage, UpdaterStage.choosing);
+      expect(h.downloader.calls, isEmpty);
+    });
+
+    sessionTest('waits while what is installed could not be checked, so the '
+        'check can be tried again', (async) {
+      final h = UiHarness(latest: {vogesSheets: '1.0.1'});
+      h.session.start();
+      async.flushMicrotasks();
+
+      expect(h.session.stage, UpdaterStage.offline);
+      expect(h.session.rows.map((row) => row.app), [vogesWord]);
+      expect(h.platform.installableAsked, isEmpty);
+
+      h.feed.versions[vogesWord.repository] = version('1.1.0');
+      h.session.retry();
+      async.flushMicrotasks();
+
+      expect(h.session.stage, UpdaterStage.choosing);
+      expect(h.session.rows.map((row) => row.app), [vogesSheets]);
+    });
+
+    sessionTest('is offered next to an update even when another check '
+        'failed', (async) {
+      const vogesNotes = SuiteApp(
+        name: 'Voges Notes',
+        repository: 'omanoloneto/voges-notes',
+        downloadPage: 'https://omanoloneto.pro/voges/notes/',
+        macos: MacosTarget(
+          bundleId: 'com.omanoloneto.vogesNotes',
+          bundleName: 'Voges Notes.app',
+          asset: 'VogesNotes-macos.dmg',
+        ),
+        windows: WindowsTarget(
+          appId: '{00000000-0000-0000-0000-000000000002}',
+          executable: 'voges_notes.exe',
+          asset: 'VogesNotes-windows-setup.exe',
+        ),
+        linux: LinuxTarget(
+          package: 'voges-notes',
+          binary: '/usr/lib/voges-notes/voges_notes',
+          launcher: '/usr/bin/voges-notes',
+          asset: 'voges-notes-linux-amd64.deb',
+        ),
+      );
+      final h = UiHarness(
+        copies: [
+          installedCopy(vogesWord, '1.1.0'),
+          installedCopy(vogesNotes, '1.0.0'),
+        ],
+        latest: {vogesWord: '1.2.0', vogesSheets: '1.0.1'},
+        suite: const FixedSuite([vogesWord, vogesNotes, vogesSheets]),
+      );
+      h.session.start();
+      async.flushMicrotasks();
+
+      expect(h.session.stage, UpdaterStage.choosing);
+      expect(h.row(vogesNotes).checkFailed, isTrue);
+      expect(h.row(vogesWord).selectable, isTrue);
+      expect(h.row(vogesSheets).isNew, isTrue);
+    });
+
+    sessionTest('is installed without waiting for apps to close, and the '
+        'result stays on screen', (async) {
+      final h = offering(word: '1.1.0')
+        ..platform.runningAnswers = [
+          [const RunningApp(app: vogesSheets, pid: 41)],
+        ];
+      h.session.start();
+      async.flushMicrotasks();
+      h.session.select(h.row(vogesSheets), true);
+      h.session.update();
+      async.flushMicrotasks();
+
+      expect(h.platform.runningAsked, isEmpty);
+      final item = h.platform.installs.single.single;
+      expect(item.copy.app, vogesSheets);
+      expect(item.copy.isNew, isTrue);
+      expect(item.version, version('1.0.1'));
+      expect(item.asset, same(h.downloader.calls.single.asset));
+      expect(h.row(vogesSheets).phase, UpdateRowPhase.updated);
+      expect(h.row(vogesSheets).installedVersion, version('1.0.1'));
+      expect(h.session.stage, UpdaterStage.finished);
+      async.elapse(Duration.zero);
+      expect(h.exits, isEmpty);
+      expect(h.platform.finished, isEmpty);
+
+      h.session.leave();
+      async.elapse(Duration.zero);
+      expect(h.platform.finished, [wordHost]);
+      expect(h.exits, [0]);
+    });
+
+    sessionTest('goes along with the updates, which wait for their apps', (
+      async,
+    ) {
+      final h = offering();
+      h.session.start();
+      async.flushMicrotasks();
+      h.session.select(h.row(vogesSheets), true);
+      h.session.update();
+      async.flushMicrotasks();
+
+      expect(h.platform.runningAsked.single.map((copy) => copy.app), [
+        vogesWord,
+      ]);
+      expect(h.platform.installs.single.map((item) => item.copy.app), [
+        vogesWord,
+        vogesSheets,
+      ]);
+      expect(h.session.stage, UpdaterStage.finished);
+      async.elapse(Duration.zero);
+      expect(h.exits, isEmpty);
+    });
+
+    sessionTest('an update alone still reopens the host and exits', (async) {
+      final h = offering();
+      h.session.start();
+      async.flushMicrotasks();
+      h.session.update();
+      async.flushMicrotasks();
+
+      expect(h.platform.installs.single.map((item) => item.copy.app), [
+        vogesWord,
+      ]);
+      expect(h.row(vogesSheets).phase, UpdateRowPhase.idle);
+      async.elapse(Duration.zero);
+      expect(h.exits, [0]);
+    });
+
+    sessionTest('that fails to install is tried again by itself', (async) {
+      final h = offering()
+        ..platform.onInstall = failOthers(
+          vogesWord,
+          const UpdateFailure(UpdateFailureKind.failed, code: 1),
+        );
+      h.session.start();
+      async.flushMicrotasks();
+      h.session.select(h.row(vogesSheets), true);
+      h.session.update();
+      async.flushMicrotasks();
+      expect(h.row(vogesSheets).phase, UpdateRowPhase.failed);
+
+      h.platform.onInstall = null;
+      h.session.retry();
+      async.flushMicrotasks();
+
+      expect(h.platform.installs.last.map((item) => item.copy.app), [
+        vogesSheets,
+      ]);
+      expect(h.row(vogesSheets).phase, UpdateRowPhase.updated);
+      expect(h.downloader.calls, hasLength(2));
+    });
+
+    sessionTest('is left out while its newest version is unknown', (async) {
+      final h = UiHarness();
+      h.session.start();
+      async.flushMicrotasks();
+
+      expect(h.feed.checks, contains(vogesSheets.repository));
+      expect(h.session.rows.map((row) => row.app), [vogesWord]);
+      expect(h.platform.installableAsked, isEmpty);
+    });
+
+    final nowhere = <String, Future<InstalledCopy?> Function(SuiteApp app)>{
+      'the system has no place for it': (app) async => null,
+      'its place can\'t be found': (app) async => throw StateError('no folder'),
+      'its place already holds a copy': (app) async =>
+          installedCopy(app, '1.0.0'),
+    };
+    for (final MapEntry(key: reason, value: answer) in nowhere.entries) {
+      sessionTest('is left out when $reason', (async) {
+        final h = offering()..platform.onInstallable = answer;
+        h.session.start();
+        async.flushMicrotasks();
+
+        expect(h.platform.installableAsked, [vogesSheets]);
+        expect(h.session.stage, UpdaterStage.choosing);
+        expect(h.session.rows.map((row) => row.app), [vogesWord]);
+      });
+    }
+
+    sessionTest('opens its page on the website', (async) {
+      final h = offering();
+      h.session.start();
+      async.flushMicrotasks();
+      h.session.openAppPage(h.row(vogesSheets));
+      async.flushMicrotasks();
+
+      expect(h.opened, [Uri.parse('https://omanoloneto.pro/voges/sheets/')]);
+    });
+  });
+
+  group('the suite', () {
+    sessionTest('is the one of its source, in every question asked', (async) {
+      final h = UiHarness(
+        latest: {vogesWord: '1.2.0', vogesSheets: '1.0.1'},
+        suite: const FixedSuite([vogesWord]),
+      );
+      h.session.start();
+      async.flushMicrotasks();
+
+      expect(h.platform.catalogs, [
+        [vogesWord],
+      ]);
+      expect(h.feed.checks, [vogesWord.repository]);
+      expect(h.session.rows.map((row) => row.app), [vogesWord]);
+    });
+
+    sessionTest('is asked for again on every check', (async) {
+      final suite = _ChangingSuite([
+        [vogesWord],
+        [vogesWord, vogesSheets],
+      ]);
+      final h = UiHarness(latest: const {}, suite: suite);
+      h.session.start();
+      async.flushMicrotasks();
+      expect(h.session.stage, UpdaterStage.offline);
+
+      h.feed.versions[vogesWord.repository] = version('1.1.0');
+      h.feed.versions[vogesSheets.repository] = version('1.0.1');
+      h.session.retry();
+      async.flushMicrotasks();
+
+      expect(h.platform.catalogs.last, [vogesWord, vogesSheets]);
+      expect(h.row(vogesSheets).isNew, isTrue);
+    });
+
+    sessionTest('stays the one of the build when its source fails', (async) {
+      final h = UiHarness(suite: _ChangingSuite(const []));
+      h.session.start();
+      async.flushMicrotasks();
+
+      expect(h.platform.catalogs, [vogesSuite]);
+      expect(h.feed.checks, [for (final app in vogesSuite) app.repository]);
+      expect(h.session.stage, UpdaterStage.choosing);
+      expect(h.session.rows.map((row) => row.app), [vogesWord]);
+    });
+  });
+
   sessionTest('opens the release notes of the new version', (async) {
     final h = UiHarness();
     h.session.start();
@@ -785,4 +1083,15 @@ void main() {
       ),
     ]);
   });
+}
+
+/// Answers each call with the next suite, and fails once they are over.
+final class _ChangingSuite implements SuiteSource {
+  _ChangingSuite(List<List<SuiteApp>> suites) : _suites = [...suites];
+
+  final List<List<SuiteApp>> _suites;
+
+  @override
+  Future<List<SuiteApp>> apps() async =>
+      _suites.isEmpty ? throw StateError('no suite') : _suites.removeAt(0);
 }

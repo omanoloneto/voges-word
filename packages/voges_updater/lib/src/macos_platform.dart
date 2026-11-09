@@ -182,6 +182,29 @@ final class MacosPlatform implements SuitePlatform {
     return copies;
   }
 
+  /// Only next to a host in one of the Applications folders: anywhere else
+  /// is a place the user picked for that one app.
+  @override
+  Future<InstalledCopy?> installable(
+    SuiteApp app,
+    UpdaterHost host,
+    List<InstalledCopy> installed,
+  ) async {
+    final hostBundle = _resolve(host.reopenPath);
+    if (hostBundle == null) return null;
+    final home = this.home;
+    final folder = p.dirname(hostBundle);
+    final known = [
+      applications,
+      if (home != null) p.join(home, 'Applications'),
+    ];
+    if (!known.any((known) => _resolve(known) == folder)) return null;
+    final target = p.join(folder, app.macos.bundleName);
+    return _exists(target)
+        ? null
+        : InstalledCopy.absent(app: app, location: target);
+  }
+
   @override
   Future<List<RunningApp>> running(List<InstalledCopy> copies) async {
     final processes = await _processes();
@@ -264,20 +287,26 @@ final class MacosPlatform implements SuitePlatform {
   }
 
   /// Stages the new bundle beside the target and swaps the two by renaming,
-  /// which needs write access to the parent folder only.
+  /// which needs write access to the parent folder only. A new app is staged
+  /// and verified the same way, then renamed into its place.
   Future<ReleaseVersion> _install(PendingInstall item) async {
     final app = item.copy.app;
     final target = item.copy.location;
-    await _requireOwnBundle(target, item.asset);
+    final isNew = item.copy.isNew;
+    if (!isNew) await _requireOwnBundle(target, item.asset);
     final staging = await _stagingFolder(p.dirname(target), item.asset);
     final staged = p.join(staging.path, app.macos.bundleName);
     final old = '${staging.path}.old';
     try {
       await _stage(item, staged);
-      if (await _isRunning(item.copy)) {
-        throw const UpdateFailure(UpdateFailureKind.inUse);
+      if (isNew) {
+        _place(target, staged, item.asset);
+      } else {
+        if (await _isRunning(item.copy)) {
+          throw const UpdateFailure(UpdateFailureKind.inUse);
+        }
+        _swap(target, staged, old, item.asset);
       }
-      _swap(target, staged, old, item.asset);
     } catch (_) {
       _deleteTree(staging.path);
       rethrow;
@@ -418,6 +447,22 @@ final class MacosPlatform implements SuitePlatform {
     }
   }
 
+  /// Puts a new app at [target]. Nothing is ever replaced: whatever showed
+  /// up there since the list was made stays.
+  void _place(String target, String staged, VerifiedAsset asset) {
+    if (_exists(target)) {
+      throw UpdateFailure(
+        UpdateFailureKind.failed,
+        detail: '$target already exists',
+      );
+    }
+    try {
+      Directory(staged).renameSync(target);
+    } on FileSystemException catch (error) {
+      throw _fileFailure(error, asset);
+    }
+  }
+
   Future<bool> _isRunning(InstalledCopy copy) async {
     final executable = await _mainExecutable(copy);
     final processes = await _processes();
@@ -553,10 +598,7 @@ final class MacosPlatform implements SuitePlatform {
         folder,
         number == 1 ? name : '$stem ($number)$extension',
       );
-      if (FileSystemEntity.typeSync(path, followLinks: false) ==
-          FileSystemEntityType.notFound) {
-        return path;
-      }
+      if (!_exists(path)) return path;
     }
   }
 
@@ -578,6 +620,11 @@ final class MacosPlatform implements SuitePlatform {
       return const [];
     }
   }
+
+  /// Whether anything is at [path], a broken link included.
+  static bool _exists(String path) =>
+      FileSystemEntity.typeSync(path, followLinks: false) !=
+      FileSystemEntityType.notFound;
 
   static bool _isRealDirectory(String path) =>
       FileSystemEntity.typeSync(path, followLinks: false) ==

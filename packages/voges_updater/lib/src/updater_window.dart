@@ -246,12 +246,19 @@ class _UpdaterScreenState extends State<_UpdaterScreen> {
         );
       case UpdaterStage.choosing:
         final count = session.selectedCount;
+        final extras = session.rows.where((row) => row.isNew);
+        final installs =
+            extras.any((row) => row.selected) ||
+            extras.isNotEmpty &&
+                !session.rows.any((row) => !row.isNew && row.selectable);
         return _Screen(
           _UpdateList(session: session),
           buttons: [
             _Button(l10n.updaterNotNow, session.leave),
             _Button(
-              l10n.updaterUpdateButton(count),
+              installs
+                  ? l10n.updaterInstallButton(count)
+                  : l10n.updaterUpdateButton(count),
               count == 0 ? null : session.update,
               main: true,
             ),
@@ -452,6 +459,7 @@ class _UpdateList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = UpdaterLocalizations.of(context);
+    final theme = Theme.of(context);
     final choosing = session.stage == UpdaterStage.choosing;
     final rows = choosing
         ? session.rows
@@ -461,7 +469,15 @@ class _UpdateList extends StatelessWidget {
                 row.phase == UpdateRowPhase.updated ||
                 row.phase == UpdateRowPhase.failed,
           );
-    final selectable = session.rows.where((row) => row.selectable).length;
+    final updates = [
+      for (final row in rows)
+        if (!row.isNew) row,
+    ];
+    final extras = [
+      for (final row in rows)
+        if (row.isNew) row,
+    ];
+    final selectable = updates.where((row) => row.selectable).length;
     final installing = session.rows.where(
       (row) => row.phase == UpdateRowPhase.installing,
     );
@@ -500,7 +516,28 @@ class _UpdateList extends StatelessWidget {
         Expanded(
           child: ListView(
             children: [
-              for (final row in rows) _RowTile(session: session, row: row),
+              for (final row in updates) _RowTile(session: session, row: row),
+              if (choosing && updates.isEmpty)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: _RowIcon(
+                    Icons.check_circle_outline,
+                    color: theme.colorScheme.primary,
+                  ),
+                  title: Text(l10n.updaterAllUpToDate),
+                ),
+              if (extras.isNotEmpty) ...[
+                Padding(
+                  padding: const EdgeInsets.only(top: 16, bottom: 4),
+                  child: Text(
+                    l10n.updaterMoreApps,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                for (final row in extras) _RowTile(session: session, row: row),
+              ],
             ],
           ),
         ),
@@ -543,6 +580,8 @@ class _RowTile extends StatelessWidget {
     final latest = row.latest;
     final change = latest == null
         ? null
+        : row.isNew
+        ? l10n.updaterNotInstalled('$latest')
         : l10n.updaterVersionChange('${row.copy.version}', '$latest');
     final place = _place(l10n);
 
@@ -570,10 +609,15 @@ class _RowTile extends StatelessWidget {
         onChanged: (value) => session.select(row, value ?? false),
         title: Text(row.app.name),
         subtitle: Text([?change, ?place].join('\n')),
-        secondary: TextButton(
-          onPressed: () => session.openReleaseNotes(row),
-          child: Text(l10n.updaterWhatsNew),
-        ),
+        secondary: row.isNew
+            ? TextButton(
+                onPressed: () => session.openAppPage(row),
+                child: Text(l10n.updaterLearnMore),
+              )
+            : TextButton(
+                onPressed: () => session.openReleaseNotes(row),
+                child: Text(l10n.updaterWhatsNew),
+              ),
       );
     }
 
@@ -612,7 +656,11 @@ class _RowTile extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (row.phase == UpdateRowPhase.updated)
-            Text(l10n.updaterUpdated('${row.installedVersion ?? latest}'))
+            Text(
+              row.isNew
+                  ? l10n.updaterInstalled('${row.installedVersion ?? latest}')
+                  : l10n.updaterUpdated('${row.installedVersion ?? latest}'),
+            )
           else
             Text([?change, ?place].join('\n')),
           if (status != null) Text(status),
@@ -663,7 +711,10 @@ class _Failure extends StatelessWidget {
       UpdateFailureKind.unavailable => l10n.updaterErrorUnavailable(
         '${row.latest}',
       ),
-      UpdateFailureKind.permission => l10n.updaterErrorPermission(app),
+      UpdateFailureKind.permission =>
+        row.isNew
+            ? l10n.updaterErrorPermissionNew(app)
+            : l10n.updaterErrorPermission(app),
       UpdateFailureKind.inUse => l10n.updaterErrorInUse(app),
       UpdateFailureKind.declined => l10n.updaterErrorDeclined,
       UpdateFailureKind.noPasswordWindow => l10n.updaterErrorNoPasswordWindow,

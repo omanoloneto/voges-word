@@ -106,6 +106,28 @@ class UpdaterLocalizationsEs extends UpdaterLocalizations {
       'Todas tus apps de Voges están actualizadas.';
 
   @override
+  String get updaterMoreApps => 'Más apps de Voges';
+
+  @override
+  String updaterNotInstalled(String version) {
+    return 'No instalada · versión $version';
+  }
+
+  @override
+  String get updaterLearnMore => 'Más información';
+
+  @override
+  String updaterInstallButton(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Instalar $count apps',
+      one: 'Instalar 1 app',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get updaterOffline =>
       'No se pudo buscar actualizaciones. Revisa tu conexión a internet.';
 
@@ -165,6 +187,11 @@ class UpdaterLocalizationsEs extends UpdaterLocalizations {
   }
 
   @override
+  String updaterInstalled(String version) {
+    return 'Versión $version instalada';
+  }
+
+  @override
   String get updaterCancel => 'Cancelar';
 
   @override
@@ -200,6 +227,11 @@ class UpdaterLocalizationsEs extends UpdaterLocalizations {
   @override
   String updaterErrorPermission(String app) {
     return 'macOS no permitió reemplazar $app. Instálalo con el instalador.';
+  }
+
+  @override
+  String updaterErrorPermissionNew(String app) {
+    return 'macOS no permitió instalar $app aquí. Instálalo con el instalador.';
   }
 
   @override

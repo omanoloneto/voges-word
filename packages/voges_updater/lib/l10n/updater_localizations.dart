@@ -247,6 +247,30 @@ abstract class UpdaterLocalizations {
   /// **'All your Voges apps are up to date.'**
   String get updaterAllUpToDate;
 
+  /// Voges Updater: title of the apps of the suite that aren't installed on this computer.
+  ///
+  /// In en, this message translates to:
+  /// **'More Voges apps'**
+  String get updaterMoreApps;
+
+  /// Voges Updater: an app that isn't installed, and the version that would be installed.
+  ///
+  /// In en, this message translates to:
+  /// **'Not installed · version {version}'**
+  String updaterNotInstalled(String version);
+
+  /// Voges Updater: link to the website page of an app that isn't installed.
+  ///
+  /// In en, this message translates to:
+  /// **'Learn more'**
+  String get updaterLearnMore;
+
+  /// Voges Updater: installs the selected apps, when one of them isn't installed yet.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Install 1 app} other{Install {count} apps}}'**
+  String updaterInstallButton(int count);
+
   /// Voges Updater: every version check failed.
   ///
   /// In en, this message translates to:
@@ -325,6 +349,12 @@ abstract class UpdaterLocalizations {
   /// **'Updated to {version}'**
   String updaterUpdated(String version);
 
+  /// Voges Updater: an app that wasn't installed before and now is.
+  ///
+  /// In en, this message translates to:
+  /// **'Installed version {version}'**
+  String updaterInstalled(String version);
+
   /// Voges Updater: stops the download or the wait and goes back to the list.
   ///
   /// In en, this message translates to:
@@ -378,6 +408,12 @@ abstract class UpdaterLocalizations {
   /// In en, this message translates to:
   /// **'macOS didn\'t allow replacing {app}. Install it with the installer.'**
   String updaterErrorPermission(String app);
+
+  /// macOS: an app that isn't installed yet can't be put in the Applications folder by this user.
+  ///
+  /// In en, this message translates to:
+  /// **'macOS didn\'t allow installing {app} here. Install it with the installer.'**
+  String updaterErrorPermissionNew(String app);
 
   /// Voges Updater: the app was still open when it had to be replaced.
   ///

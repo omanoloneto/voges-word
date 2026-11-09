@@ -91,6 +91,24 @@
   },
   "updaterAllUpToDate": "All your Voges apps are up to date.",
   "@updaterAllUpToDate": {"description": "Voges Updater: no app has a new version."},
+  "updaterMoreApps": "More Voges apps",
+  "@updaterMoreApps": {"description": "Voges Updater: title of the apps of the suite that aren't installed on this computer."},
+  "updaterNotInstalled": "Not installed · version {version}",
+  "@updaterNotInstalled": {
+    "description": "Voges Updater: an app that isn't installed, and the version that would be installed.",
+    "placeholders": {
+      "version": {"type": "String", "example": "1.2.0"}
+    }
+  },
+  "updaterLearnMore": "Learn more",
+  "@updaterLearnMore": {"description": "Voges Updater: link to the website page of an app that isn't installed."},
+  "updaterInstallButton": "{count, plural, =1{Install 1 app} other{Install {count} apps}}",
+  "@updaterInstallButton": {
+    "description": "Voges Updater: installs the selected apps, when one of them isn't installed yet.",
+    "placeholders": {
+      "count": {"type": "int", "example": "2"}
+    }
+  },
   "updaterOffline": "Couldn't check for updates. Check your internet connection.",
   "@updaterOffline": {"description": "Voges Updater: every version check failed."},
   "updaterHostNotFound": "Voges Updater couldn't find where {app} is installed. Download the new version from the website.",
@@ -143,6 +161,13 @@
       "version": {"type": "String", "example": "1.2.0"}
     }
   },
+  "updaterInstalled": "Installed version {version}",
+  "@updaterInstalled": {
+    "description": "Voges Updater: an app that wasn't installed before and now is.",
+    "placeholders": {
+      "version": {"type": "String", "example": "1.2.0"}
+    }
+  },
   "updaterCancel": "Cancel",
   "@updaterCancel": {"description": "Voges Updater: stops the download or the wait and goes back to the list."},
   "updaterClose": "Close",
@@ -177,6 +202,13 @@
     "description": "macOS: the app's folder can't be changed by this user.",
     "placeholders": {
       "app": {"type": "String", "example": "Voges Word"}
+    }
+  },
+  "updaterErrorPermissionNew": "macOS didn't allow installing {app} here. Install it with the installer.",
+  "@updaterErrorPermissionNew": {
+    "description": "macOS: an app that isn't installed yet can't be put in the Applications folder by this user.",
+    "placeholders": {
+      "app": {"type": "String", "example": "Voges Tables"}
     }
   },
   "updaterErrorInUse": "{app} or one of its files was still in use. Close it and try again.",

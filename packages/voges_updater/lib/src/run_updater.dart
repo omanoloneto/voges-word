@@ -10,6 +10,7 @@ import 'github_releases.dart';
 import 'release_downloader.dart';
 import 'release_verifier.dart';
 import 'suite_platform.dart';
+import 'suite_source.dart';
 import 'updater_request.dart';
 import 'updater_session.dart';
 import 'updater_window.dart';
@@ -56,13 +57,12 @@ Future<void> runUpdater({
   );
 
   final releases = GitHubReleases.production();
+  final verifier = ReleaseVerifier();
   final session = UpdaterSession(
     platform: SuitePlatform.current(host: host, relaunch: relaunch),
     feed: releases,
-    downloader: ReleaseDownloader(
-      releases: releases,
-      verifier: ReleaseVerifier(),
-    ),
+    downloader: ReleaseDownloader(releases: releases, verifier: verifier),
+    suite: PublishedSuite.production(verifier: verifier),
     hostApp: host,
   );
   runApp(UpdaterApp(session: session, locale: locale));

@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:voges_updater/core.dart';
 
 import '../tool/release_signing.dart';
@@ -216,6 +218,165 @@ void main() {
         ),
         _verificationFailure,
       );
+    });
+  });
+
+  test('the signed message of a suite list is not the one of a release', () {
+    expect(
+      utf8.decode(signedSuiteMessage(_sums('{"format": 1}\n'))),
+      'voges-suite v1\n{"format": 1}\n',
+    );
+  });
+
+  group('verifySuiteList', () {
+    final list = SuiteList.encode(serial: 4, apps: vogesSuite);
+    late String key;
+    late Uint8List signature;
+
+    setUpAll(() async {
+      key = await publicKeyOf(_seed);
+      signature = await signSuiteList(seed: _seed, list: list);
+    });
+
+    Future<SuiteList> verify({
+      List<String>? keys,
+      Uint8List? bytes,
+      Uint8List? signatureFile,
+    }) => ReleaseVerifier(trustedKeys: keys ?? [key]).verifySuiteList(
+      list: bytes ?? list,
+      signature: signatureFile ?? signature,
+    );
+
+    test('reads a list signed by a trusted key', () async {
+      final verified = await verify();
+      expect(verified.serial, 4);
+      expect(
+        [for (final app in verified.apps) app.name],
+        [for (final app in vogesSuite) app.name],
+      );
+      expect(
+        (await verify(keys: [await publicKeyOf(_otherSeed), key])).serial,
+        4,
+      );
+    });
+
+    test(
+      'rejects a list signed by another key, or by no trusted key',
+      () async {
+        await expectLater(
+          verify(
+            signatureFile: await signSuiteList(seed: _otherSeed, list: list),
+          ),
+          _verificationFailure,
+        );
+        await expectLater(verify(keys: const []), _verificationFailure);
+      },
+    );
+
+    test('rejects a list with a single byte changed', () async {
+      final changed = Uint8List.fromList(list);
+      changed[changed.length - 2] ^= 1;
+      await expectLater(verify(bytes: changed), _verificationFailure);
+      await expectLater(
+        verify(bytes: Uint8List.fromList([...list, 0x0a])),
+        _verificationFailure,
+      );
+    });
+
+    test('rejects another list with the signature of this one', () async {
+      await expectLater(
+        verify(bytes: SuiteList.encode(serial: 5, apps: vogesSuite)),
+        _verificationFailure,
+      );
+    });
+
+    test('rejects the signature of a release as the one of a list', () async {
+      // the same key signs both, each with its own first line
+      await expectLater(
+        verify(
+          signatureFile: await signChecksums(
+            seed: _seed,
+            repository: _repository,
+            version: _version,
+            checksums: list,
+          ),
+        ),
+        _verificationFailure,
+      );
+      await expectLater(
+        ReleaseVerifier(trustedKeys: [key]).verify(
+          repository: _repository,
+          version: _version,
+          checksums: list,
+          signature: signature,
+        ),
+        _verificationFailure,
+      );
+    });
+
+    test('rejects a malformed signature file', () async {
+      final text = ascii.decode(signature).trimRight();
+      for (final bad in [
+        '',
+        '$text\n\n',
+        ' $text',
+        text.substring(0, text.length - 4),
+        'not base64',
+      ]) {
+        await expectLater(
+          verify(signatureFile: ascii.encode(bad)),
+          _verificationFailure,
+          reason: bad,
+        );
+      }
+    });
+
+    test('rejects a signed list that is not a suite list', () async {
+      for (final content in [
+        '{"format": 2, "serial": 1, "apps": []}',
+        '{"format": 1, "serial": 1, "apps": [{"name": "Voges ../Evil", '
+            '"windowsAppId": "{00000000-0000-0000-0000-000000000001}"}]}',
+        'not json',
+      ]) {
+        final bytes = _sums(content);
+        await expectLater(
+          verify(
+            bytes: bytes,
+            signatureFile: await signSuiteList(seed: _seed, list: bytes),
+          ),
+          _verificationFailure,
+          reason: content,
+        );
+      }
+    });
+  });
+
+  group('the list of this repository', () {
+    Uint8List read(String name) =>
+        File(p.join(Directory.current.path, 'suite', name)).readAsBytesSync();
+
+    test(
+      'is signed by a pinned key and lists the suite of the build',
+      () async {
+        // published as it is: the apps already installed read these bytes
+        final list = await ReleaseVerifier(trustedKeys: releaseSigningKeys)
+            .verifySuiteList(
+              list: read('suite.json'),
+              signature: read('suite.json.sig'),
+            );
+        expect(list.serial, greaterThanOrEqualTo(1));
+        expect(
+          [for (final app in list.apps) (app.name, app.windows.appId)],
+          [for (final app in vogesSuite) (app.name, app.windows.appId)],
+        );
+        expect(list.mergedInto(vogesSuite), vogesSuite);
+      },
+    );
+
+    test('follows the naming convention in every app of the build', () {
+      for (final app in vogesSuite) {
+        expect(followsNamingConvention(app), isTrue, reason: app.name);
+      }
     });
   });
 

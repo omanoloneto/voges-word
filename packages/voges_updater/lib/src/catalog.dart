@@ -1,5 +1,7 @@
-/// The Voges suite as the updater knows it. Only the version of each app
-/// comes from the network; every name, id and file here is fixed so a
+/// The Voges suite as the updater knows it. The network only tells the
+/// version of each app and, through the signed suite list, the name and the
+/// Windows AppId of an app that came later. Every repository, id, path and
+/// file is fixed here or follows from the name by one convention, so a
 /// tampered response can never point the updater somewhere else.
 library;
 
@@ -25,6 +27,59 @@ final class SuiteApp {
   final MacosTarget macos;
   final WindowsTarget windows;
   final LinuxTarget linux;
+
+  /// "Voges" and one to three capitalised words, such as `Voges Tables`,
+  /// short enough for the file names made from them.
+  static final _conventionalName = RegExp(r'^Voges( [A-Z][a-z]{1,20}){1,3}$');
+
+  /// An Inno Setup AppId: an uppercase GUID in braces.
+  static final _appId = RegExp(
+    r'^\{[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}\}$',
+  );
+
+  /// The app called [name] as the suite's naming convention spells every
+  /// other field: `Voges Tables` lives in `omanoloneto/voges-tables`, has
+  /// the bundle id `com.omanoloneto.vogesTables`, installs
+  /// `VogesTables-macos.dmg`, and so on. Only [windowsAppId] cannot follow
+  /// from the name. Throws a [FormatException] when either breaks its shape.
+  factory SuiteApp.conventional({
+    required String name,
+    required String windowsAppId,
+  }) {
+    if (!_conventionalName.hasMatch(name)) {
+      throw FormatException('Not a suite app name', name);
+    }
+    if (!_appId.hasMatch(windowsAppId)) {
+      throw FormatException('Not a Windows AppId', windowsAppId);
+    }
+    final words = [
+      for (final word in name.split(' ').skip(1)) word.toLowerCase(),
+    ];
+    final joined = name.replaceAll(' ', '');
+    final snake = 'voges_${words.join('_')}';
+    final kebab = 'voges-${words.join('-')}';
+    return SuiteApp(
+      name: name,
+      repository: 'omanoloneto/$kebab',
+      downloadPage: 'https://omanoloneto.pro/voges/${words.join('-')}/',
+      macos: MacosTarget(
+        bundleId: 'com.omanoloneto.v${joined.substring(1)}',
+        bundleName: '$name.app',
+        asset: '$joined-macos.dmg',
+      ),
+      windows: WindowsTarget(
+        appId: windowsAppId,
+        executable: '$snake.exe',
+        asset: '$joined-windows-setup.exe',
+      ),
+      linux: LinuxTarget(
+        package: kebab,
+        binary: '/usr/lib/$kebab/$snake',
+        launcher: '/usr/bin/$kebab',
+        asset: '$kebab-linux-amd64.deb',
+      ),
+    );
+  }
 }
 
 final class MacosTarget {
@@ -153,5 +208,6 @@ const vogesTables = SuiteApp(
   ),
 );
 
-/// Every app of the suite, in the order the updater lists them.
+/// Every app of the suite that this build knows, in the order the updater
+/// lists them. The signed suite list can add apps to it, never change one.
 const vogesSuite = [vogesWord, vogesPencil, vogesTables];

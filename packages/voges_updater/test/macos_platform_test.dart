@@ -80,6 +80,7 @@ final class _Mac {
   late final temp = Directory(p.join(root.path, 'tmp'));
   final runner = FakeProcessRunner();
   var processes = '';
+  var dmgName = _bundleName;
   var dmgId = _wordId;
   var dmgVersion = '1.2.0';
   late ProcessResult Function(RecordedCall call) hdiutil = _hdiutil;
@@ -131,7 +132,7 @@ final class _Mac {
   ProcessResult _hdiutil(RecordedCall call) {
     if (call.arguments.first == 'attach') {
       final mount = call.arguments[call.arguments.indexOf('-mountpoint') + 1];
-      _writeBundle(p.join(mount, _bundleName), id: dmgId, version: dmgVersion);
+      _writeBundle(p.join(mount, dmgName), id: dmgId, version: dmgVersion);
     } else {
       for (final entity in Directory(call.arguments.last).listSync()) {
         entity.deleteSync(recursive: true);
@@ -548,6 +549,227 @@ void main() {
       expect(oldExistedWhenOpening, isTrue);
       expect(mac.leftovers(mac.applications.path), isEmpty);
       expect(mac.temp.listSync(), isEmpty);
+    });
+  });
+
+  group('a new app', () {
+    final slides = SuiteApp.conventional(
+      name: 'Voges Slides',
+      windowsAppId: '{00000000-0000-0000-0000-0000000000A1}',
+    );
+    const slidesBundle = 'Voges Slides.app';
+
+    /// Where Voges Slides would go for an updater opened from the Voges
+    /// Word at [bundle].
+    Future<(MacosPlatform, InstalledCopy?)> placeFrom(String bundle) async {
+      _writeBundle(bundle);
+      final platform = mac.platform(executable: p.join(bundle, _helper));
+      final host = (await platform.host())!;
+      final installed = await platform.installed([...vogesSuite, slides], host);
+      return (platform, await platform.installable(slides, host, installed));
+    }
+
+    /// Voges Slides 1.0.1 downloaded, to go next to the Voges Word of
+    /// /Applications.
+    Future<(MacosPlatform, PendingInstall)> pendingSlides() async {
+      mac
+        ..dmgName = slidesBundle
+        ..dmgId = slides.macos.bundleId
+        ..dmgVersion = '1.0.1';
+      final (platform, place) = await placeFrom(mac.target);
+      final work = await platform.workDirectory();
+      final item = PendingInstall(
+        copy: place!,
+        version: const ReleaseVersion(1, 0, 1),
+        asset: verifiedFile(p.join(work.path, slides.macos.asset)),
+      );
+      return (platform, item);
+    }
+
+    bool nothingAt(String path) =>
+        FileSystemEntity.typeSync(path, followLinks: false) ==
+        FileSystemEntityType.notFound;
+
+    test('goes next to the host in either Applications folder', () async {
+      for (final folder in [
+        mac.applications.path,
+        p.join(mac.home.path, 'Applications'),
+      ]) {
+        final (_, place) = await placeFrom(p.join(folder, _bundleName));
+
+        expect(place?.location, p.join(folder, slidesBundle));
+        expect(place?.app, same(slides));
+        expect(place?.isNew, isTrue);
+        expect(place?.version, isNull);
+        expect(place?.scope, InstallScope.user);
+        expect(place?.isHost, isFalse);
+      }
+    });
+
+    test('has no place next to a host kept somewhere else', () async {
+      final (_, place) = await placeFrom(
+        p.join(mac.root.path, 'Build', _bundleName),
+      );
+
+      expect(place, isNull);
+    });
+
+    test('has no place next to a link to a host kept elsewhere', () async {
+      final real = p.join(mac.root.path, 'Build', _bundleName);
+      _writeBundle(real);
+      Link(mac.target).createSync(real);
+
+      final place = await mac.platform().installable(
+        slides,
+        UpdaterHost(app: vogesWord, reopenPath: mac.target),
+        const [],
+      );
+
+      expect(place, isNull);
+    });
+
+    test('has no place when the host is gone', () async {
+      final place = await mac.platform().installable(
+        slides,
+        UpdaterHost(app: vogesWord, reopenPath: mac.target),
+        const [],
+      );
+
+      expect(place, isNull);
+    });
+
+    for (final (name, put) in <(String, void Function(String path))>[
+      ('a folder', (path) => Directory(path).createSync()),
+      ('a file', (path) => File(path).createSync()),
+      ('a broken link', (path) => Link(path).createSync('/nonexistent')),
+    ]) {
+      test('has no place where $name already is', () async {
+        put(p.join(mac.applications.path, slidesBundle));
+
+        final (_, place) = await placeFrom(mac.target);
+
+        expect(place, isNull);
+      });
+    }
+
+    test('is staged, checked and renamed into its place', () async {
+      final (platform, item) = await pendingSlides();
+      final target = p.join(mac.applications.path, slidesBundle);
+      final steps = <InstallStep>[];
+
+      final outcomes = await platform.install([
+        item,
+      ], (_, step) => steps.add(step));
+
+      final installed = outcomes.single as Installed;
+      expect(installed.version, const ReleaseVersion(1, 0, 1));
+      expect(_versionAt(target), '1.0.1');
+      expect(_versionAt(mac.target), '1.1.0');
+      expect(steps, [InstallStep.installing]);
+      final mount = p.join(p.dirname(item.asset.file.path), 'mnt-1');
+      final staged = mac.runner.callsTo('ditto').single.arguments.last;
+      expect(
+        staged,
+        matches(
+          RegExp(
+            '^${RegExp.escape(mac.applications.path)}'
+            r'/\.voges-update-[A-Za-z0-9]+/Voges Slides\.app$',
+          ),
+        ),
+      );
+      final tools = {'hdiutil', 'ditto', 'codesign', 'xattr', 'stat', 'ps'};
+      expect(
+        [
+          for (final call in mac.runner.calls)
+            if (tools.contains(call.tool)) call.argv,
+        ],
+        [
+          [
+            '/usr/bin/hdiutil',
+            'attach',
+            '-nobrowse',
+            '-readonly',
+            '-noautoopen',
+            '-mountpoint',
+            mount,
+            item.asset.file.path,
+          ],
+          ['/usr/bin/ditto', p.join(mount, slidesBundle), staged],
+          ['/usr/bin/hdiutil', 'detach', mount],
+          ['/usr/bin/codesign', '--verify', '--deep', '--strict', staged],
+          ['/usr/bin/xattr', '-p', 'com.apple.quarantine', staged],
+        ],
+      );
+      expect(mac.leftovers(mac.applications.path), isEmpty);
+    });
+
+    for (final (name, change) in <(String, void Function(_Mac mac))>[
+      ('another app', (mac) => mac.dmgId = _wordId),
+      ('another version', (mac) => mac.dmgVersion = '1.0.2'),
+      (
+        'an app with a broken signature',
+        (mac) => mac.codesign = (_) => processResult(1, stderr: 'invalid'),
+      ),
+      ('a quarantined app', (mac) => mac.xattr = (_) => processResult(0)),
+    ]) {
+      test('is refused when its disk image holds $name', () async {
+        final (platform, item) = await pendingSlides();
+        change(mac);
+
+        final outcome = (await platform.install([item], (_, _) {})).single;
+
+        expect(
+          (outcome as NotInstalled).failure.kind,
+          UpdateFailureKind.verification,
+        );
+        expect(nothingAt(item.copy.location), isTrue);
+        expect(mac.leftovers(mac.applications.path), isEmpty);
+      });
+    }
+
+    test('is refused when its installer changed after the download', () async {
+      final (platform, item) = await pendingSlides();
+      item.asset.file.writeAsStringSync('tampered');
+
+      final outcome = (await platform.install([item], (_, _) {})).single;
+
+      expect(
+        (outcome as NotInstalled).failure.kind,
+        UpdateFailureKind.verification,
+      );
+      expect(mac.runner.callsTo('hdiutil'), isEmpty);
+      expect(nothingAt(item.copy.location), isTrue);
+      expect(mac.leftovers(mac.applications.path), isEmpty);
+    });
+
+    test('never replaces what showed up in its place', () async {
+      final (platform, item) = await pendingSlides();
+      _writeBundle(
+        item.copy.location,
+        id: slides.macos.bundleId,
+        version: '0.9.0',
+      );
+
+      final outcome = (await platform.install([item], (_, _) {})).single;
+
+      final failure = (outcome as NotInstalled).failure;
+      expect(failure.kind, UpdateFailureKind.failed);
+      expect(failure.detail, '${item.copy.location} already exists');
+      expect(_versionAt(item.copy.location), '0.9.0');
+      expect(mac.leftovers(mac.applications.path), isEmpty);
+    });
+
+    test('goes to the installer when the folder refuses it', () async {
+      final (platform, item) = await pendingSlides();
+      Process.runSync('/bin/chmod', ['555', mac.applications.path]);
+
+      final outcome = (await platform.install([item], (_, _) {})).single;
+
+      final failure = (outcome as NotInstalled).failure;
+      expect(failure.kind, UpdateFailureKind.permission);
+      expect(failure.installer, item.asset.file.path);
+      expect(mac.runner.callsTo('hdiutil'), isEmpty);
+      expect(nothingAt(item.copy.location), isTrue);
     });
   });
 

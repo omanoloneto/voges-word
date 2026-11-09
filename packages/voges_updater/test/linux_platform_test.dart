@@ -418,6 +418,109 @@ void main() {
     });
   });
 
+  group('a new app', () {
+    final slides = SuiteApp.conventional(
+      name: 'Voges Slides',
+      windowsAppId: '{00000000-0000-0000-0000-0000000000A1}',
+    );
+    const host = UpdaterHost(app: vogesWord, reopenPath: _binary);
+
+    test('always has its place, where the package puts it', () async {
+      final place = await platform().installable(slides, host, const []);
+
+      expect(place?.app, same(slides));
+      expect(place?.isNew, isTrue);
+      expect(place?.version, isNull);
+      expect(place?.location, '/usr/lib/voges-slides/voges_slides');
+      expect(place?.scope, InstallScope.user);
+      expect(place?.isHost, isFalse);
+      expect(runner.calls, isEmpty);
+    });
+
+    test('is installed with the updates, in the same prompt', () async {
+      final linux = platform();
+      final work = await linux.workDirectory();
+      runner.calls.clear();
+      PendingInstall pending(InstalledCopy copy, String version) {
+        final file = p.join(work.path, copy.app.linux.asset);
+        fields[file] =
+            'Package: ${copy.app.linux.package}\nVersion: $version\n'
+            'Architecture: amd64\n';
+        return PendingInstall(
+          copy: copy,
+          version: ReleaseVersion.tryParse(version)!,
+          asset: verifiedFile(file),
+        );
+      }
+
+      final word = pending(
+        (await linux.installed(vogesSuite, host)).single,
+        '1.2.0',
+      );
+      final added = pending(
+        (await linux.installable(slides, host, [word.copy]))!,
+        '1.0.1',
+      );
+      runner.calls.clear();
+      runner.onStart = (_) {
+        packages =
+            'voges-word\tinstalled\t1.2.0\nvoges-slides\tinstalled\t1.0.1\n';
+        return FakeProcess();
+      };
+
+      final outcomes = await linux.install([word, added], (_, _) {});
+
+      expect(
+        [for (final outcome in outcomes) (outcome as Installed).version],
+        [const ReleaseVersion(1, 2, 0), const ReleaseVersion(1, 0, 1)],
+      );
+      expect(runner.callsTo('pkexec').single.argv, [
+        '/usr/bin/pkexec',
+        '/usr/bin/apt-get',
+        'install',
+        '-y',
+        '--no-remove',
+        '-o',
+        'DPkg::Lock::Timeout=120',
+        '-o',
+        'APT::Status-Fd=1',
+        '--',
+        word.asset.file.path,
+        added.asset.file.path,
+      ]);
+      expect(runner.callsTo('dpkg-query').single.argv, [
+        '/usr/bin/dpkg-query',
+        '-W',
+        _showFormat,
+        'voges-word',
+        'voges-slides',
+      ]);
+    });
+
+    test('is refused when its package is of another app', () async {
+      final linux = platform();
+      final work = await linux.workDirectory();
+      final file = p.join(work.path, slides.linux.asset);
+      fields[file] =
+          'Package: voges-word\nVersion: 1.0.1\nArchitecture: amd64\n';
+      final place = await linux.installable(slides, host, const []);
+
+      final outcome = (await linux.install([
+        PendingInstall(
+          copy: place!,
+          version: const ReleaseVersion(1, 0, 1),
+          asset: verifiedFile(file),
+        ),
+      ], (_, _) {})).single;
+
+      expect(
+        (outcome as NotInstalled).failure.kind,
+        UpdateFailureKind.verification,
+      );
+      expect(runner.callsTo('pkexec'), isEmpty);
+    });
+  });
+
   group('folders', () {
     test('works in a private folder of /tmp', () async {
       final work = await platform().workDirectory();
