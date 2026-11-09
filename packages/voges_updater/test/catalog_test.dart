@@ -115,6 +115,16 @@ void main() {
     }
   });
 
+  test('every Windows AppId is an uppercase GUID in braces', () {
+    for (final app in vogesSuite) {
+      expect(
+        app.windows.appId,
+        matches(RegExp(r'^\{[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}\}$')),
+        reason: app.name,
+      );
+    }
+  });
+
   test('no two apps share what identifies an installed copy', () {
     for (final identity in <String Function(SuiteApp app)>[
       (app) => app.name,

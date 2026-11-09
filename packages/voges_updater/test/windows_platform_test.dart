@@ -20,6 +20,12 @@ const _pencilUserKey =
 const _pencilMachineKey =
     r'HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall'
     r'\{8A11B1A4-092A-4361-B2BE-A530D3024AD2}_is1';
+const _tablesUserKey =
+    r'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+    r'\{1A75A94C-0C6B-4F0F-8F00-6056405F6F37}_is1';
+const _tablesMachineKey =
+    r'HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+    r'\{1A75A94C-0C6B-4F0F-8F00-6056405F6F37}_is1';
 
 List<String> _query(String key) => [
   _reg,
@@ -88,6 +94,7 @@ void main() {
     test('reads DisplayVersion of each hive with reg.exe', () async {
       registry[_userKey] = _found(_userKey, '1.1.0');
       registry[_pencilMachineKey] = _found(_pencilMachineKey, '0.9.0');
+      registry[_tablesUserKey] = _found(_tablesUserKey, '0.8.0');
       const host = UpdaterHost(app: vogesWord, reopenPath: r'C:\x.exe');
 
       final copies = await platform().installed(vogesSuite, host);
@@ -97,8 +104,10 @@ void main() {
         _query(_machineKey),
         _query(_pencilUserKey),
         _query(_pencilMachineKey),
+        _query(_tablesUserKey),
+        _query(_tablesMachineKey),
       ]);
-      final [word, pencil] = copies;
+      final [word, pencil, tables] = copies;
       expect(word.app, same(vogesWord));
       expect(word.version, const ReleaseVersion(1, 1, 0));
       expect(word.scope, InstallScope.user);
@@ -109,6 +118,11 @@ void main() {
       expect(pencil.scope, InstallScope.allUsers);
       expect(pencil.location, _pencilMachineKey);
       expect(pencil.isHost, isFalse);
+      expect(tables.app, same(vogesTables));
+      expect(tables.version, const ReleaseVersion(0, 8, 0));
+      expect(tables.scope, InstallScope.user);
+      expect(tables.location, _tablesUserKey);
+      expect(tables.isHost, isFalse);
     });
 
     test('lists an install in each hive', () async {
