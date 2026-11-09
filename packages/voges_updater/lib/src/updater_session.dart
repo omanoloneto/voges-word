@@ -9,6 +9,7 @@ import 'github_releases.dart';
 import 'release_downloader.dart';
 import 'release_version.dart';
 import 'suite_platform.dart';
+import 'suite_source.dart';
 import 'update_failure.dart';
 import 'updater_lock.dart';
 
@@ -47,9 +48,12 @@ enum UpdateRowPhase {
 /// The manual ways out of a failed row, besides trying again.
 enum RowAction { openInstaller, showLog, downloadPage, copyCommand }
 
-/// An installed copy of a suite app in the updater's list.
+/// A suite app in the updater's list: an installed copy with an update, or
+/// an app that is not installed yet.
 final class UpdateRow {
-  UpdateRow._(this.copy, this.latest) : _selected = latest != null;
+  // a new app is offered, never chosen for the user
+  UpdateRow._(this.copy, this.latest)
+    : _selected = latest != null && !copy.isNew;
 
   final InstalledCopy copy;
 
@@ -65,6 +69,9 @@ final class UpdateRow {
   VerifiedAsset? _asset;
 
   SuiteApp get app => copy.app;
+
+  /// Whether this installs an app instead of updating one.
+  bool get isNew => copy.isNew;
   bool get checkFailed => latest == null;
   bool get selectable => latest != null && _phase != UpdateRowPhase.updated;
   bool get selected => _selected;
@@ -102,7 +109,7 @@ class UpdaterSession extends ChangeNotifier {
     required this.platform,
     required this.feed,
     required this.downloader,
-    this.catalog = vogesSuite,
+    this.suite = const FixedSuite(),
     this.pollInterval = const Duration(seconds: 1),
     SuiteApp? hostApp,
     String? operatingSystem,
@@ -118,7 +125,7 @@ class UpdaterSession extends ChangeNotifier {
   final SuitePlatform platform;
   final ReleaseFeed feed;
   final UpdateDownloader downloader;
-  final List<SuiteApp> catalog;
+  final SuiteSource suite;
   final Duration pollInterval;
 
   /// The app compiled into this process (Windows and Linux), named before
@@ -136,6 +143,7 @@ class UpdaterSession extends ChangeNotifier {
   final void Function(int code) _exit;
 
   var _stage = UpdaterStage.starting;
+  var _catalog = vogesSuite;
   var _rows = const <UpdateRow>[];
   var _blockers = const <RunningApp>[];
 
@@ -157,7 +165,7 @@ class UpdaterSession extends ChangeNotifier {
   bool get canClose => _stage != UpdaterStage.installing;
 
   /// The app that opened the updater.
-  SuiteApp get hostApp => _host?.app ?? _hostApp ?? catalog.first;
+  SuiteApp get hostApp => _host?.app ?? _hostApp ?? _catalog.first;
 
   /// Whether leaving opens [hostApp] again.
   bool get reopensHost =>
@@ -167,9 +175,9 @@ class UpdaterSession extends ChangeNotifier {
       _rows.where((row) => row.selectable && row._selected).length;
 
   /// The "select all" box: true when every update is selected, false when
-  /// none is, null when some are.
+  /// none is, null when some are. Apps that are not installed stay out.
   bool? get allSelected {
-    final selectable = _rows.where((row) => row.selectable);
+    final selectable = _rows.where((row) => row.selectable && !row.isNew);
     if (selectable.every((row) => row._selected)) return true;
     if (selectable.every((row) => !row._selected)) return false;
     return null;
@@ -216,6 +224,12 @@ class UpdaterSession extends ChangeNotifier {
   Future<void> _check() async {
     _enter(UpdaterStage.checking);
     final host = _host!;
+    try {
+      _catalog = await suite.apps();
+    } catch (_) {
+      // the apps already known still update
+    }
+    final catalog = _catalog;
     final List<InstalledCopy> copies;
     try {
       copies = await platform.installed(catalog, host);
@@ -228,27 +242,51 @@ class UpdaterSession extends ChangeNotifier {
       return;
     }
 
-    final apps = {for (final copy in copies) copy.app.repository: copy.app};
     final latest = <String, ReleaseVersion?>{};
     await Future.wait([
-      for (final app in apps.values)
+      for (final app in catalog)
         _latest(app).then((version) => latest[app.repository] = version),
     ]);
 
     final rows = <UpdateRow>[];
     for (final copy in copies) {
       final version = latest[copy.app.repository];
-      if (version == null || version.isNewerThan(copy.version)) {
+      if (version == null || version.isNewerThan(copy.version!)) {
         rows.add(UpdateRow._(copy, version));
       }
+    }
+    final unchecked = rows.any((row) => row.checkFailed);
+    for (final app in catalog) {
+      final version = latest[app.repository];
+      if (version == null ||
+          copies.any((copy) => copy.app.repository == app.repository)) {
+        continue;
+      }
+      final place = await _placeFor(app, host, copies);
+      if (place != null) rows.add(UpdateRow._(place, version));
     }
     _rows = List.unmodifiable(rows);
     if (_rows.any((row) => row.selectable)) {
       _enter(UpdaterStage.choosing);
-    } else if (latest.values.contains(null)) {
+    } else if (unchecked) {
       _enter(UpdaterStage.offline);
     } else {
       _enter(UpdaterStage.upToDate);
+    }
+  }
+
+  /// Where [app] would be installed; null when it can't be, which only
+  /// leaves it out of the list.
+  Future<InstalledCopy?> _placeFor(
+    SuiteApp app,
+    UpdaterHost host,
+    List<InstalledCopy> copies,
+  ) async {
+    try {
+      final place = await platform.installable(app, host, copies);
+      return place != null && place.isNew ? place : null;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -269,7 +307,7 @@ class UpdaterSession extends ChangeNotifier {
   void selectAll(bool on) {
     if (_stage != UpdaterStage.choosing) return;
     for (final row in _rows) {
-      if (row.selectable) row._selected = on;
+      if (row.selectable && !row.isNew) row._selected = on;
     }
     notifyListeners();
   }
@@ -370,8 +408,11 @@ class UpdaterSession extends ChangeNotifier {
 
   /// Polls until no instance of [rows] is open; false when cancelled.
   Future<bool> _waitForApps(List<UpdateRow> rows, int run) async {
-    final copies = [for (final row in rows) row.copy];
-    while (true) {
+    final copies = [
+      for (final row in rows)
+        if (!row.isNew) row.copy,
+    ];
+    while (copies.isNotEmpty) {
       List<RunningApp> running;
       try {
         running = await platform.running(copies);
@@ -448,7 +489,12 @@ class UpdaterSession extends ChangeNotifier {
       return;
     }
     _enter(UpdaterStage.finished);
-    if (!_rows.any((row) => row._phase == UpdateRowPhase.failed)) {
+    // a new app opens nowhere by itself, so its result stays on screen
+    final installedNew = rows.any(
+      (row) => row.isNew && row._phase == UpdateRowPhase.updated,
+    );
+    if (!installedNew &&
+        !_rows.any((row) => row._phase == UpdateRowPhase.failed)) {
       await _finishAndExit();
     }
   }
@@ -567,6 +613,10 @@ class UpdaterSession extends ChangeNotifier {
   }
 
   Future<void> openDownloadPage() => _open(Uri.parse(hostApp.downloadPage));
+
+  /// The website page of [row]'s app, for someone who doesn't know it yet.
+  Future<void> openAppPage(UpdateRow row) =>
+      _open(Uri.parse(row.app.downloadPage));
 
   Future<void> _open(Uri url) async {
     try {

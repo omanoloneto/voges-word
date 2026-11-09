@@ -251,12 +251,60 @@ void main() {
       );
     });
 
-    test('asks only for files of the releases', () {
+    test('asks for the installers of an app that came later', () async {
+      const names = [
+        'VogesSlides-macos.dmg',
+        'VogesSlides-windows-setup.exe',
+        'voges-slides-linux-amd64.deb',
+        'VogesMindMapPro-macos.dmg',
+        'voges-mind-map-pro-linux-amd64.deb',
+      ];
+      const folder = 'github.com/$_repository/releases/download/v1.2.3';
+      server.routes = {
+        for (final name in names) '$folder/$name': bytes([1, 2, 3]),
+      };
       final releases = production();
-      expect(
-        () => releases.fetch(_repository, _version, 'other.txt', maxBytes: 8),
-        throwsArgumentError,
-      );
+      for (final name in names) {
+        expect(await releases.fetch(_repository, _version, name, maxBytes: 8), [
+          1,
+          2,
+          3,
+        ], reason: name);
+      }
+      expect(server.requests, [for (final name in names) 'GET $folder/$name']);
+    });
+
+    test('asks only for files named as the suite names them', () {
+      final releases = production();
+      for (final name in [
+        'other.txt',
+        'Other-macos.dmg',
+        'Voges-macos.dmg',
+        'VogesSlides.dmg',
+        'VogesSlides-macos.dmg.exe',
+        'VogesSlides-macos.dmg\n',
+        '../VogesSlides-macos.dmg',
+        'a/VogesSlides-macos.dmg',
+        'vogesslides-macos.dmg',
+        'VogesSLIDES-macos.dmg',
+        'VogesSlides2-macos.dmg',
+        'VogesOneTwoThreeFour-macos.dmg',
+        'VogesSlides-linux-amd64.deb',
+        'voges-slides-macos.dmg',
+        'voges-linux-amd64.deb',
+        'voges--slides-linux-amd64.deb',
+        'voges-one-two-three-four-linux-amd64.deb',
+        'voges-slides-linux-arm64.deb',
+        'voges-slides-linux-amd64.deb?x',
+        'SHA256SUMS.txt.sig.sig',
+        '',
+      ]) {
+        expect(
+          () => releases.fetch(_repository, _version, name, maxBytes: 8),
+          throwsArgumentError,
+          reason: name,
+        );
+      }
       expect(
         () => releases.fetch(
           '../owner/repo',

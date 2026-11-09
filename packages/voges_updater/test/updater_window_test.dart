@@ -628,6 +628,224 @@ void main() {
     });
   });
 
+  group('apps that are not installed', () {
+    UiHarness offering({String word = '1.2.0'}) =>
+        UiHarness(latest: {vogesWord: word, vogesSheets: '1.0.1'});
+
+    Finder checkboxOf(String app) => find.descendant(
+      of: find.widgetWithText(CheckboxListTile, app),
+      matching: find.byType(Checkbox),
+    );
+
+    testWidgets('come after the updates, to be chosen', (tester) async {
+      final h = offering();
+      await h.session.start();
+      await pumpUpdater(tester, h);
+
+      expect(find.text('Not installed · version 1.0.1'), findsOneWidget);
+      expect(tile(tester, 'Voges Word').value, isTrue);
+      expect(tile(tester, 'Voges Sheets').value, isFalse);
+      expect(find.text('Select all'), findsNothing);
+      expect(find.text('All your Voges apps are up to date.'), findsNothing);
+      expect(button('Update 1 app'), findsOneWidget);
+
+      double top(String text) => tester.getTopLeft(find.text(text)).dy;
+      expect(top('Voges Word'), lessThan(top('More Voges apps')));
+      expect(top('More Voges apps'), lessThan(top('Voges Sheets')));
+
+      await tester.tap(checkboxOf('Voges Sheets'));
+      await tester.pump();
+      expect(button('Install 2 apps'), findsOneWidget);
+
+      await tester.tap(checkboxOf('Voges Word'));
+      await tester.pump();
+      expect(button('Install 1 app'), findsOneWidget);
+
+      await tester.tap(checkboxOf('Voges Sheets'));
+      await tester.pump();
+      expect(isEnabled(tester, 'Update 0 apps'), isFalse);
+    });
+
+    testWidgets('lead to their page on the website', (tester) async {
+      final h = offering();
+      await h.session.start();
+      await pumpUpdater(tester, h);
+
+      await tester.tap(button('Learn more'));
+      await tester.pump();
+      expect(h.opened, [Uri.parse('https://omanoloneto.pro/voges/sheets/')]);
+    });
+
+    testWidgets('stay out of select all', (tester) async {
+      final h = UiHarness(
+        copies: [
+          installedCopy(vogesWord, '1.1.0'),
+          installedCopy(vogesWord, '1.0.0', scope: InstallScope.allUsers),
+        ],
+        latest: {vogesWord: '1.2.0', vogesSheets: '1.0.1'},
+      );
+      await h.session.start();
+      await pumpUpdater(tester, h, size: const Size(560, 800));
+
+      expect(tile(tester, 'Select all').value, isTrue);
+      expect(tile(tester, 'Voges Sheets').value, isFalse);
+
+      await tester.tap(find.text('Select all'));
+      await tester.pump();
+      expect(tile(tester, 'Select all').value, isFalse);
+      await tester.tap(find.text('Select all'));
+      await tester.pump();
+      expect(tile(tester, 'Select all').value, isTrue);
+      expect(tile(tester, 'Voges Sheets').value, isFalse);
+      expect(button('Update 2 apps'), findsOneWidget);
+    });
+
+    testWidgets('are offered when every app is up to date', (tester) async {
+      final h = offering(word: '1.1.0');
+      await h.session.start();
+      await pumpUpdater(tester, h);
+
+      expect(find.text('All your Voges apps are up to date.'), findsOneWidget);
+      expect(find.text('More Voges apps'), findsOneWidget);
+      expect(find.byType(Checkbox), findsOneWidget);
+      expect(tile(tester, 'Voges Sheets').value, isFalse);
+      expect(isEnabled(tester, 'Install 0 apps'), isFalse);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(h.session.stage, UpdaterStage.choosing);
+
+      await tester.tap(checkboxOf('Voges Sheets'));
+      await tester.pump();
+      expect(isEnabled(tester, 'Install 1 app'), isTrue);
+    });
+
+    testWidgets('show what was installed until the window is left', (
+      tester,
+    ) async {
+      final h = offering(word: '1.1.0');
+      await h.session.start();
+      await pumpUpdater(tester, h);
+      await tester.tap(checkboxOf('Voges Sheets'));
+      await tester.pump();
+      await update(tester, 'Install 1 app');
+      await tester.pump(Duration.zero);
+
+      expect(h.session.stage, UpdaterStage.finished);
+      expect(find.text('Installed version 1.0.1'), findsOneWidget);
+      expect(find.text('More Voges apps'), findsOneWidget);
+      expect(find.text('All your Voges apps are up to date.'), findsNothing);
+      expect(h.exits, isEmpty);
+
+      await tester.tap(button('Open Voges Word'));
+      expect(h.platform.finished, [wordHost]);
+      await tester.pump(Duration.zero);
+      expect(h.exits, [0]);
+    });
+
+    testWidgets('tell an update from an install in the result', (tester) async {
+      final h = offering();
+      await h.session.start();
+      await pumpUpdater(tester, h);
+      await tester.tap(checkboxOf('Voges Sheets'));
+      await tester.pump();
+      await update(tester, 'Install 2 apps');
+
+      expect(find.text('Updated to 1.2.0'), findsOneWidget);
+      expect(find.text('Installed version 1.0.1'), findsOneWidget);
+    });
+
+    testWidgets('say that macOS refused the folder', (tester) async {
+      final h = offering(word: '1.1.0')
+        ..platform.onInstall = failAll(
+          const UpdateFailure(UpdateFailureKind.permission),
+        );
+      await h.session.start();
+      await pumpUpdater(tester, h);
+      await tester.tap(checkboxOf('Voges Sheets'));
+      await tester.pump();
+      await update(tester, 'Install 1 app');
+
+      expect(
+        find.text(
+          'macOS didn\'t allow installing Voges Sheets here. Install it '
+          'with the installer.',
+        ),
+        findsOneWidget,
+      );
+      expect(button('Try again'), findsOneWidget);
+    });
+
+    testWidgets('are named in Portuguese and Spanish', (tester) async {
+      const words = {
+        'pt': (
+          'Mais apps Voges',
+          'Não instalado · versão 1.0.1',
+          'Saiba mais',
+          'Instalar 2 apps',
+          'Instalar 1 app',
+          'Versão 1.0.1 instalada',
+        ),
+        'es': (
+          'Más apps de Voges',
+          'No instalada · versión 1.0.1',
+          'Más información',
+          'Instalar 2 apps',
+          'Instalar 1 app',
+          'Versión 1.0.1 instalada',
+        ),
+      };
+      for (final MapEntry(key: language, value: expected) in words.entries) {
+        final (title, state, more, both, one, done) = expected;
+        final h = offering();
+        await h.session.start();
+        await pumpUpdater(tester, h, locale: Locale(language));
+
+        expect(find.text(title), findsOneWidget);
+        expect(find.text(state), findsOneWidget);
+        expect(button(more), findsOneWidget);
+        h.session.select(h.row(vogesSheets), true);
+        await tester.pump();
+        expect(button(both), findsOneWidget);
+        h.session.select(h.row(vogesWord), false);
+        await tester.pump();
+        await update(tester, one);
+        await tester.pump(Duration.zero);
+        expect(find.text(done), findsOneWidget);
+      }
+    });
+
+    testWidgets('fit the smallest window', (tester) async {
+      for (final locale in UpdaterLocalizations.supportedLocales) {
+        final h = offering()
+          ..platform.onInstall = failAll(
+            const UpdateFailure(UpdateFailureKind.permission),
+          );
+        await h.session.start();
+        await pumpUpdater(
+          tester,
+          h,
+          locale: locale,
+          size: const Size(480, 420),
+        );
+        expect(tester.takeException(), isNull);
+
+        h.session.select(h.row(vogesSheets), true);
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+
+        await tester.tap(
+          find.byWidgetPredicate(
+            (w) => w is FilledButton && w.onPressed != null,
+          ),
+        );
+        await tester.pump();
+        expect(h.session.stage, UpdaterStage.finished);
+        expect(tester.takeException(), isNull);
+      }
+    });
+  });
+
   group('closing', () {
     testWidgets('is refused while installing', (tester) async {
       final h = UiHarness();

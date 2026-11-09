@@ -12,18 +12,32 @@ import 'windows_platform.dart';
 /// Windows registry hive of an install; macOS and Linux always use [user].
 enum InstallScope { user, allUsers }
 
-/// A suite app found on this computer.
+/// A suite app on this computer: a copy found here, or the place of an app
+/// that is not installed yet.
 final class InstalledCopy {
   const InstalledCopy({
     required this.app,
-    required this.version,
+    required ReleaseVersion this.version,
     required this.location,
     this.scope = InstallScope.user,
     this.isHost = false,
   });
 
+  /// Where [app], which is not installed yet, would go.
+  const InstalledCopy.absent({
+    required this.app,
+    required this.location,
+    this.scope = InstallScope.user,
+  }) : version = null,
+       isHost = false;
+
   final SuiteApp app;
-  final ReleaseVersion version;
+
+  /// Null for an app that is not installed yet.
+  final ReleaseVersion? version;
+
+  /// Whether installing puts a new app here instead of replacing one.
+  bool get isNew => version == null;
 
   /// macOS: the .app folder; Windows: the uninstall registry key;
   /// Linux: the installed executable.
@@ -50,7 +64,7 @@ final class RunningApp {
   final bool otherAccount;
 }
 
-/// A verified download waiting to replace [copy].
+/// A verified download waiting to replace [copy], or to be installed there.
 final class PendingInstall {
   const PendingInstall({
     required this.copy,
@@ -130,6 +144,15 @@ abstract interface class SuitePlatform {
   Future<List<InstalledCopy>> installed(
     List<SuiteApp> catalog,
     UpdaterHost? host,
+  );
+
+  /// Where [app], which is not among the [installed] copies, can be
+  /// installed without asking the user where: next to the app that opened
+  /// the updater. Null when this updater cannot install it.
+  Future<InstalledCopy?> installable(
+    SuiteApp app,
+    UpdaterHost host,
+    List<InstalledCopy> installed,
   );
 
   /// Instances of [copies] that are open now.

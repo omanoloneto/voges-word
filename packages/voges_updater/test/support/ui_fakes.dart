@@ -47,6 +47,16 @@ InstalledCopy installedCopy(
   isHost: app == vogesWord,
 );
 
+/// The place of [app] when it is not installed yet.
+InstalledCopy absentCopy(
+  SuiteApp app, {
+  InstallScope scope = InstallScope.user,
+}) => InstalledCopy.absent(
+  app: app,
+  location: '/Applications/${app.macos.bundleName}',
+  scope: scope,
+);
+
 typedef InstallHandler =
     Future<List<InstallOutcome>> Function(
       List<PendingInstall> items,
@@ -63,10 +73,19 @@ class FakePlatform implements SuitePlatform {
   /// Each check of the open apps takes the next answer; the last one repeats.
   List<List<RunningApp>> runningAnswers = [const []];
   var runningChecks = 0;
+  final runningAsked = <List<InstalledCopy>>[];
   var hostChecks = 0;
 
   /// Installs everything when null.
   InstallHandler? onInstall;
+
+  /// Where an app that is not installed would go; next to Voges Word when
+  /// null.
+  Future<InstalledCopy?> Function(SuiteApp app)? onInstallable;
+  final installableAsked = <SuiteApp>[];
+
+  /// The suite each search for installed copies was given.
+  final catalogs = <List<SuiteApp>>[];
 
   final installs = <List<PendingInstall>>[];
   final finished = <UpdaterHost?>[];
@@ -94,12 +113,24 @@ class FakePlatform implements SuitePlatform {
     List<SuiteApp> catalog,
     UpdaterHost? host,
   ) async {
+    catalogs.add(catalog);
     if (installedError case final error?) throw error;
     return copies;
   }
 
   @override
+  Future<InstalledCopy?> installable(
+    SuiteApp app,
+    UpdaterHost host,
+    List<InstalledCopy> installed,
+  ) {
+    installableAsked.add(app);
+    return onInstallable?.call(app) ?? Future.value(absentCopy(app));
+  }
+
+  @override
   Future<List<RunningApp>> running(List<InstalledCopy> copies) async {
+    runningAsked.add(copies);
     final answer =
         runningAnswers[math.min(runningChecks, runningAnswers.length - 1)];
     runningChecks++;
@@ -218,6 +249,7 @@ class UiHarness {
     bool lockFails = false,
     String operatingSystem = 'macos',
     bool manualDownloads = false,
+    SuiteSource suite = const FixedSuite([vogesWord, vogesSheets]),
   }) : platform = FakePlatform(copies ?? [installedCopy(vogesWord, '1.1.0')]),
        feed = FakeFeed({
          for (final MapEntry(key: app, value: text) in latest.entries)
@@ -228,7 +260,7 @@ class UiHarness {
       platform: platform,
       feed: feed,
       downloader: downloader,
-      catalog: const [vogesWord, vogesSheets],
+      suite: suite,
       operatingSystem: operatingSystem,
       acquireLock: () async {
         if (lockFails) throw const FileSystemException('no cache folder');

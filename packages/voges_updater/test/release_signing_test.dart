@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:voges_updater/core.dart';
 
 import '../tool/release_signing.dart';
+import 'support/core_support.dart';
 
 const _gh = '/opt/fake/bin/gh';
 const _security = '/usr/bin/security';
@@ -418,10 +419,11 @@ void main() {
     List<String> arguments, {
     String? gh = _gh,
     List<String>? trustedKeys,
+    String checkout = _checkout,
   }) => ReleaseSigning(
     runner: system,
     gh: gh,
-    checkout: _checkout,
+    checkout: checkout,
     verifier: ReleaseVerifier(trustedKeys: trustedKeys ?? [publicKey]),
     out: out,
     err: err,
@@ -836,6 +838,206 @@ void main() {
     }
   });
 
+  group('sign-suite', () {
+    late String checkout;
+
+    setUp(() {
+      system.keychain = base64.encode(_seed);
+      checkout = temporaryFolder().path;
+    });
+
+    File file(String name) => File(p.join(checkout, 'suite', name));
+
+    Future<int> signSuite({List<String>? trustedKeys}) =>
+        run(['sign-suite'], trustedKeys: trustedKeys, checkout: checkout);
+
+    Future<SuiteList> written() =>
+        ReleaseVerifier(trustedKeys: [publicKey]).verifySuiteList(
+          list: file('suite.json').readAsBytesSync(),
+          signature: file('suite.json.sig').readAsBytesSync(),
+        );
+
+    Future<void> commit({
+      required int serial,
+      required List<SuiteApp> apps,
+      List<int>? seed,
+    }) async {
+      final list = SuiteList.encode(serial: serial, apps: apps);
+      file('suite.json')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(list);
+      file(
+        'suite.json.sig',
+      ).writeAsBytesSync(await signSuiteList(seed: seed ?? _seed, list: list));
+    }
+
+    List<String> names(SuiteList list) => [
+      for (final app in list.apps) app.name,
+    ];
+
+    test('writes the first list, signed, with the apps of the build', () async {
+      expect(await signSuite(), 0, reason: '$err');
+
+      final list = await written();
+      expect(list.serial, 1);
+      expect(names(list), [for (final app in vogesSuite) app.name]);
+      expect(list.mergedInto(vogesSuite), vogesSuite);
+      expect('$out', contains('serial 1'));
+      expect('$out', contains(PublishedSuite.address));
+      expect('$out$err', isNot(contains(system.keychain!)));
+      expect(system.calls, [
+        [
+          _security,
+          'find-generic-password',
+          '-a',
+          'voges',
+          '-s',
+          anything,
+          '-w',
+        ],
+      ]);
+    });
+
+    test('writes nothing when the list already has the suite', () async {
+      await commit(serial: 4, apps: vogesSuite);
+      final before = file('suite.json').readAsBytesSync();
+      final signature = file('suite.json.sig').readAsBytesSync();
+
+      expect(await signSuite(), 0, reason: '$err');
+
+      expect(file('suite.json').readAsBytesSync(), before);
+      expect(file('suite.json.sig').readAsBytesSync(), signature);
+      expect('$out', contains('already lists the suite (serial 4)'));
+      // the key is not even read
+      expect(system.calls, isEmpty);
+    });
+
+    test('gives the next serial to a list with other apps', () async {
+      await commit(serial: 6, apps: [vogesWord]);
+
+      expect(await signSuite(), 0, reason: '$err');
+
+      final list = await written();
+      expect(list.serial, 7);
+      expect(names(list), [for (final app in vogesSuite) app.name]);
+    });
+
+    test('refuses a key the apps do not trust', () async {
+      final other = await publicKeyOf(List.filled(32, 1));
+
+      expect(await signSuite(trustedKeys: [other]), 1);
+
+      expect('$err', contains('The apps would reject this list'));
+      expect(Directory(p.join(checkout, 'suite')).existsSync(), isFalse);
+    });
+
+    test('needs the key', () async {
+      system.keychain = null;
+
+      expect(await signSuite(), 1);
+
+      expect('$err', contains('Run init first'));
+      expect(Directory(p.join(checkout, 'suite')).existsSync(), isFalse);
+    });
+
+    final spoiled = <String, Future<void> Function(File list, File signature)>{
+      'signed by another key': (list, signature) async {
+        signature.writeAsBytesSync(
+          await signSuiteList(
+            seed: List.filled(32, 1),
+            list: list.readAsBytesSync(),
+          ),
+        );
+      },
+      'changed after it was signed': (list, signature) async {
+        list.writeAsBytesSync([...list.readAsBytesSync(), 0x20]);
+      },
+      'without its signature': (list, signature) async {
+        signature.deleteSync();
+      },
+      'without the list of its signature': (list, signature) async {
+        list.deleteSync();
+      },
+    };
+    for (final MapEntry(key: name, value: spoil) in spoiled.entries) {
+      test('refuses to start from a list $name', () async {
+        await commit(serial: 6, apps: [vogesWord]);
+        final list = file('suite.json');
+        final signature = file('suite.json.sig');
+        await spoil(list, signature);
+        Uint8List? read(File file) =>
+            file.existsSync() ? file.readAsBytesSync() : null;
+        final before = [read(list), read(signature)];
+
+        expect(await signSuite(), 1);
+
+        expect('$err', contains('Restore it from git'));
+        expect([read(list), read(signature)], before);
+        expect(system.calls, isEmpty);
+      });
+    }
+  });
+
+  group('followsNamingConvention', () {
+    SuiteApp app({
+      String name = 'Voges Slides',
+      String repository = 'omanoloneto/voges-slides',
+      String downloadPage = 'https://omanoloneto.pro/voges/slides/',
+      String bundleId = 'com.omanoloneto.vogesSlides',
+      String bundleName = 'Voges Slides.app',
+      String macosAsset = 'VogesSlides-macos.dmg',
+      String executable = 'voges_slides.exe',
+      String windowsAsset = 'VogesSlides-windows-setup.exe',
+      String package = 'voges-slides',
+      String binary = '/usr/lib/voges-slides/voges_slides',
+      String launcher = '/usr/bin/voges-slides',
+      String linuxAsset = 'voges-slides-linux-amd64.deb',
+    }) => SuiteApp(
+      name: name,
+      repository: repository,
+      downloadPage: downloadPage,
+      macos: MacosTarget(
+        bundleId: bundleId,
+        bundleName: bundleName,
+        asset: macosAsset,
+      ),
+      windows: WindowsTarget(
+        appId: '{00000000-0000-0000-0000-0000000000A1}',
+        executable: executable,
+        asset: windowsAsset,
+      ),
+      linux: LinuxTarget(
+        package: package,
+        binary: binary,
+        launcher: launcher,
+        asset: linuxAsset,
+      ),
+    );
+
+    test('holds for an app written out as the convention derives it', () {
+      expect(followsNamingConvention(app()), isTrue);
+    });
+
+    test('fails when any field is another one', () {
+      for (final other in [
+        app(name: 'Slides'),
+        app(repository: 'omanoloneto/slides'),
+        app(downloadPage: 'https://omanoloneto.pro/slides/'),
+        app(bundleId: 'com.omanoloneto.slides'),
+        app(bundleName: 'Slides.app'),
+        app(macosAsset: 'Slides-macos.dmg'),
+        app(executable: 'slides.exe'),
+        app(windowsAsset: 'Slides-windows-setup.exe'),
+        app(package: 'slides'),
+        app(binary: '/usr/lib/slides/slides'),
+        app(launcher: '/usr/bin/slides'),
+        app(linuxAsset: 'slides-linux-amd64.deb'),
+      ]) {
+        expect(followsNamingConvention(other), isFalse);
+      }
+    });
+  });
+
   test('prints the usage for anything else', () async {
     final pencil = vogesPencil.repository;
     for (final arguments in [
@@ -852,6 +1054,8 @@ void main() {
       ['publish', pencil, _tag, '--clone', _pencilClone, '--clone', '/b'],
       ['publish', pencil, '--clone', _pencilClone, _tag],
       ['sign', _repository, _tag],
+      ['sign-suite', 'extra'],
+      ['sign-suite', '--dry-run'],
     ]) {
       expect(await run(arguments), 64, reason: '$arguments');
     }

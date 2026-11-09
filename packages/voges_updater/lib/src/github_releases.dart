@@ -170,17 +170,13 @@ final class GitHubReleases implements ReleaseFeed {
     r'^[A-Za-z0-9-]+/[A-Za-z0-9_][A-Za-z0-9._-]*$',
   );
 
-  /// The only files ever requested: what the catalog names, so a tampered
-  /// answer can never make the updater fetch something else.
-  static final _releaseFiles = {
-    checksumsAsset,
-    signatureAsset,
-    for (final app in vogesSuite) ...[
-      app.macos.asset,
-      app.windows.asset,
-      app.linux.asset,
-    ],
-  };
+  /// The only files ever requested: the checksums, their signature and
+  /// an installer named as `SuiteApp.conventional` names it, so nothing
+  /// can make the updater fetch something else.
+  static final _installer = RegExp(
+    r'^(Voges([A-Z][a-z]+){1,3}-(macos\.dmg|windows-setup\.exe)'
+    r'|voges(-[a-z]+){1,3}-linux-amd64\.deb)$',
+  );
 
   Uri _url(String repository, String path) {
     if (!_repository.hasMatch(repository)) {
@@ -190,7 +186,9 @@ final class GitHubReleases implements ReleaseFeed {
   }
 
   Uri _fileUrl(String repository, ReleaseVersion version, String name) {
-    if (!_releaseFiles.contains(name)) {
+    if (name != checksumsAsset &&
+        name != signatureAsset &&
+        !_installer.hasMatch(name)) {
       throw ArgumentError.value(name, 'name', 'not a file of the releases');
     }
     return _url(repository, 'releases/download/${version.tag}/$name');

@@ -108,6 +108,13 @@ final class LinuxPlatform implements SuitePlatform {
     ];
   }
 
+  @override
+  Future<InstalledCopy?> installable(
+    SuiteApp app,
+    UpdaterHost host,
+    List<InstalledCopy> installed,
+  ) async => InstalledCopy.absent(app: app, location: app.linux.binary);
+
   /// Instances found through `/proc/<pid>/exe`, which names the executable
   /// however the app was started. Other users' processes cannot be read and
   /// are skipped: they keep running through an upgrade anyway.

@@ -409,6 +409,148 @@ void main() {
     });
   });
 
+  group('a new app', () {
+    final slides = SuiteApp.conventional(
+      name: 'Voges Slides',
+      windowsAppId: '{00000000-0000-0000-0000-0000000000A1}',
+    );
+    const slidesUserKey =
+        r'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+        r'\{00000000-0000-0000-0000-0000000000A1}_is1';
+    const slidesMachineKey =
+        r'HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+        r'\{00000000-0000-0000-0000-0000000000A1}_is1';
+    const host = UpdaterHost(app: vogesWord, reopenPath: r'C:\x.exe');
+
+    InstalledCopy word(InstallScope scope, {bool isHost = true}) =>
+        InstalledCopy(
+          app: vogesWord,
+          version: const ReleaseVersion(1, 1, 0),
+          location: scope == InstallScope.user ? _userKey : _machineKey,
+          scope: scope,
+          isHost: isHost,
+        );
+
+    test('goes in the hive of the app that opened the updater', () async {
+      for (final (scope, key) in [
+        (InstallScope.user, slidesUserKey),
+        (InstallScope.allUsers, slidesMachineKey),
+      ]) {
+        final place = await platform().installable(slides, host, [word(scope)]);
+
+        expect(place?.app, same(slides));
+        expect(place?.isNew, isTrue);
+        expect(place?.version, isNull);
+        expect(place?.scope, scope);
+        expect(place?.location, key);
+        expect(place?.isHost, isFalse);
+      }
+      expect(runner.calls, isEmpty);
+    });
+
+    test('goes in the user hive when the host is in both', () async {
+      final place = await platform().installable(slides, host, [
+        word(InstallScope.allUsers),
+        word(InstallScope.user),
+      ]);
+
+      expect(place?.scope, InstallScope.user);
+      expect(place?.location, slidesUserKey);
+    });
+
+    test('has no place without an installed host', () async {
+      final windows = platform();
+
+      expect(await windows.installable(slides, host, const []), isNull);
+      expect(
+        await windows.installable(slides, host, [
+          word(InstallScope.user, isHost: false),
+        ]),
+        isNull,
+      );
+    });
+
+    test('runs its installer in that hive, with the defaults', () async {
+      for (final (scope, key, flag, step) in [
+        (
+          InstallScope.user,
+          slidesUserKey,
+          '/CURRENTUSER',
+          InstallStep.installing,
+        ),
+        (
+          InstallScope.allUsers,
+          slidesMachineKey,
+          '/ALLUSERS',
+          InstallStep.waitingForPermission,
+        ),
+      ]) {
+        registry.clear();
+        runner.calls.clear();
+        runner.onStart = (_) {
+          registry[key] = _found(key, '1.0.1');
+          return FakeProcess();
+        };
+        final windows = platform();
+        final downloads = await windows.workDirectory();
+        final place = await windows.installable(slides, host, [word(scope)]);
+        final item = PendingInstall(
+          copy: place!,
+          version: const ReleaseVersion(1, 0, 1),
+          asset: verifiedFile(
+            p.join(downloads.path, 'VogesSlides-windows-setup.exe'),
+          ),
+        );
+        final steps = <InstallStep>[];
+
+        final outcome = (await windows.install([
+          item,
+        ], (_, step) => steps.add(step))).single;
+
+        expect((outcome as Installed).version, const ReleaseVersion(1, 0, 1));
+        expect(steps, [step]);
+        expect(
+          runner.calls.where((call) => call.mode != null).map((c) => c.argv),
+          [
+            [
+              item.asset.file.path,
+              '/VERYSILENT',
+              '/SUPPRESSMSGBOXES',
+              '/NORESTART',
+              '/SP-',
+              flag,
+              '/LOG=${p.join(root.path, 'voges-updater-abc123', 'logs', 'VogesSlides-windows-setup-${scope.name}.log')}',
+            ],
+          ],
+        );
+        expect(runner.argvs.where((argv) => argv.first == _reg), [_query(key)]);
+      }
+    });
+
+    test('is not installed while the registry does not show it', () async {
+      final windows = platform();
+      final downloads = await windows.workDirectory();
+      final place = await windows.installable(slides, host, [
+        word(InstallScope.user),
+      ]);
+
+      final outcome = (await windows.install([
+        PendingInstall(
+          copy: place!,
+          version: const ReleaseVersion(1, 0, 1),
+          asset: verifiedFile(
+            p.join(downloads.path, 'VogesSlides-windows-setup.exe'),
+          ),
+        ),
+      ], (_, _) {})).single;
+
+      final failure = (outcome as NotInstalled).failure;
+      expect(failure.kind, UpdateFailureKind.failed);
+      expect(failure.detail, 'DisplayVersion after install: null');
+      expect(failure.logPath, isNotNull);
+    });
+  });
+
   group('folders', () {
     test('keeps the downloads next to the running copy', () async {
       final work = await platform().workDirectory();

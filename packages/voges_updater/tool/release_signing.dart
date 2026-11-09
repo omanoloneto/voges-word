@@ -5,11 +5,13 @@
 ///     dart run tool/release_signing.dart public-key
 ///     dart run tool/release_signing.dart publish <owner/repo> <vX.Y.Z> \
 ///         [--clone <path>] [--dry-run]
+///     dart run tool/release_signing.dart sign-suite
 ///
 /// `init` creates the key once. `public-key` prints the public key that
 /// `releaseSigningKeys` must list. `publish` signs the checksums of a draft
 /// that the release workflow created, uploads the signature and publishes
-/// the draft.
+/// the draft. `sign-suite` signs the list of the apps in `vogesSuite`, which
+/// the website publishes so the apps already installed offer a new one.
 ///
 /// The release tag must be in a local clone of the app: this one for
 /// omanoloneto/voges-word, which hosts this package, and the one given with
@@ -55,16 +57,53 @@ Future<Uint8List> signChecksums({
   required String repository,
   required ReleaseVersion version,
   required Uint8List checksums,
-}) async {
+}) => _signatureFile(seed, signedMessage(repository, version, checksums));
+
+/// The `suite.json.sig` of the suite [list] that `ReleaseVerifier` accepts.
+Future<Uint8List> signSuiteList({
+  required List<int> seed,
+  required Uint8List list,
+}) => _signatureFile(seed, signedSuiteMessage(list));
+
+Future<Uint8List> _signatureFile(List<int> seed, Uint8List message) async {
   final algorithm = DartEd25519();
   final signature = await algorithm.sign(
-    signedMessage(repository, version, checksums),
+    message,
     keyPair: await algorithm.newKeyPairFromSeed(seed),
   );
   return utf8.encode('${base64.encode(signature.bytes)}\n');
 }
 
-/// The `init` and `publish` commands. Every system tool runs through
+/// Whether every field of [app] is the one the suite's naming convention
+/// derives from its name. An installed app that came before [app] knows
+/// nothing else about it.
+bool followsNamingConvention(SuiteApp app) {
+  final SuiteApp derived;
+  try {
+    derived = SuiteApp.conventional(
+      name: app.name,
+      windowsAppId: app.windows.appId,
+    );
+  } on FormatException {
+    return false;
+  }
+  List<String> fields(SuiteApp app) => [
+    app.repository,
+    app.downloadPage,
+    app.macos.bundleId,
+    app.macos.bundleName,
+    app.macos.asset,
+    app.windows.executable,
+    app.windows.asset,
+    app.linux.package,
+    app.linux.binary,
+    app.linux.launcher,
+    app.linux.asset,
+  ];
+  return fields(app).join('\n') == fields(derived).join('\n');
+}
+
+/// The commands of this tool. Every system tool runs through
 /// [runner] and every message goes to [out] or [err], so tests replace them.
 final class ReleaseSigning {
   ReleaseSigning({
@@ -107,12 +146,18 @@ final class ReleaseSigning {
   static const packageRepository = 'omanoloneto/voges-word';
   static const packagePath = 'packages/voges_updater';
 
+  /// The signed suite list in this package, published as is by the website.
+  static const suiteFolder = 'suite';
+  static const suiteListFile = 'suite.json';
+  static const suiteSignatureFile = 'suite.json.sig';
+
   static const usage =
       'Usage:\n'
       '  dart run tool/release_signing.dart init\n'
       '  dart run tool/release_signing.dart public-key\n'
       '  dart run tool/release_signing.dart publish <owner/repo> <vX.Y.Z> '
       '[--clone <path>] [--dry-run]\n'
+      '  dart run tool/release_signing.dart sign-suite\n'
       '\n'
       '--clone is the local clone of an app that is not in $packageRepository.';
 
@@ -140,6 +185,8 @@ final class ReleaseSigning {
             clone: options.clone,
             dryRun: options.dryRun,
           );
+        case ['sign-suite']:
+          await signSuite();
         default:
           return _usage();
       }
@@ -668,6 +715,88 @@ final class ReleaseSigning {
     }
     _refuse('gh api answered without the author and assets of the release.');
   }
+
+  /// Signs the list of the apps in `vogesSuite` and writes it, with its
+  /// signature, to [suiteFolder]. Its serial is the one of the list already
+  /// there plus one, so every installed app takes it for the newest. Does
+  /// nothing when that list already has those apps.
+  Future<void> signSuite() async {
+    final folder = Directory(p.join(checkout, suiteFolder));
+    final listFile = File(p.join(folder.path, suiteListFile));
+    final signatureFile = File(p.join(folder.path, suiteSignatureFile));
+    for (final app in vogesSuite) {
+      if (!followsNamingConvention(app)) {
+        _refuse(
+          '${app.name} does not follow the naming convention of the suite, '
+          'so the apps already installed would look for it in the wrong '
+          'places.',
+        );
+      }
+    }
+    final current = await _currentSuite(listFile, signatureFile);
+    if (current != null && _listsTheSuite(current)) {
+      out.writeln(
+        '$suiteFolder/$suiteListFile already lists the suite '
+        '(serial ${current.serial}). Nothing was written.',
+      );
+      return;
+    }
+
+    final serial = (current?.serial ?? 0) + 1;
+    final list = SuiteList.encode(serial: serial, apps: vogesSuite);
+    final signature = await signSuiteList(
+      seed: _seedOf(await _readKey()),
+      list: list,
+    );
+    final SuiteList signed;
+    try {
+      signed = await verifier.verifySuiteList(list: list, signature: signature);
+    } on UpdateFailure catch (failure) {
+      _refuse(
+        'The apps would reject this list (${failure.detail}). Nothing was '
+        'written.',
+      );
+    }
+    if (!_listsTheSuite(signed)) {
+      _refuse('The list read back is not the suite. Nothing was written.');
+    }
+    await folder.create();
+    await signatureFile.writeAsBytes(signature, flush: true);
+    await listFile.writeAsBytes(list, flush: true);
+    out
+      ..writeln(
+        'Signed the suite list, serial $serial: '
+        '${[for (final app in vogesSuite) app.name].join(', ')}.',
+      )
+      ..writeln(
+        'Commit $suiteFolder/ and publish both files, as they are, next to '
+        'each other at ${PublishedSuite.address}.',
+      );
+  }
+
+  /// The list already in [suiteFolder]; null when there is none yet.
+  Future<SuiteList?> _currentSuite(File list, File signature) async {
+    if (!await list.exists() && !await signature.exists()) return null;
+    try {
+      return await verifier.verifySuiteList(
+        list: await list.readAsBytes(),
+        signature: await signature.readAsBytes(),
+      );
+    } on Exception {
+      _refuse(
+        '$suiteFolder/ does not hold a list signed by a trusted key. '
+        'Restore it from git: the next serial starts from it.',
+      );
+    }
+  }
+
+  static bool _listsTheSuite(SuiteList list) =>
+      list.apps.length == vogesSuite.length &&
+      Iterable<int>.generate(vogesSuite.length).every(
+        (i) =>
+            list.apps[i].name == vogesSuite[i].name &&
+            list.apps[i].windows.appId == vogesSuite[i].windows.appId,
+      );
 
   static bool _same(List<int> a, List<int> b) {
     if (a.length != b.length) return false;

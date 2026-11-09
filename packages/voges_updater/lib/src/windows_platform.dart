@@ -108,6 +108,29 @@ final class WindowsPlatform implements SuitePlatform {
     return copies;
   }
 
+  /// In the scope of the app that opened the updater, so a new app asks for
+  /// the administrator only when that app's own updates do.
+  @override
+  Future<InstalledCopy?> installable(
+    SuiteApp app,
+    UpdaterHost host,
+    List<InstalledCopy> installed,
+  ) async {
+    final scopes = {
+      for (final copy in installed)
+        if (copy.isHost) copy.scope,
+    };
+    if (scopes.isEmpty) return null;
+    final scope = scopes.contains(InstallScope.user)
+        ? InstallScope.user
+        : InstallScope.allUsers;
+    return InstalledCopy.absent(
+      app: app,
+      location: _uninstallKey(app, scope),
+      scope: scope,
+    );
+  }
+
   @override
   Future<List<RunningApp>> running(List<InstalledCopy> copies) async {
     final session = _session ??= await _ownSession();
@@ -229,8 +252,9 @@ final class WindowsPlatform implements SuitePlatform {
   }
 
   /// Runs Inno Setup silently in the scope where the app was found, so it
-  /// reuses that install's folder, tasks and language. It never forces apps
-  /// to close: with unsaved work it stops with code 5 before changing files.
+  /// reuses that install's folder, tasks and language; a new app gets the
+  /// installer's defaults. It never forces apps to close: with unsaved work
+  /// it stops with code 5 before changing files.
   Future<int> _runInstaller(PendingInstall item, String log) async {
     final process = await runner.start(item.asset.file.path, [
       '/VERYSILENT',

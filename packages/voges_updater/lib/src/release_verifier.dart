@@ -7,6 +7,7 @@ import 'package:cryptography/dart.dart';
 import 'catalog.dart';
 import 'release_trust.dart';
 import 'release_version.dart';
+import 'suite_list.dart';
 import 'update_failure.dart';
 
 /// Reads a `SHA256SUMS.txt`: file name to lowercase SHA-256. Every line that
@@ -47,8 +48,18 @@ Uint8List signedMessage(
     ..setAll(header.length, checksums);
 }
 
-/// Checks the Ed25519 signature of a release's checksums against the keys
-/// compiled into the app.
+/// The bytes the signature of the suite list covers. The first line is not
+/// the one of [signedMessage], so the signature of a release never passes
+/// for a list, nor the other way around.
+Uint8List signedSuiteMessage(Uint8List list) {
+  final header = utf8.encode('voges-suite v1\n');
+  return Uint8List(header.length + list.length)
+    ..setAll(0, header)
+    ..setAll(header.length, list);
+}
+
+/// Checks the Ed25519 signature of a release's checksums, and of the suite
+/// list, against the keys compiled into the app.
 final class ReleaseVerifier {
   ReleaseVerifier({List<String>? trustedKeys})
     : trustedKeys = trustedKeys ?? trustedReleaseKeys;
@@ -64,8 +75,34 @@ final class ReleaseVerifier {
     required Uint8List checksums,
     required Uint8List signature,
   }) async {
+    await _requireSigned(
+      signedMessage(repository, version, checksums),
+      signature,
+    );
+    try {
+      return parseChecksums(ascii.decode(checksums));
+    } on FormatException catch (error) {
+      throw _failure('$checksumsAsset: ${error.message}');
+    }
+  }
+
+  /// The suite list in [list], once [signature] is valid for exactly those
+  /// bytes; throws an `UpdateFailure` of kind verification otherwise.
+  Future<SuiteList> verifySuiteList({
+    required Uint8List list,
+    required Uint8List signature,
+  }) async {
+    await _requireSigned(signedSuiteMessage(list), signature);
+    try {
+      return SuiteList.parse(list);
+    } on FormatException catch (error) {
+      throw _failure('suite list: ${error.message}');
+    }
+  }
+
+  /// Throws unless one of the trusted keys made [signature] over [message].
+  Future<void> _requireSigned(Uint8List message, Uint8List signature) async {
     final signatureBytes = _signatureBytes(signature);
-    final message = signedMessage(repository, version, checksums);
     final algorithm = DartEd25519();
     for (final key in trustedKeys) {
       final keyBytes = _decodeExactly(key, 32);
@@ -77,12 +114,7 @@ final class ReleaseVerifier {
           publicKey: SimplePublicKey(keyBytes, type: KeyPairType.ed25519),
         ),
       );
-      if (!trusted) continue;
-      try {
-        return parseChecksums(ascii.decode(checksums));
-      } on FormatException catch (error) {
-        throw _failure('$checksumsAsset: ${error.message}');
-      }
+      if (trusted) return;
     }
     throw _failure(
       trustedKeys.isEmpty
