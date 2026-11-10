@@ -137,6 +137,24 @@ class _TextLineState extends State<TextLine> {
     super.dispose();
   }
 
+  // Voges Word: the same span while the indent keeps its width. A new one
+  // never equals the old one, and the whole paragraph would be laid out and
+  // painted again on every build.
+  WidgetSpan? _indentSpan;
+  double _indentWidth = 0;
+
+  WidgetSpan _indentSpanFor(double width) {
+    if (_indentSpan == null || _indentWidth != width) {
+      _indentWidth = width;
+      _indentSpan = WidgetSpan(
+        alignment: PlaceholderAlignment.baseline,
+        baseline: TextBaseline.alphabetic,
+        child: SizedBox(width: width),
+      );
+    }
+    return _indentSpan!;
+  }
+
   /// Check if this line contains the placeholder attribute
   bool get isPlaceholderLine =>
       widget.line.toDelta().first.attributes?.containsKey('placeholder') ??
@@ -182,14 +200,10 @@ class _TextLineState extends State<TextLine> {
     final firstLine = widget.lineFormat?.call(widget.line)?.firstLine ?? 0;
     final indented = firstLine > 0;
     if (indented) {
-      textSpan = TextSpan(style: textSpan.style, children: [
-        WidgetSpan(
-          alignment: PlaceholderAlignment.baseline,
-          baseline: TextBaseline.alphabetic,
-          child: SizedBox(width: firstLine),
-        ),
-        textSpan,
-      ]);
+      textSpan = TextSpan(
+        style: textSpan.style,
+        children: [_indentSpanFor(firstLine), textSpan],
+      );
     }
     final child = RichText(
       key: _richTextKey,
