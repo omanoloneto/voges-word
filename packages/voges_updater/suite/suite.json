@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "serial": 1,
+  "serial": 2,
   "apps": [
     {
       "name": "Voges Word",
@@ -13,6 +13,10 @@
     {
       "name": "Voges Tables",
       "windowsAppId": "{1A75A94C-0C6B-4F0F-8F00-6056405F6F37}"
+    },
+    {
+      "name": "Voges Slides",
+      "windowsAppId": "{4DC4094D-935D-4401-9890-C938262346EA}"
     }
   ]
 }
