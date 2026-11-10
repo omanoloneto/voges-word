@@ -29,6 +29,7 @@ abstract base class Leaf extends Node {
     _value = v;
     _length = null;
     clearOffsetCache();
+    markChanged();
   }
 
   Object _value;
@@ -56,6 +57,7 @@ abstract base class Leaf extends Node {
   void clearLengthCache() {
     // Voges Word: as a line does, a leaf that is unlinked or has one linked
     // before it clears its offset and the ones after it, which Quill kept.
+    bumpRevision();
     clearOffsetCache();
     if (parent != null) {
       parent!.clearLengthCache();
