@@ -356,18 +356,23 @@ void main() {
         File(p.join(Directory.current.path, 'suite', name)).readAsBytesSync();
 
     test(
-      'is signed by a pinned key and lists the suite of the build',
+      'is signed by a pinned key and lists the released apps of the build',
       () async {
-        // published as it is: the apps already installed read these bytes
+        // published as it is: the apps already installed read these bytes;
+        // an app joins the build before its first release and the list after
         final list = await ReleaseVerifier(trustedKeys: releaseSigningKeys)
             .verifySuiteList(
               list: read('suite.json'),
               signature: read('suite.json.sig'),
             );
         expect(list.serial, greaterThanOrEqualTo(1));
+        expect(list.apps, isNotEmpty);
         expect(
           [for (final app in list.apps) (app.name, app.windows.appId)],
-          [for (final app in vogesSuite) (app.name, app.windows.appId)],
+          [
+            for (final app in vogesSuite.take(list.apps.length))
+              (app.name, app.windows.appId),
+          ],
         );
         expect(list.mergedInto(vogesSuite), vogesSuite);
       },

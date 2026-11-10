@@ -208,6 +208,28 @@ const vogesTables = SuiteApp(
   ),
 );
 
+const vogesSlides = SuiteApp(
+  name: 'Voges Slides',
+  repository: 'omanoloneto/voges-slides',
+  downloadPage: 'https://omanoloneto.pro/voges/slides/',
+  macos: MacosTarget(
+    bundleId: 'com.omanoloneto.vogesSlides',
+    bundleName: 'Voges Slides.app',
+    asset: 'VogesSlides-macos.dmg',
+  ),
+  windows: WindowsTarget(
+    appId: '{4DC4094D-935D-4401-9890-C938262346EA}',
+    executable: 'voges_slides.exe',
+    asset: 'VogesSlides-windows-setup.exe',
+  ),
+  linux: LinuxTarget(
+    package: 'voges-slides',
+    binary: '/usr/lib/voges-slides/voges_slides',
+    launcher: '/usr/bin/voges-slides',
+    asset: 'voges-slides-linux-amd64.deb',
+  ),
+);
+
 /// Every app of the suite that this build knows, in the order the updater
 /// lists them. The signed suite list can add apps to it, never change one.
-const vogesSuite = [vogesWord, vogesPencil, vogesTables];
+const vogesSuite = [vogesWord, vogesPencil, vogesTables, vogesSlides];

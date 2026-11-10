@@ -11,8 +11,8 @@ import 'support/core_support.dart';
 final _seed = List.filled(32, 7);
 final _otherSeed = List.filled(32, 9);
 
-final _slides = SuiteApp.conventional(
-  name: 'Voges Slides',
+final _notes = SuiteApp.conventional(
+  name: 'Voges Notes',
   windowsAppId: '{00000000-0000-0000-0000-0000000000A1}',
 );
 final _flash = SuiteApp.conventional(
@@ -82,16 +82,16 @@ void main() {
 
   group('a published list', () {
     test('adds its new apps after those of the build', () async {
-      publish(await _sign(2, [...vogesSuite, _slides]));
+      publish(await _sign(2, [...vogesSuite, _notes]));
       final apps = await suite().apps();
       expect(apps.take(vogesSuite.length), vogesSuite);
-      expect(_names(apps.skip(vogesSuite.length).toList()), ['Voges Slides']);
+      expect(_names(apps.skip(vogesSuite.length).toList()), ['Voges Notes']);
       expect(server.requests, ['GET ${route()}', 'GET ${route('.sig')}']);
       expect(server.userAgents, {'Voges-Updater'});
     });
 
     test('is kept, byte for byte, as the newest list seen', () async {
-      final signed = await _sign(2, [...vogesSuite, _slides]);
+      final signed = await _sign(2, [...vogesSuite, _notes]);
       publish(signed);
       await suite().apps();
       expect(kept().readAsBytesSync(), together(signed));
@@ -99,24 +99,24 @@ void main() {
     });
 
     test('is kept the same when its signature has no line break', () async {
-      final signed = await _sign(2, [...vogesSuite, _slides]);
+      final signed = await _sign(2, [...vogesSuite, _notes]);
       publish((
         list: signed.list,
         signature: signed.signature.sublist(0, signed.signature.length - 1),
       ));
-      expect(await names(), [..._builtIn, 'Voges Slides']);
+      expect(await names(), [..._builtIn, 'Voges Notes']);
       expect(kept().readAsBytesSync(), together(signed));
-      expect(await names(), [..._builtIn, 'Voges Slides']);
+      expect(await names(), [..._builtIn, 'Voges Notes']);
     });
 
     test('is ignored when signed by another key', () async {
-      publish(await _sign(2, [...vogesSuite, _slides], seed: _otherSeed));
+      publish(await _sign(2, [...vogesSuite, _notes], seed: _otherSeed));
       expect(await names(), _builtIn);
       expect(cache.existsSync(), isFalse);
     });
 
     test('is ignored when its bytes are not the signed ones', () async {
-      final signed = await _sign(2, [...vogesSuite, _slides]);
+      final signed = await _sign(2, [...vogesSuite, _notes]);
       final other = await _sign(2, [...vogesSuite, _flash]);
       publish((list: other.list, signature: signed.signature));
       expect(await names(), _builtIn);
@@ -124,7 +124,7 @@ void main() {
     });
 
     test('is ignored without its signature', () async {
-      final signed = await _sign(2, [...vogesSuite, _slides]);
+      final signed = await _sign(2, [...vogesSuite, _notes]);
       server.routes = {route(): bytes(signed.list)};
       expect(await names(), _builtIn);
       expect(cache.existsSync(), isFalse);
@@ -133,9 +133,9 @@ void main() {
     test('is ignored when it changes an app of the build', () async {
       final moved = SuiteApp.conventional(
         name: vogesWord.name,
-        windowsAppId: _slides.windows.appId,
+        windowsAppId: _notes.windows.appId,
       );
-      publish(await _sign(2, [moved, _slides]));
+      publish(await _sign(2, [moved, _notes]));
       expect(await names(), _builtIn);
       expect(cache.existsSync(), isFalse);
     });
@@ -146,7 +146,7 @@ void main() {
     });
 
     test('is never followed through a redirect', () async {
-      final signed = await _sign(2, [...vogesSuite, _slides]);
+      final signed = await _sign(2, [...vogesSuite, _notes]);
       server.routes = {
         route(): redirectTo('/elsewhere/suite.json'),
         route('.sig'): bytes(signed.signature),
@@ -163,7 +163,7 @@ void main() {
       HttpStatus.internalServerError,
     ]) {
       test('is ignored with the status $code', () async {
-        final signed = await _sign(2, [...vogesSuite, _slides]);
+        final signed = await _sign(2, [...vogesSuite, _notes]);
         server.routes = {
           route(): (response) {
             response.statusCode = code;
@@ -176,7 +176,7 @@ void main() {
     }
 
     test('is ignored when larger than a suite list can be', () async {
-      final signed = await _sign(2, [...vogesSuite, _slides]);
+      final signed = await _sign(2, [...vogesSuite, _notes]);
       final padded = Uint8List(PublishedSuite.listLimit + 1)
         ..fillRange(0, PublishedSuite.listLimit + 1, 0x20)
         ..setAll(0, signed.list);
@@ -191,7 +191,7 @@ void main() {
     });
 
     test('is ignored when its signature is larger than one can be', () async {
-      final signed = await _sign(2, [...vogesSuite, _slides]);
+      final signed = await _sign(2, [...vogesSuite, _notes]);
       server.routes = {
         route(): bytes(signed.list),
         route('.sig'): bytes(Uint8List(PublishedSuite.signatureLimit + 1)),
@@ -200,7 +200,7 @@ void main() {
     });
 
     test('does not hold the updates back when the website stalls', () async {
-      final signed = await _sign(2, [...vogesSuite, _slides]);
+      final signed = await _sign(2, [...vogesSuite, _notes]);
       server.routes = {
         route(): stall(
           signed.list.sublist(0, 10),
@@ -228,55 +228,55 @@ void main() {
 
   group('the newest list seen', () {
     test('wins over an older list that the website sends again', () async {
-      final newest = await _sign(5, [...vogesSuite, _slides, _flash]);
+      final newest = await _sign(5, [...vogesSuite, _notes, _flash]);
       keep(newest);
-      publish(await _sign(3, [...vogesSuite, _slides]));
-      expect(await names(), [..._builtIn, 'Voges Slides', 'Voges Flash']);
+      publish(await _sign(3, [...vogesSuite, _notes]));
+      expect(await names(), [..._builtIn, 'Voges Notes', 'Voges Flash']);
       expect(kept().readAsBytesSync(), together(newest));
     });
 
     test('gives way to a newer one, which replaces it', () async {
-      keep(await _sign(5, [...vogesSuite, _slides]));
-      final newer = await _sign(6, [...vogesSuite, _slides, _flash]);
+      keep(await _sign(5, [...vogesSuite, _notes]));
+      final newer = await _sign(6, [...vogesSuite, _notes, _flash]);
       publish(newer);
-      expect(await names(), [..._builtIn, 'Voges Slides', 'Voges Flash']);
+      expect(await names(), [..._builtIn, 'Voges Notes', 'Voges Flash']);
       expect(kept().readAsBytesSync(), together(newer));
       expect(cache.listSync(), hasLength(1));
     });
 
     test('wins over another list signed with the same serial', () async {
-      final seen = await _sign(5, [...vogesSuite, _slides]);
+      final seen = await _sign(5, [...vogesSuite, _notes]);
       keep(seen);
       publish(await _sign(5, [...vogesSuite, _flash]));
-      expect(await names(), [..._builtIn, 'Voges Slides']);
+      expect(await names(), [..._builtIn, 'Voges Notes']);
       expect(kept().readAsBytesSync(), together(seen));
     });
 
     test('is used when the website does not answer', () async {
-      keep(await _sign(5, [...vogesSuite, _slides]));
-      expect(await names(), [..._builtIn, 'Voges Slides']);
+      keep(await _sign(5, [...vogesSuite, _notes]));
+      expect(await names(), [..._builtIn, 'Voges Notes']);
     });
 
     test('is used when the website sends a list that does not pass', () async {
-      keep(await _sign(5, [...vogesSuite, _slides]));
+      keep(await _sign(5, [...vogesSuite, _notes]));
       publish(await _sign(9, [...vogesSuite, _flash], seed: _otherSeed));
-      expect(await names(), [..._builtIn, 'Voges Slides']);
+      expect(await names(), [..._builtIn, 'Voges Notes']);
     });
 
     test('counts for nothing when it was changed on disk', () async {
-      final seen = await _sign(5, [...vogesSuite, _slides]);
+      final seen = await _sign(5, [...vogesSuite, _notes]);
       final forged = await _sign(99, [...vogesSuite, _flash], seed: _otherSeed);
       keep((list: forged.list, signature: seen.signature));
       expect(await names(), _builtIn);
 
-      final published = await _sign(2, [...vogesSuite, _slides]);
+      final published = await _sign(2, [...vogesSuite, _notes]);
       publish(published);
-      expect(await names(), [..._builtIn, 'Voges Slides']);
+      expect(await names(), [..._builtIn, 'Voges Notes']);
       expect(kept().readAsBytesSync(), together(published));
     });
 
     test('counts for nothing when larger than it can be', () async {
-      final seen = await _sign(5, [...vogesSuite, _slides]);
+      final seen = await _sign(5, [...vogesSuite, _notes]);
       cache.createSync(recursive: true);
       kept().writeAsBytesSync([
         ...together(seen),
@@ -286,7 +286,7 @@ void main() {
     });
 
     test('counts for nothing without its signature line', () async {
-      final seen = await _sign(5, [...vogesSuite, _slides]);
+      final seen = await _sign(5, [...vogesSuite, _notes]);
       cache.createSync(recursive: true);
       kept().writeAsBytesSync(seen.list);
       expect(await names(), _builtIn);
@@ -302,13 +302,13 @@ void main() {
         // a writer that says nothing, so reading it never ends
         final writer = kept().open(mode: FileMode.writeOnly);
         addTearDown(() async => (await writer).close());
-        final published = await _sign(2, [...vogesSuite, _slides]);
+        final published = await _sign(2, [...vogesSuite, _notes]);
         publish(published);
 
         final apps = await suite(
           diskTimeout: const Duration(milliseconds: 300),
         ).apps();
-        expect(_names(apps), [..._builtIn, 'Voges Slides']);
+        expect(_names(apps), [..._builtIn, 'Voges Notes']);
         expect(kept().statSync().type, FileSystemEntityType.file);
         expect(kept().readAsBytesSync(), together(published));
       },
@@ -318,7 +318,7 @@ void main() {
 
   test('without a cache folder the suite is the one of the build, and the '
       'website is not asked', () async {
-    publish(await _sign(2, [...vogesSuite, _slides]));
+    publish(await _sign(2, [...vogesSuite, _notes]));
     final source = PublishedSuite(
       verifier: ReleaseVerifier(trustedKeys: [key]),
       cache: () => throw StateError('no home'),
@@ -331,13 +331,13 @@ void main() {
   test('a list that cannot be kept is still used', () async {
     final blocker = File(p.join(temporaryFolder().path, 'Voges'))
       ..writeAsStringSync('not a folder');
-    publish(await _sign(2, [...vogesSuite, _slides]));
+    publish(await _sign(2, [...vogesSuite, _notes]));
     final source = PublishedSuite(
       verifier: ReleaseVerifier(trustedKeys: [key]),
       cache: () => Directory(blocker.path),
       url: server.origin.resolve('/voges/suite.json'),
     );
-    expect(_names(await source.apps()), [..._builtIn, 'Voges Slides']);
+    expect(_names(await source.apps()), [..._builtIn, 'Voges Notes']);
   });
 
   test('production reads the list of the website', () {
@@ -349,6 +349,6 @@ void main() {
 
   test('a fixed suite is the one of the build unless told otherwise', () async {
     expect(await const FixedSuite().apps(), same(vogesSuite));
-    expect(await FixedSuite([vogesWord, _slides]).apps(), [vogesWord, _slides]);
+    expect(await FixedSuite([vogesWord, _notes]).apps(), [vogesWord, _notes]);
   });
 }
