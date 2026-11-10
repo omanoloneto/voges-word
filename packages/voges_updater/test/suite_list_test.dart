@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:voges_updater/core.dart';
 
 const _tablesId = '{1A75A94C-0C6B-4F0F-8F00-6056405F6F37}';
-const _slidesId = '{00000000-0000-0000-0000-0000000000A1}';
+const _notesId = '{00000000-0000-0000-0000-0000000000A1}';
 const _otherId = '{00000000-0000-0000-0000-0000000000A2}';
 
 Uint8List _json(Object? value) => utf8.encode(jsonEncode(value));
@@ -22,7 +22,7 @@ Map<String, Object?> _list({
 }) => {
   'format': format,
   'serial': serial,
-  'apps': apps ?? [_entry('Voges Slides', _slidesId)],
+  'apps': apps ?? [_entry('Voges Notes', _notesId)],
 };
 
 /// Every field of [app] in one string, to compare two apps by value.
@@ -57,14 +57,14 @@ void main() {
     test('spells a name of several words', () {
       final app = SuiteApp.conventional(
         name: 'Voges Mind Map',
-        windowsAppId: _slidesId,
+        windowsAppId: _notesId,
       );
       expect(app.repository, 'omanoloneto/voges-mind-map');
       expect(app.downloadPage, 'https://omanoloneto.pro/voges/mind-map/');
       expect(app.macos.bundleId, 'com.omanoloneto.vogesMindMap');
       expect(app.macos.bundleName, 'Voges Mind Map.app');
       expect(app.macos.asset, 'VogesMindMap-macos.dmg');
-      expect(app.windows.appId, _slidesId);
+      expect(app.windows.appId, _notesId);
       expect(app.windows.executable, 'voges_mind_map.exe');
       expect(app.windows.asset, 'VogesMindMap-windows-setup.exe');
       expect(app.linux.package, 'voges-mind-map');
@@ -94,7 +94,7 @@ void main() {
     for (final MapEntry(key: reason, value: name) in badNames.entries) {
       test('refuses a name with $reason', () {
         expect(
-          () => SuiteApp.conventional(name: name, windowsAppId: _slidesId),
+          () => SuiteApp.conventional(name: name, windowsAppId: _notesId),
           throwsFormatException,
         );
       });
@@ -111,8 +111,7 @@ void main() {
     for (final MapEntry(key: reason, value: appId) in badIds.entries) {
       test('refuses an AppId with $reason', () {
         expect(
-          () =>
-              SuiteApp.conventional(name: 'Voges Slides', windowsAppId: appId),
+          () => SuiteApp.conventional(name: 'Voges Notes', windowsAppId: appId),
           throwsFormatException,
         );
       });
@@ -127,7 +126,7 @@ void main() {
             serial: 7,
             apps: [
               _entry('Voges Tables', _tablesId),
-              _entry('Voges Slides', _slidesId),
+              _entry('Voges Notes', _notesId),
             ],
           ),
         ),
@@ -135,10 +134,10 @@ void main() {
       expect(list.serial, 7);
       expect(
         [for (final app in list.apps) app.name],
-        ['Voges Tables', 'Voges Slides'],
+        ['Voges Tables', 'Voges Notes'],
       );
       expect(_fields(list.apps.first), _fields(vogesTables));
-      expect(list.apps.last.repository, 'omanoloneto/voges-slides');
+      expect(list.apps.last.repository, 'omanoloneto/voges-notes');
       expect(() => list.apps.add(vogesWord), throwsUnsupportedError);
     });
 
@@ -155,7 +154,7 @@ void main() {
 
     final malformed = <String, Object?>{
       'a list at the root': [_list()],
-      'a string at the root': 'Voges Slides',
+      'a string at the root': 'Voges Notes',
       'an extra key': {..._list(), 'repository': 'evil/repo'},
       'a missing key': {'format': 1, 'serial': 1},
       'another format': _list(format: 2),
@@ -168,7 +167,7 @@ void main() {
       'a serial that nothing could come after': _list(
         serial: SuiteList.maxSerial + 1,
       ),
-      'apps that are not a list': _list(apps: {'name': 'Voges Slides'}),
+      'apps that are not a list': _list(apps: {'name': 'Voges Notes'}),
       'no app': _list(apps: <Object?>[]),
       'more apps than the suite can have': _list(
         apps: [
@@ -180,42 +179,42 @@ void main() {
             ),
         ],
       ),
-      'an app that is text': _list(apps: ['Voges Slides']),
+      'an app that is text': _list(apps: ['Voges Notes']),
       'an app with an extra key': _list(
         apps: [
-          {..._entry('Voges Slides', _slidesId), 'repository': 'evil/repo'},
+          {..._entry('Voges Notes', _notesId), 'repository': 'evil/repo'},
         ],
       ),
       'an app without AppId': _list(
         apps: [
-          {'name': 'Voges Slides'},
+          {'name': 'Voges Notes'},
         ],
       ),
       'a name that is not text': _list(
-        apps: [_entry('Voges Slides', _slidesId)..['name'] = 1],
+        apps: [_entry('Voges Notes', _notesId)..['name'] = 1],
       ),
       'a name outside the convention': _list(
-        apps: [_entry('Voges ../Evil', _slidesId)],
+        apps: [_entry('Voges ../Evil', _notesId)],
       ),
       'an AppId outside its shape': _list(
-        apps: [_entry('Voges Slides', 'not-an-id')],
+        apps: [_entry('Voges Notes', 'not-an-id')],
       ),
       'the same name twice': _list(
         apps: [
-          _entry('Voges Slides', _slidesId),
-          _entry('Voges Slides', _otherId),
+          _entry('Voges Notes', _notesId),
+          _entry('Voges Notes', _otherId),
         ],
       ),
       'two names with the same files': _list(
         apps: [
-          _entry('Voges Mindmap', _slidesId),
+          _entry('Voges Mindmap', _notesId),
           _entry('Voges Mind Map', _otherId),
         ],
       ),
       'the same AppId twice': _list(
         apps: [
-          _entry('Voges Slides', _slidesId),
-          _entry('Voges Flash', _slidesId),
+          _entry('Voges Notes', _notesId),
+          _entry('Voges Flash', _notesId),
         ],
       ),
     };
@@ -239,7 +238,7 @@ void main() {
       final name = 'Voges A${'b' * 20}';
       final list = SuiteList.parse(
         _json(
-          _list(serial: SuiteList.maxSerial, apps: [_entry(name, _slidesId)]),
+          _list(serial: SuiteList.maxSerial, apps: [_entry(name, _notesId)]),
         ),
       );
       expect(list.serial, SuiteList.maxSerial);
@@ -271,30 +270,31 @@ void main() {
 
     test('keeps the apps of the build and adds the new ones after them', () {
       final merged = listOf([
-        _entry('Voges Slides', _slidesId),
+        _entry('Voges Notes', _notesId),
         _entry('Voges Tables', _tablesId),
         _entry('Voges Word', vogesWord.windows.appId),
       ]).mergedInto(vogesSuite);
-      expect(merged.take(3), [
-        same(vogesWord),
-        same(vogesPencil),
-        same(vogesTables),
+      expect(merged.take(vogesSuite.length), [
+        for (final app in vogesSuite) same(app),
       ]);
-      expect([for (final app in merged.skip(3)) app.name], ['Voges Slides']);
+      expect(
+        [for (final app in merged.skip(vogesSuite.length)) app.name],
+        ['Voges Notes'],
+      );
       expect(() => merged.add(vogesWord), throwsUnsupportedError);
     });
 
     test('never drops an app of the build that the list leaves out', () {
       final merged = listOf([
-        _entry('Voges Slides', _slidesId),
+        _entry('Voges Notes', _notesId),
       ]).mergedInto(vogesSuite);
-      expect(merged.take(3), vogesSuite);
-      expect(merged, hasLength(4));
+      expect(merged.take(vogesSuite.length), vogesSuite);
+      expect(merged, hasLength(vogesSuite.length + 1));
     });
 
     test('refuses a list that gives an app of the build another AppId', () {
       expect(
-        () => listOf([_entry('Voges Word', _slidesId)]).mergedInto(vogesSuite),
+        () => listOf([_entry('Voges Word', _notesId)]).mergedInto(vogesSuite),
         throwsFormatException,
       );
     });
@@ -303,7 +303,7 @@ void main() {
         'another app', () {
       expect(
         () => listOf([
-          _entry('Voges Slides', vogesWord.windows.appId),
+          _entry('Voges Notes', vogesWord.windows.appId),
         ]).mergedInto(vogesSuite),
         throwsFormatException,
       );

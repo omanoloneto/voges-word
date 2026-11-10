@@ -75,7 +75,7 @@ void main() {
     test('reads every package with one dpkg-query call', () async {
       packages =
           'voges-word\tinstalled\t1.1.0\nvoges-pencil\tinstalled\t0.9.0\n'
-          'voges-tables\tinstalled\t0.8.0\n';
+          'voges-tables\tinstalled\t0.8.0\nvoges-slides\tinstalled\t0.7.0\n';
       final linux = platform();
 
       final copies = await linux.installed(vogesSuite, await linux.host());
@@ -88,9 +88,10 @@ void main() {
           'voges-word',
           'voges-pencil',
           'voges-tables',
+          'voges-slides',
         ],
       ]);
-      final [word, pencil, tables] = copies;
+      final [word, pencil, tables, slides] = copies;
       expect(word.app, same(vogesWord));
       expect(word.version, const ReleaseVersion(1, 1, 0));
       expect(word.location, _binary);
@@ -104,6 +105,10 @@ void main() {
       expect(tables.version, const ReleaseVersion(0, 8, 0));
       expect(tables.location, '/usr/lib/voges-tables/voges_tables');
       expect(tables.isHost, isFalse);
+      expect(slides.app, same(vogesSlides));
+      expect(slides.version, const ReleaseVersion(0, 7, 0));
+      expect(slides.location, '/usr/lib/voges-slides/voges_slides');
+      expect(slides.isHost, isFalse);
     });
 
     test('counts only installed packages with strict versions', () async {
