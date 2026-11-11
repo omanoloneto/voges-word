@@ -110,6 +110,35 @@ void main() {
     expect(controller.selection, const TextSelection.collapsed(offset: 1));
   });
 
+  testWidgets('the arrows move the caret and Shift extends the selection', (
+    tester,
+  ) async {
+    final controller = await _show(
+      tester,
+      Delta()..insert('One two\nthree\n'),
+      const TextSelection.collapsed(offset: 1),
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump();
+    expect(controller.selection, const TextSelection.collapsed(offset: 2));
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+    expect(
+      controller.selection,
+      const TextSelection(baseOffset: 2, extentOffset: 4),
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pump();
+    expect(controller.selection, const TextSelection.collapsed(offset: 2));
+    expect(controller.document.toPlainText(), 'One two\nthree\n');
+  });
+
   testWidgets(
     'Option and Backspace delete the word before the caret',
     (tester) async {
