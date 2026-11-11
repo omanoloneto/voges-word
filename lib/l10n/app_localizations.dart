@@ -1600,12 +1600,6 @@ abstract class AppLocalizations {
   /// **'Open'**
   String get open;
 
-  /// No description provided for @otherFormats.
-  ///
-  /// In en, this message translates to:
-  /// **'Other formats'**
-  String get otherFormats;
-
   /// No description provided for @formatDocx.
   ///
   /// In en, this message translates to:
@@ -1653,6 +1647,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Plain text (.txt)'**
   String get formatPlainText;
+
+  /// No description provided for @formatPdf.
+  ///
+  /// In en, this message translates to:
+  /// **'PDF (.pdf)'**
+  String get formatPdf;
 
   /// No description provided for @print.
   ///

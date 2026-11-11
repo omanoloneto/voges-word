@@ -29,6 +29,15 @@ class _Files extends DocumentFiles {
   final written = <String, Uint8List>{};
   final shared = <(String, String)>[];
 
+  /// Name and extension of each export, as of PDF.
+  final exported = <(String, String)>[];
+
+  @override
+  Future<bool> export(Uint8List bytes, String name, String extension) async {
+    exported.add((name, extension));
+    return true;
+  }
+
   @override
   bool get canSaveInPlace => true;
 
@@ -99,10 +108,10 @@ Future<(EditorSession, _Files)> _pumpApp(
   return (session, files);
 }
 
-Future<void> _openOtherFormats(WidgetTester tester) async {
+Future<void> _openSaveAs(WidgetTester tester) async {
   await tester.tap(find.text('File'));
   await tester.pumpAndSettle();
-  await tester.tap(find.text('Other formats'));
+  await tester.tap(find.text('Save as'));
   await tester.pumpAndSettle();
 }
 
@@ -146,27 +155,44 @@ void main() {
   testWidgets('Save as saves a Word document', (tester) async {
     final (_, files) = await _pumpApp(tester);
 
-    await tester.tap(find.text('File'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Save as'));
+    await _openSaveAs(tester);
+    await tester.tap(find.text('Word document (.docx)'));
     await tester.pumpAndSettle();
 
     expect(files.asked, [('report.docx', DocumentFormat.docx)]);
   });
 
-  testWidgets('Other formats lists only the formats saved besides .docx', (
+  testWidgets('Save as lists a Word document, PDF and the other formats', (
     tester,
   ) async {
     await _pumpApp(tester);
-    await _openOtherFormats(tester);
+    await _openSaveAs(tester);
 
     final items = tester.widgetList<MenuItemButton>(
       find.byType(MenuItemButton),
     );
     expect(
       [for (final item in items) (item.child! as Text).data],
-      [for (final (label, _) in _otherFormats) label],
+      [
+        'Word document (.docx)',
+        'PDF (.pdf)',
+        for (final (label, _) in _otherFormats) label,
+      ],
     );
+  });
+
+  testWidgets('Save as PDF makes a PDF of the document', (tester) async {
+    final (session, files) = await _pumpApp(tester);
+
+    await _openSaveAs(tester);
+    await tester.tap(find.text('PDF (.pdf)'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // The pages are being drawn for the PDF; the file stays as it is.
+    expect(find.textContaining('Building the PDF'), findsOneWidget);
+    expect(files.asked, isEmpty);
+    expect(session.format, DocumentFormat.docx);
   });
 
   testWidgets('a click opens the list without selecting a format', (
@@ -177,14 +203,11 @@ void main() {
     await tester.pumpAndSettle();
 
     for (var click = 0; click < 3; click++) {
-      await tester.tap(
-        find.text('Other formats'),
-        kind: PointerDeviceKind.mouse,
-      );
+      await tester.tap(find.text('Save as'), kind: PointerDeviceKind.mouse);
       await tester.pumpAndSettle();
     }
 
-    final first = Focus.of(tester.element(find.text(_otherFormats.first.$1)));
+    final first = Focus.of(tester.element(find.text('Word document (.docx)')));
     expect(first.hasFocus, isFalse);
   });
 
@@ -192,12 +215,12 @@ void main() {
     final (_, files) = await _pumpApp(tester);
 
     for (final (label, format) in _otherFormats) {
-      await _openOtherFormats(tester);
+      await _openSaveAs(tester);
       await tester.tap(find.text(label));
       await tester.pumpAndSettle();
 
       expect(files.asked.last, ('report.${format.extension}', format));
-      expect(find.text('Other formats'), findsNothing);
+      expect(find.text('Save as'), findsNothing);
     }
     expect(files.asked, hasLength(_otherFormats.length));
   });
@@ -208,7 +231,7 @@ void main() {
     final (session, files) = await _pumpApp(tester);
     files.chosen = '/documents/report.txt';
 
-    await _openOtherFormats(tester);
+    await _openSaveAs(tester);
     await tester.tap(find.text('Plain text (.txt)'));
     await tester.pumpAndSettle();
 
@@ -228,7 +251,7 @@ void main() {
       ('Markdown (.md)', DocumentFormat.markdown, '/documents/report.md'),
     ]) {
       files.chosen = path;
-      await _openOtherFormats(tester);
+      await _openSaveAs(tester);
       await tester.tap(find.text(label));
       await tester.pumpAndSettle();
 
@@ -263,7 +286,7 @@ void main() {
       ('Rich Text Format (.rtf)', '/documents/paper.rtf', 'RTF'),
     ]) {
       files.chosen = path;
-      await _openOtherFormats(tester);
+      await _openSaveAs(tester);
       await tester.tap(find.text(label));
       await tester.pumpAndSettle();
 
@@ -278,7 +301,7 @@ void main() {
     await tester.tap(find.text('File'));
     await tester.pumpAndSettle();
 
-    final button = Focus.of(tester.element(find.text('Other formats')));
+    final button = Focus.of(tester.element(find.text('Save as')));
     for (var presses = 0; presses < 20 && !button.hasPrimaryFocus; presses++) {
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pump();
@@ -296,18 +319,21 @@ void main() {
 
     await tester.sendKeyEvent(LogicalKeyboardKey.space);
     await tester.pumpAndSettle();
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    // From the Word document, past PDF and .odt.
+    for (var presses = 0; presses < 3; presses++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    }
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
 
     expect(files.asked, [('report.rtf', DocumentFormat.rtf)]);
-    expect(find.text('Other formats'), findsNothing);
+    expect(find.text('Save as'), findsNothing);
   });
 
   testWidgets('on a phone every format fits on the screen', (tester) async {
     const size = Size(360, 740);
     final (_, files) = await _pumpApp(tester, size: size);
-    await _openOtherFormats(tester);
+    await _openSaveAs(tester);
 
     for (final (label, _) in _otherFormats) {
       final rect = tester.getRect(find.text(label));
