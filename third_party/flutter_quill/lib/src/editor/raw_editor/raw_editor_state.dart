@@ -1164,15 +1164,19 @@ class QuillRawEditorState extends EditorState
     }
   }
 
-  void _updateOrDisposeSelectionOverlayIfNeeded() {
+  void _updateOrDisposeSelectionOverlayIfNeeded({bool forToolbar = false}) {
     if (_selectionOverlay != null) {
-      if (!_hasFocus || textEditingValue.selection.isCollapsed) {
+      if (!_hasFocus || controller.selection.isCollapsed) {
         _selectionOverlay!.dispose();
         _selectionOverlay = null;
       } else {
         _selectionOverlay!.update(textEditingValue);
       }
-    } else if (_hasFocus) {
+    } else if (_hasFocus &&
+        // Voges Word: a caret shows no handles, and on a computer no
+        // magnifier, so its overlay was made with the whole text after every
+        // other key only to be dropped at the next one.
+        (forToolbar || !isDesktopApp || !controller.selection.isCollapsed)) {
       _selectionOverlay = EditorTextSelectionOverlay(
         value: textEditingValue,
         context: context,
@@ -1328,7 +1332,7 @@ class QuillRawEditorState extends EditorState
     // to remove unnecessary handles. Since a toolbar is requested here,
     // attempt to create the selectionOverlay if it's not already created.
     if (_selectionOverlay == null) {
-      _updateOrDisposeSelectionOverlayIfNeeded();
+      _updateOrDisposeSelectionOverlayIfNeeded(forToolbar: true);
     }
 
     if (_selectionOverlay == null || _selectionOverlay!.toolbar != null) {
