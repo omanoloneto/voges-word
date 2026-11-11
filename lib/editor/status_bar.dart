@@ -10,6 +10,14 @@ import 'zoom.dart';
 
 const _zoomStep = 0.05;
 
+({int words, int characters}) _countsOf(String text) => (
+  words: RegExp(
+    r'[\p{L}\p{N}]+(?:[-’\x27][\p{L}\p{N}]+)*',
+    unicode: true,
+  ).allMatches(text).length,
+  characters: text.replaceAll(RegExp(r'[\n\uFFFC]'), '').length,
+);
+
 class StatusBar extends StatefulWidget {
   const StatusBar({
     required this.session,
@@ -38,6 +46,7 @@ class _StatusBarState extends State<StatusBar> {
   Timer? _debounce;
   var _words = 0;
   var _characters = 0;
+  var _round = 0;
   var _protectedContent = false;
   StreamSubscription<void>? _changes;
   StreamSubscription<void>? _tableChanges;
@@ -74,20 +83,20 @@ class _StatusBarState extends State<StatusBar> {
 
   void _count() {
     final session = widget.session;
-    final text = session.plainTextContent();
-    final words = RegExp(
-      r'[\p{L}\p{N}]+(?:[-’\x27][\p{L}\p{N}]+)*',
-      unicode: true,
-    ).allMatches(text).length;
-    final characters = text.replaceAll(RegExp(r'[\n\uFFFC]'), '').length;
     final protectedContent =
         _FormatNote.dependsOnProtectedContent.contains(session.format) &&
         session.hasProtectedContent();
     if (!mounted) return;
-    setState(() {
-      _words = words;
-      _characters = characters;
-      _protectedContent = protectedContent;
+    setState(() => _protectedContent = protectedContent);
+    // Counting the words of a long book took a third of a second, so it
+    // runs on another isolate; only the last count is shown.
+    final round = ++_round;
+    compute(_countsOf, session.plainTextContent()).then((counts) {
+      if (!mounted || round != _round) return;
+      setState(() {
+        _words = counts.words;
+        _characters = counts.characters;
+      });
     });
   }
 
