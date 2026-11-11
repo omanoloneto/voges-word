@@ -716,6 +716,8 @@ class _BlockWriter {
         element.setAttribute(key, '${indent * 720}');
         replace('ind', element);
       }
+      final sides = _sideIndents(attributes, find('ind'), styleProps);
+      if (sides != null) replace('ind', sides);
     }
 
     final align = attributes['align'] as String? ?? 'left';
@@ -761,6 +763,61 @@ class _BlockWriter {
     _blocks.add(
       _Block.paragraph(properties, '$starts${_runs(segments, line)}$ends'),
     );
+  }
+
+  /// The first-line and right indents the paragraph carries (set by the
+  /// ruler), written over the file's own when they differ; null when
+  /// nothing changes. Without them the file's own stay as they are.
+  XmlElement? _sideIndents(
+    Map<String, dynamic> attributes,
+    XmlElement? ind,
+    ParagraphProps styleProps,
+  ) {
+    double? twipsOf(String key) => switch (attributes[key]) {
+      final num points => points * 20,
+      _ => null,
+    };
+    final firstLine = twipsOf(HiddenAttributes.firstLine);
+    final right = twipsOf(HiddenAttributes.indentRight);
+    if (firstLine == null && right == null) return null;
+
+    double? twips(String name) =>
+        double.tryParse(ind?.getAttribute('w:$name') ?? '');
+    final hanging = twips('hanging');
+    final currentFirst = hanging != null
+        ? -hanging
+        : twips('firstLine') ?? styleProps.firstLine;
+    final currentRight =
+        twips('right') ?? twips('end') ?? styleProps.indentRight;
+    final newFirst = firstLine != null && (firstLine - currentFirst).abs() >= 1;
+    final newRight = right != null && (right - currentRight).abs() >= 1;
+    if (!newFirst && !newRight) return null;
+
+    final element = ind ?? _w('ind');
+    if (newFirst) {
+      for (final name in [
+        'firstLine',
+        'hanging',
+        'firstLineChars',
+        'hangingChars',
+      ]) {
+        element.removeAttribute('w:$name');
+      }
+      element.setAttribute(
+        firstLine < 0 ? 'w:hanging' : 'w:firstLine',
+        '${firstLine.abs().round()}',
+      );
+    }
+    if (newRight) {
+      element
+        ..removeAttribute('w:rightChars')
+        ..removeAttribute('w:endChars')
+        ..setAttribute(
+          element.getAttribute('w:end') != null ? 'w:end' : 'w:right',
+          '${right.round()}',
+        );
+    }
+    return element;
   }
 
   /// The line keeps its Word list while it is still the kind of list its

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:voges_word/app.dart';
 import 'package:voges_word/docx/docx_codec.dart';
+import 'package:voges_word/docx/docx_package.dart';
 import 'package:voges_word/docx/docx_template.dart';
 import 'package:voges_word/document/document_look.dart';
 import 'package:voges_word/document/embeds.dart';
@@ -61,6 +62,48 @@ void main() {
     expect(quote[HiddenAttributes.indentRight], closeTo(28.35, 0.01));
     expect(quote[HiddenAttributes.firstLine], 0);
     expect(quote, isNot(contains(HiddenAttributes.spaceAfter)));
+  });
+
+  test('the first-line and right indents set in the editor go to the file', () {
+    final codec = DocxCodec(TableStore());
+    final school = codec.create(DocumentTemplate.schoolWork);
+    final bytes = codec.encode(
+      Delta()
+        ..insert('No first line')
+        ..insert('\n', {
+          HiddenAttributes.firstLine: 0,
+          HiddenAttributes.indentRight: 28.35,
+        })
+        ..insert('Hanging')
+        ..insert('\n', {
+          'indent': 1,
+          HiddenAttributes.firstLine: -18,
+          HiddenAttributes.paragraphProperties:
+              '<w:pPr><w:ind w:left="720" w:firstLineChars="100" '
+              'w:firstLine="709"/></w:pPr>',
+        })
+        ..insert('Style indent\n'),
+      source: school.source,
+    );
+
+    final xml = DocxPackage.decode(bytes).text('word/document.xml')!;
+    expect(xml, contains('<w:ind w:firstLine="0" w:right="567"/>'));
+    // Word reads the indent in characters first, so it goes with the old one.
+    expect(xml, contains('<w:ind w:left="720" w:hanging="360"/>'));
+    expect(xml, isNot(contains('firstLineChars')));
+
+    final delta = codec.decode(bytes).delta;
+    final none = _lineAttributes(delta, 'No first line');
+    expect(none[HiddenAttributes.firstLine], 0);
+    expect(none[HiddenAttributes.indentRight], closeTo(28.35, 0.01));
+    final hanging = _lineAttributes(delta, 'Hanging');
+    expect(hanging[HiddenAttributes.firstLine], -18);
+    expect(hanging['indent'], 1);
+    // The school paper's Normal style keeps its own 1.25 cm.
+    expect(
+      _lineAttributes(delta, 'Style indent'),
+      isNot(contains(HiddenAttributes.firstLine)),
+    );
   });
 
   test('paragraphs of one style with contextual spacing add no space '
