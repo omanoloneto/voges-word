@@ -14,6 +14,7 @@ import '../../editor.dart';
 import '../../embed/embed_editor_builder.dart';
 import '../../line_format.dart';
 import '../../raw_editor/builders/leading_block_builder.dart';
+import '../../raw_editor/node_widget_cache.dart';
 import '../box.dart';
 import '../cursor.dart';
 import '../default_leading_components/leading_components.dart';
@@ -86,6 +87,7 @@ class EditableTextBlock extends StatelessWidget {
     this.customLinkPrefixes = const <String>[],
     this.customLeadingBlockBuilder,
     this.lineFormat,
+    this.widgetCache,
     super.key,
   });
 
@@ -119,6 +121,10 @@ class EditableTextBlock extends StatelessWidget {
 
   /// Voges Word: spacing and indents of each paragraph.
   final LineFormatBuilder? lineFormat;
+
+  /// Voges Word: where the paragraphs' widgets are kept between builds; see
+  /// [NodeWidgetCache].
+  final NodeWidgetCache? widgetCache;
 
   @override
   Widget build(BuildContext context) {
@@ -179,8 +185,34 @@ class EditableTextBlock extends StatelessWidget {
     }
     var index = 0;
     final scaler = MediaQuery.textScalerOf(context);
+    // Voges Word: the paragraphs of a list or of a code block are built every
+    // time, as each numbers itself after the ones before it.
+    final cache = widgetCache != null && NodeWidgetCache.keepsLinesOf(block)
+        ? widgetCache
+        : null;
+    var offset = cache == null ? 0 : block.documentOffset;
     for (final line in Iterable.castFrom<dynamic, Line>(block.children)) {
       index++;
+      final inputs = cache == null
+          ? null
+          : NodeInputs.of(
+              line,
+              offset: offset,
+              previous: line.previous ?? block.previous,
+              next: line.next ?? block.next,
+              selection: textSelection,
+              composing: composingRange,
+              hasFocus: hasFocus,
+              blockStyle: block.style,
+              isFirst: index == 1,
+              isLast: index == count,
+            );
+      offset += line.length;
+      final kept = inputs == null ? null : cache!.lookup(line, inputs);
+      if (kept != null) {
+        children.add(kept);
+        continue;
+      }
       final format = lineFormat?.call(line);
       final indent =
           indentWidthBuilder(block, context, count, numberPointWidthBuilder);
@@ -206,7 +238,7 @@ class EditableTextBlock extends StatelessWidget {
             onLaunchUrl: onLaunchUrl,
             customLinkPrefixes: customLinkPrefixes,
             customRecognizerBuilder: customRecognizerBuilder,
-            composingRange: composingRange,
+            composingRange: inputs?.composing ?? composingRange,
             lineFormat: lineFormat,
           ),
           format == null
@@ -218,21 +250,24 @@ class EditableTextBlock extends StatelessWidget {
               : VerticalSpacing(scaler.scale(format.spaceBefore),
                   scaler.scale(format.spaceAfter)),
           textDirection,
-          textSelection,
+          inputs?.selection ?? textSelection,
           color,
           enableInteractiveSelection,
-          hasFocus,
+          inputs?.hasFocus ?? hasFocus,
           MediaQuery.devicePixelRatioOf(context),
           cursorCont,
           styles!.inlineCode!,
           null);
       final nodeTextDirection = getDirectionOfNode(line, textDirection);
-      children.add(
-        Directionality(
-          textDirection: nodeTextDirection,
-          child: editableTextLine,
-        ),
+      final built = Directionality(
+        key: widgetCache == null ? null : ObjectKey(line),
+        textDirection: nodeTextDirection,
+        child: editableTextLine,
       );
+      if (inputs != null) {
+        cache!.store(line, inputs, built);
+      }
+      children.add(built);
     }
     return children.toList(growable: false);
   }

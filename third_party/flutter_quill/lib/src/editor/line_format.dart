@@ -21,4 +21,7 @@ class LineFormat {
   final double firstLine;
 }
 
+/// Voges Word: the format of [line]. It may follow from the paragraph and
+/// from the ones right before and after it, and from nothing else: the
+/// editor asks again only when one of those changes.
 typedef LineFormatBuilder = LineFormat? Function(Line line);

@@ -1602,9 +1602,11 @@ class RenderEditableTextLine extends RenderEditableBox {
 
         // Paint a small rect at the start of empty lines that
         // are contained by the selection.
+        // Voges Word: the selection is in document offsets, which the
+        // offset of a line in a block is not.
         if (line.isEmpty &&
-            textSelection.baseOffset <= line.offset &&
-            textSelection.extentOffset > line.offset) {
+            textSelection.baseOffset <= line.documentOffset &&
+            textSelection.extentOffset > line.documentOffset) {
           final lineHeight = preferredLineHeight(
             TextPosition(
               offset: line.offset,
