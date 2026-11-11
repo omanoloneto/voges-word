@@ -276,6 +276,40 @@ class AppLocalizationsEs extends AppLocalizations {
   String get spellingTooltip => 'Subraya en rojo las palabras con errores';
 
   @override
+  String get groupShow => 'Mostrar';
+
+  @override
+  String get ruler => 'Regla';
+
+  @override
+  String get rulerTooltip =>
+      'Muestra las reglas para medir y ajustar los márgenes y las sangrías';
+
+  @override
+  String get firstLineIndent => 'Sangría de primera línea';
+
+  @override
+  String get hangingIndent => 'Sangría francesa';
+
+  @override
+  String get leftIndent => 'Sangría izquierda';
+
+  @override
+  String get rightIndent => 'Sangría derecha';
+
+  @override
+  String get leftMargin => 'Margen izquierdo';
+
+  @override
+  String get rightMargin => 'Margen derecho';
+
+  @override
+  String get topMargin => 'Margen superior';
+
+  @override
+  String get bottomMargin => 'Margen inferior';
+
+  @override
   String get rowAbove => 'Arriba';
 
   @override

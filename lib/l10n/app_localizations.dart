@@ -610,6 +610,72 @@ abstract class AppLocalizations {
   /// **'Underline misspelled words in red'**
   String get spellingTooltip;
 
+  /// No description provided for @groupShow.
+  ///
+  /// In en, this message translates to:
+  /// **'Show'**
+  String get groupShow;
+
+  /// No description provided for @ruler.
+  ///
+  /// In en, this message translates to:
+  /// **'Ruler'**
+  String get ruler;
+
+  /// No description provided for @rulerTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Show the rulers to measure and set the margins and indents'**
+  String get rulerTooltip;
+
+  /// No description provided for @firstLineIndent.
+  ///
+  /// In en, this message translates to:
+  /// **'First line indent'**
+  String get firstLineIndent;
+
+  /// No description provided for @hangingIndent.
+  ///
+  /// In en, this message translates to:
+  /// **'Hanging indent'**
+  String get hangingIndent;
+
+  /// No description provided for @leftIndent.
+  ///
+  /// In en, this message translates to:
+  /// **'Left indent'**
+  String get leftIndent;
+
+  /// No description provided for @rightIndent.
+  ///
+  /// In en, this message translates to:
+  /// **'Right indent'**
+  String get rightIndent;
+
+  /// No description provided for @leftMargin.
+  ///
+  /// In en, this message translates to:
+  /// **'Left margin'**
+  String get leftMargin;
+
+  /// No description provided for @rightMargin.
+  ///
+  /// In en, this message translates to:
+  /// **'Right margin'**
+  String get rightMargin;
+
+  /// No description provided for @topMargin.
+  ///
+  /// In en, this message translates to:
+  /// **'Top margin'**
+  String get topMargin;
+
+  /// No description provided for @bottomMargin.
+  ///
+  /// In en, this message translates to:
+  /// **'Bottom margin'**
+  String get bottomMargin;
+
   /// No description provided for @rowAbove.
   ///
   /// In en, this message translates to:

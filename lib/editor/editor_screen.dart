@@ -81,6 +81,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
   QuillController? _watchedController;
   var _zoom = 1.0;
   var _pagesView = true;
+  var _showRuler = true;
   var _findOpen = false;
   var _findReplace = false;
   var _closing = false;
@@ -819,6 +820,9 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
                               refocus: _refocus,
                               pagesView: _pagesView,
                               onPagesView: _setPagesView,
+                              showRuler: _showRuler,
+                              onShowRuler: (show) =>
+                                  setState(() => _showRuler = show),
                               zoom: _zoom,
                               onZoom: _setZoom,
                             ),
@@ -841,6 +845,8 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
                           onInsertImage: _insertImage,
                           onEditLink: _editLink,
                           onPageCountChanged: (_) => _schedulePageInfo(),
+                          currentPage: _pageInfo,
+                          showRuler: _showRuler,
                           spelling: widget.spelling,
                         ),
                         if (_findOpen)

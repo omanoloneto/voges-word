@@ -276,6 +276,40 @@ class AppLocalizationsPt extends AppLocalizations {
   String get spellingTooltip => 'Sublinha em vermelho as palavras com erro';
 
   @override
+  String get groupShow => 'Mostrar';
+
+  @override
+  String get ruler => 'Régua';
+
+  @override
+  String get rulerTooltip =>
+      'Mostra as réguas para medir e ajustar as margens e os recuos';
+
+  @override
+  String get firstLineIndent => 'Recuo da primeira linha';
+
+  @override
+  String get hangingIndent => 'Recuo deslocado';
+
+  @override
+  String get leftIndent => 'Recuo à esquerda';
+
+  @override
+  String get rightIndent => 'Recuo à direita';
+
+  @override
+  String get leftMargin => 'Margem esquerda';
+
+  @override
+  String get rightMargin => 'Margem direita';
+
+  @override
+  String get topMargin => 'Margem superior';
+
+  @override
+  String get bottomMargin => 'Margem inferior';
+
+  @override
   String get rowAbove => 'Acima';
 
   @override

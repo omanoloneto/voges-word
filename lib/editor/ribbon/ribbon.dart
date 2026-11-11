@@ -27,6 +27,8 @@ class RibbonActions {
     required this.refocus,
     required this.pagesView,
     required this.onPagesView,
+    required this.showRuler,
+    required this.onShowRuler,
     required this.zoom,
     required this.onZoom,
   });
@@ -39,6 +41,8 @@ class RibbonActions {
   final VoidCallback refocus;
   final bool pagesView;
   final ValueChanged<bool> onPagesView;
+  final bool showRuler;
+  final ValueChanged<bool> onShowRuler;
   final double zoom;
   final ValueChanged<double> onZoom;
 }
@@ -720,6 +724,18 @@ class _RibbonState extends State<Ribbon> {
                 onPressed: () => widget.actions.onPagesView(false),
               ),
             ],
+          ),
+        ),
+        const RibbonGroupDivider(),
+        RibbonGroup(
+          label: l10n.groupShow,
+          child: RibbonBigButton(
+            icon: Icons.straighten,
+            label: l10n.ruler,
+            tooltip: l10n.rulerTooltip,
+            selected: widget.actions.showRuler,
+            onPressed: () =>
+                widget.actions.onShowRuler(!widget.actions.showRuler),
           ),
         ),
         const RibbonGroupDivider(),

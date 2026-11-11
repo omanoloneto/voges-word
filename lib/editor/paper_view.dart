@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 
@@ -9,9 +12,11 @@ import 'editor_session.dart';
 import 'header_footer_painter.dart';
 import 'pagination.dart';
 import 'paper_styles.dart';
+import 'ruler.dart';
 
 /// The document as separate pages, like Word; on narrow screens (or in
-/// continuous mode) it becomes a single sheet that follows the width.
+/// continuous mode) it becomes a single sheet that follows the width. The
+/// rulers show while the paper keeps the page's width.
 class PaperView extends StatefulWidget {
   const PaperView({
     required this.session,
@@ -24,6 +29,8 @@ class PaperView extends StatefulWidget {
     required this.onInsertImage,
     required this.onEditLink,
     required this.onPageCountChanged,
+    required this.currentPage,
+    this.showRuler = false,
     this.spelling,
     super.key,
   });
@@ -38,6 +45,10 @@ class PaperView extends StatefulWidget {
   final VoidCallback onInsertImage;
   final VoidCallback onEditLink;
   final ValueChanged<int> onPageCountChanged;
+
+  /// The page with the caret and the page count, from one.
+  final ValueListenable<(int, int)?> currentPage;
+  final bool showRuler;
   final SpellChecker? spelling;
 
   @override
@@ -51,10 +62,12 @@ class _PaperViewState extends State<PaperView> {
   Object? _pageLayoutKey;
   HeaderFooterPainter? _decorations;
   final _paperFocus = FocusNode(canRequestFocus: false, skipTraversal: true);
+  final _guide = ValueNotifier<RulerGuide?>(null);
 
   @override
   void dispose() {
     _paperFocus.dispose();
+    _guide.dispose();
     _decorations?.dispose();
     super.dispose();
   }
@@ -157,59 +170,99 @@ class _PaperViewState extends State<PaperView> {
           paged: paged,
         );
         final controller = widget.session.controller;
+        final rulers = widget.showRuler && !compact;
+        final vertical = rulers && paged;
+        final pageLayout = paged
+            ? _pageLayoutFor(scale, MediaQuery.devicePixelRatioOf(context))
+            : null;
+        final besideRuler = vertical ? rulerSize : 0.0;
+        final pageLeft =
+            besideRuler +
+            math.max(0, constraints.maxWidth - besideRuler - sheetWidth) / 2;
 
+        final paper = Stack(
+          children: [
+            if (!paged)
+              Align(
+                alignment: Alignment.topCenter,
+                child: Container(
+                  width: sheetWidth,
+                  height: double.infinity,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: compact
+                        ? null
+                        : const [
+                            BoxShadow(color: Color(0x33000000), blurRadius: 8),
+                          ],
+                  ),
+                ),
+              ),
+            MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.linear(scale)),
+              child: QuillEditor(
+                key: ValueKey(widget.session.generation),
+                controller: controller,
+                focusNode: widget.focusNode,
+                scrollController: widget.scrollController,
+                config: factory.config(
+                  controller,
+                  padding: padding,
+                  maxContentWidth: sheetWidth,
+                  scrollable: true,
+                  expands: true,
+                  autoFocus: true,
+                  placeholder: context.l10n.startWriting,
+                  editorKey: widget.editorKey,
+                  pageLayout: pageLayout,
+                ),
+              ),
+            ),
+          ],
+        );
+
+        // The editor keeps its place in the tree, so showing the rulers does
+        // not rebuild it.
         return Focus(
           focusNode: _paperFocus,
           child: ColoredBox(
             color: colors.surfaceContainerHighest,
             child: Stack(
               children: [
-                if (!paged)
-                  Align(
-                    alignment: Alignment.topCenter,
-                    child: Container(
-                      width: sheetWidth,
-                      height: constraints.maxHeight,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        boxShadow: compact
-                            ? null
-                            : const [
-                                BoxShadow(
-                                  color: Color(0x33000000),
-                                  blurRadius: 8,
-                                ),
-                              ],
+                Column(
+                  children: [
+                    if (rulers)
+                      HorizontalRuler(
+                        session: widget.session,
+                        scale: scale,
+                        pageLeft: pageLeft,
+                        guide: _guide,
+                      ),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          if (vertical)
+                            VerticalRuler(
+                              session: widget.session,
+                              pages: pageLayout!,
+                              scale: scale,
+                              scrollController: widget.scrollController,
+                              currentPage: widget.currentPage,
+                              guide: _guide,
+                            ),
+                          Expanded(child: paper),
+                        ],
                       ),
                     ),
-                  ),
-                MediaQuery(
-                  data: MediaQuery.of(
-                    context,
-                  ).copyWith(textScaler: TextScaler.linear(scale)),
-                  child: QuillEditor(
-                    key: ValueKey(widget.session.generation),
-                    controller: controller,
-                    focusNode: widget.focusNode,
-                    scrollController: widget.scrollController,
-                    config: factory.config(
-                      controller,
-                      padding: padding,
-                      maxContentWidth: sheetWidth,
-                      scrollable: true,
-                      expands: true,
-                      autoFocus: true,
-                      placeholder: context.l10n.startWriting,
-                      editorKey: widget.editorKey,
-                      pageLayout: paged
-                          ? _pageLayoutFor(
-                              scale,
-                              MediaQuery.devicePixelRatioOf(context),
-                            )
-                          : null,
-                    ),
-                  ),
+                  ],
                 ),
+                if (rulers)
+                  Positioned.fill(
+                    top: rulerSize,
+                    child: RulerGuideLine(guide: _guide),
+                  ),
               ],
             ),
           ),
