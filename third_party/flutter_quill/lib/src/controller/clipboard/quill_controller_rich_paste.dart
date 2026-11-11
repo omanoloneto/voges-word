@@ -4,13 +4,13 @@ library;
 // This file should not be exported as the APIs in it are meant for internal usage only
 
 import 'package:flutter/widgets.dart' show TextSelection;
-import 'package:html/parser.dart' as html_parser;
 import 'package:meta/meta.dart';
 
 import '../../../quill_delta.dart';
 import '../../delta/delta_x.dart';
 import '../../editor_toolbar_controller_shared/clipboard/clipboard_service_provider.dart';
 import '../quill_controller.dart';
+import 'paste_html.dart';
 
 extension QuillControllerRichPaste on QuillController {
   /// Paste the HTML into the document from [html] if not null, otherwise
@@ -35,9 +35,8 @@ extension QuillControllerRichPaste on QuillController {
 
     final htmlText = await getHTML();
     if (htmlText != null) {
-      final htmlBody = html_parser.parse(htmlText).body?.outerHtml;
-      // ignore: deprecated_member_use_from_same_package
-      final clipboardDelta = DeltaX.fromHtml(htmlBody ?? htmlText);
+      // Voges Word: paragraphs and the lines of <pre> keep their breaks.
+      final clipboardDelta = pastedHtmlToDelta(htmlText);
 
       await _pasteDelta(clipboardDelta);
 
