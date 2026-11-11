@@ -1060,6 +1060,11 @@ class QuillRawEditorState extends EditorState
 
   @override
   void dispose() {
+    // Voges Word: closing the connection while something is being composed
+    // empties the composing range, which built this editor as it went.
+    if (!widget.config.readOnly) {
+      composingRange.removeListener(_onComposingRangeChanged);
+    }
     closeConnectionIfNeeded();
     _keyboardVisibilitySubscription?.cancel();
     HardwareKeyboard.instance.removeHandler(_hardwareKeyboardEvent);
@@ -1069,7 +1074,6 @@ class QuillRawEditorState extends EditorState
     controller.removeListener(_didChangeTextEditingValueListener);
     if (!widget.config.readOnly) {
       widget.config.focusNode.removeListener(_handleFocusChanged);
-      composingRange.removeListener(_onComposingRangeChanged);
     }
     _cursorCont.dispose();
     if (_clipboardStatus != null) {
