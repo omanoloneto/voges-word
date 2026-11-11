@@ -163,23 +163,10 @@ class _FilePanel extends StatelessWidget {
                       l10n.save,
                       () => _run(context, actions.save),
                     ),
-                    _PanelAction(
-                      Icons.save_as_outlined,
-                      l10n.saveAs,
-                      () => _run(
-                        context,
-                        () => actions.saveAs(DocumentFormat.docx),
-                      ),
-                      tooltip: l10n.formatDocx,
-                    ),
-                    _OtherFormats(
+                    _SaveAs(
                       onSelected: (format) =>
                           _run(context, () => actions.saveAs(format)),
-                    ),
-                    _PanelAction(
-                      Icons.picture_as_pdf_outlined,
-                      'PDF',
-                      () => _run(context, actions.exportPdf),
+                      onPdf: () => _run(context, actions.exportPdf),
                     ),
                     _PanelAction(
                       Icons.print_outlined,
@@ -313,7 +300,6 @@ class _PanelAction extends StatelessWidget {
     this.icon,
     this.label,
     this.onTap, {
-    this.tooltip,
     this.focusNode,
     this.opensMenu = false,
   });
@@ -321,7 +307,6 @@ class _PanelAction extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  final String? tooltip;
   final FocusNode? focusNode;
 
   /// Shows an arrow after the label.
@@ -330,7 +315,7 @@ class _PanelAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Text(label, style: RibbonText.control);
-    final button = TextButton.icon(
+    return TextButton.icon(
       onPressed: onTap,
       focusNode: focusNode,
       style: TextButton.styleFrom(
@@ -346,13 +331,13 @@ class _PanelAction extends StatelessWidget {
             )
           : text,
     );
-    return tooltip == null ? button : Tooltip(message: tooltip, child: button);
   }
 }
 
-/// Save as in the formats besides .docx, which Save as itself uses.
-class _OtherFormats extends StatefulWidget {
-  const _OtherFormats({required this.onSelected});
+/// Save as, with the formats to choose from: a Word document first, then
+/// PDF and the other formats the editor writes.
+class _SaveAs extends StatefulWidget {
+  const _SaveAs({required this.onSelected, required this.onPdf});
 
   static const formats = [
     DocumentFormat.odt,
@@ -363,13 +348,14 @@ class _OtherFormats extends StatefulWidget {
   ];
 
   final ValueChanged<DocumentFormat> onSelected;
+  final VoidCallback onPdf;
 
   @override
-  State<_OtherFormats> createState() => _OtherFormatsState();
+  State<_SaveAs> createState() => _SaveAsState();
 }
 
-class _OtherFormatsState extends State<_OtherFormats> {
-  final _button = FocusNode(debugLabel: 'Other formats');
+class _SaveAsState extends State<_SaveAs> {
+  final _button = FocusNode(debugLabel: 'Save as');
   final _firstFormat = FocusNode(debugLabel: 'First format');
 
   @override
@@ -399,21 +385,32 @@ class _OtherFormatsState extends State<_OtherFormats> {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    MenuItemButton item(
+      String label,
+      VoidCallback onPressed, {
+      FocusNode? focus,
+    }) => MenuItemButton(
+      focusNode: focus,
+      style: ribbonMenuItemStyle(),
+      onPressed: onPressed,
+      child: Text(label),
+    );
     return MenuAnchor(
       childFocusNode: _button,
       style: ribbonMenuStyle(),
       menuChildren: [
-        for (final (index, format) in _OtherFormats.formats.indexed)
-          MenuItemButton(
-            focusNode: index == 0 ? _firstFormat : null,
-            style: ribbonMenuItemStyle(),
-            onPressed: () => widget.onSelected(format),
-            child: Text(formatName(l10n, format)),
-          ),
+        item(
+          l10n.formatDocx,
+          () => widget.onSelected(DocumentFormat.docx),
+          focus: _firstFormat,
+        ),
+        item(l10n.formatPdf, widget.onPdf),
+        for (final format in _SaveAs.formats)
+          item(formatName(l10n, format), () => widget.onSelected(format)),
       ],
       builder: (context, menu, _) => _PanelAction(
-        Icons.description_outlined,
-        l10n.otherFormats,
+        Icons.save_as_outlined,
+        l10n.saveAs,
         () => _toggle(menu),
         focusNode: _button,
         opensMenu: true,

@@ -855,9 +855,6 @@ class AppLocalizationsPt extends AppLocalizations {
   String get open => 'Abrir';
 
   @override
-  String get otherFormats => 'Outros formatos';
-
-  @override
   String get formatDocx => 'Documento do Word (.docx)';
 
   @override
@@ -880,6 +877,9 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get formatPlainText => 'Texto simples (.txt)';
+
+  @override
+  String get formatPdf => 'PDF (.pdf)';
 
   @override
   String get print => 'Imprimir';
