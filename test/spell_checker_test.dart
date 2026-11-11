@@ -9,6 +9,7 @@ class _Backend implements SpellBackend {
   final void Function()? onCheck;
   var batches = 0;
   var texts = 0;
+  final sizes = <int>[];
 
   @override
   Future<List<List<Misspelling>>> check(
@@ -17,6 +18,7 @@ class _Backend implements SpellBackend {
   ) async {
     batches++;
     this.texts += texts.length;
+    sizes.add(texts.length);
     onCheck?.call();
     await Future<void>.delayed(Duration.zero);
     return [
@@ -65,6 +67,22 @@ void main() {
       }
     },
   );
+
+  test('a batch stops at two thousand characters, so frames come between '
+      'batches', () async {
+    final backend = _Backend();
+    final checker = SpellChecker(backend);
+    addTearDown(checker.dispose);
+    for (var index = 0; index < 9; index++) {
+      checker.misspellingsOf('$index ${'word ' * 199}');
+    }
+    checker.misspellingsOf('long ${'word ' * 999}');
+    await _settle(backend);
+
+    // Nine of about a thousand characters, two by two, and the long one
+    // alone.
+    expect(backend.sizes, [2, 2, 2, 2, 1, 1]);
+  });
 
   test('each batch is announced while a paragraph is being typed', () async {
     late final SpellChecker checker;

@@ -116,6 +116,10 @@ class SpellChecker extends ChangeNotifier {
 
   static const _batchSize = 20;
 
+  /// The system checks a batch on the thread the interface runs on, so a
+  /// batch stops at this many characters and frames come between batches.
+  static const _batchCharacters = 2000;
+
   /// How many paragraph texts keep their results. The editor keeps what each
   /// paragraph it shows found and asks again when the results read
   /// differently, as after an ignored word, so a long book fits.
@@ -235,7 +239,16 @@ class SpellChecker extends ChangeNotifier {
       while (_queue.isNotEmpty && !_disposed) {
         // A batch stays queued until its results are in, so it is waiting
         // all along.
-        final batch = _queue.take(_batchSize).toList();
+        final batch = <String>[];
+        var characters = 0;
+        for (final text in _queue) {
+          if (batch.length == _batchSize ||
+              batch.isNotEmpty && characters + text.length > _batchCharacters) {
+            break;
+          }
+          batch.add(text);
+          characters += text.length;
+        }
         final language = _language;
         final found = await _backend.check(batch, language);
         if (language != _language) continue;
