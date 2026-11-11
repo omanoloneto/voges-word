@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -7,9 +8,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:voges_word/app.dart';
 import 'package:voges_word/docx/docx_codec.dart';
+import 'package:voges_word/docx/docx_package.dart';
 import 'package:voges_word/document/document_codec.dart';
 import 'package:voges_word/document/plain_text_codec.dart';
 import 'package:voges_word/document/tables.dart';
+import 'package:voges_word/editor/document_commands.dart';
 import 'package:voges_word/editor/editor_session.dart';
 import 'package:voges_word/files/document_files.dart';
 import 'package:voges_word/files/recent_files.dart';
@@ -105,6 +108,46 @@ void main() {
     expect(await store.load(), isNull);
   });
 
+  test('the copy made on another isolate is the one made here', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final session = _session();
+    final table = session.tables.createEmpty(
+      rows: 2,
+      columns: 2,
+      totalWidth: 400,
+    );
+    table.rows.first.cells.last.controller.replaceText(
+      0,
+      0,
+      'Text in a cell',
+      const TextSelection.collapsed(offset: 14),
+    );
+    session.controller
+      ..replaceText(
+        0,
+        0,
+        'Before the table',
+        const TextSelection.collapsed(offset: 16),
+      )
+      ..insertTable(table.id);
+    expect(session.tables.all, isNotEmpty);
+
+    final here = session.snapshot();
+    final there = await session.snapshotInBackground();
+
+    expect(there.content, here.content);
+    final expected = DocxPackage.decode(here.bytes).parts;
+    final actual = DocxPackage.decode(there.bytes).parts;
+    expect(actual.keys, expected.keys);
+    for (final name in expected.keys) {
+      expect(actual[name], expected[name], reason: name);
+    }
+    expect(
+      utf8.decode(actual['word/document.xml']!),
+      allOf(contains('Text in a cell'), contains('Before the table')),
+    );
+  });
+
   testWidgets('keeps a copy while there are unsaved changes', (tester) async {
     final session = _session();
     final recovery = _MemoryRecovery();
@@ -117,6 +160,12 @@ void main() {
       const TextSelection.collapsed(offset: 8),
     );
     await tester.pump(const Duration(seconds: 16));
+    // The copy is made on another isolate.
+    for (var wait = 0; wait < 40 && recovery.stored == null; wait++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 250)),
+      );
+    }
 
     final stored = recovery.stored;
     expect(stored, isNotNull);

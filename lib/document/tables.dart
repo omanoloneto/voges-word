@@ -65,8 +65,64 @@ class TableModel extends ChangeNotifier {
   void changed() => notifyListeners();
 }
 
+typedef TableCellSnapshot = ({
+  Delta content,
+  String? propertiesXml,
+  int gridSpan,
+  VerticalMerge verticalMerge,
+  Color? fill,
+});
+
+typedef TableRowSnapshot = ({
+  String? propertiesXml,
+  List<TableCellSnapshot> cells,
+});
+
+/// A table as plain data, which another isolate can take.
+typedef TableSnapshot = ({
+  String id,
+  String? packageId,
+  List<double> columnWidths,
+  bool bordered,
+  String? propertiesXml,
+  List<TableRowSnapshot> rows,
+});
+
 /// Holds the document's tables; the editor's text only references their id.
 class TableStore {
+  TableStore();
+
+  /// The tables of a [snapshot], as on another isolate.
+  TableStore.of(List<TableSnapshot> tables) {
+    for (final table in tables) {
+      add(
+        TableModel(
+          id: table.id,
+          packageId: table.packageId,
+          columnWidths: List.of(table.columnWidths),
+          bordered: table.bordered,
+          propertiesXml: table.propertiesXml,
+          rows: [
+            for (final row in table.rows)
+              TableRowModel(
+                propertiesXml: row.propertiesXml,
+                cells: [
+                  for (final cell in row.cells)
+                    TableCellModel(
+                      controller: newCellController(cell.content),
+                      propertiesXml: cell.propertiesXml,
+                      gridSpan: cell.gridSpan,
+                      verticalMerge: cell.verticalMerge,
+                      fill: cell.fill,
+                    ),
+                ],
+              ),
+          ],
+        ),
+      );
+    }
+  }
+
   final _tables = <String, TableModel>{};
   final _edits = StreamController<void>.broadcast();
   var _counter = 0;
@@ -81,6 +137,34 @@ class TableStore {
   String nextId() => 't${++_counter}';
 
   void add(TableModel table) => _tables[table.id] = table;
+
+  /// The tables as plain data, for a [TableStore.of] on another isolate.
+  List<TableSnapshot> snapshot() => [
+    for (final table in _tables.values)
+      (
+        id: table.id,
+        packageId: table.packageId,
+        columnWidths: List.of(table.columnWidths),
+        bordered: table.bordered,
+        propertiesXml: table.propertiesXml,
+        rows: [
+          for (final row in table.rows)
+            (
+              propertiesXml: row.propertiesXml,
+              cells: [
+                for (final cell in row.cells)
+                  (
+                    content: cell.controller.document.toDelta(),
+                    propertiesXml: cell.propertiesXml,
+                    gridSpan: cell.gridSpan,
+                    verticalMerge: cell.verticalMerge,
+                    fill: cell.fill,
+                  ),
+              ],
+            ),
+        ],
+      ),
+  ];
 
   QuillController newCellController([Delta? content]) {
     final delta = content == null || content.isEmpty

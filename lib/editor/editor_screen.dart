@@ -204,7 +204,7 @@ class _EditorScreenState extends State<EditorScreen> with WindowListener {
     }
     _recoveryRevision = session.revision;
     try {
-      await store.save(session.snapshot());
+      await store.save(await session.snapshotInBackground());
       _recoverySaved = true;
       if (!session.dirty) _clearRecovery();
     } catch (_) {
