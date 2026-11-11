@@ -1997,9 +1997,23 @@ void layoutPagedChild(
         parentUsesSize: true);
     return;
   }
+  final bottom = pages.contentBottom(pages.pageAt(top)) + 0.5;
+  // A line that crossed the margin last time is laid out with the page
+  // first, so it is laid out again only when it changed or moved: going from
+  // one layout to the other laid out and painted every paragraph that
+  // crosses a page twice on each key. It goes back when it fits.
+  if (child is RenderEditableTextLine &&
+      child.hasSize &&
+      child.constraints is PagedBoxConstraints) {
+    child.layout(PagedBoxConstraints.from(constraints, pages, top),
+        parentUsesSize: true);
+    if (top + child.naturalHeight <= bottom) {
+      child.layout(constraints, parentUsesSize: true);
+    }
+    return;
+  }
   child.layout(constraints, parentUsesSize: true);
-  final bottom = top + child.size.height;
-  if (bottom > pages.contentBottom(pages.pageAt(top)) + 0.5) {
+  if (top + child.size.height > bottom) {
     child.layout(PagedBoxConstraints.from(constraints, pages, top),
         parentUsesSize: true);
   }

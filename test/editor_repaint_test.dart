@@ -202,4 +202,32 @@ void main() {
       expect(_repainted(before, _pictures(tester)), ['Paragraph 11']);
     });
   }
+
+  testWidgets('typing paints none of the paragraphs that cross a page', (
+    tester,
+  ) async {
+    final session = await _open(tester, _paragraphs(120));
+    final controller = session.controller;
+    final crossing = [
+      for (final line in tester.renderObjectList<RenderEditableTextLine>(
+        find.byType(EditableTextLine),
+      ))
+        if (line.constraints is PagedBoxConstraints) line,
+    ];
+    expect(crossing, isNotEmpty, reason: 'some paragraphs cross a page');
+    controller.updateSelection(
+      const TextSelection.collapsed(offset: 3),
+      ChangeSource.local,
+    );
+    await tester.pump();
+    final before = _pictures(tester);
+
+    controller.replaceText(3, 0, 'x', const TextSelection.collapsed(offset: 4));
+    await tester.pump();
+
+    expect(_repainted(before, _pictures(tester)), ['Parxagraph 0']);
+    expect([
+      for (final line in crossing) line.constraints is PagedBoxConstraints,
+    ], everyElement(isTrue));
+  });
 }

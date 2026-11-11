@@ -894,6 +894,10 @@ class RenderEditableTextLine extends RenderEditableBox {
   double get _pageBreakGap =>
       _pageBreaks.fold(0, (total, pageBreak) => total + pageBreak.gap);
 
+  /// Voges Word: the height of the line laid out without the page, which is
+  /// its height less the room that moves part of it to the next page.
+  double get naturalHeight => size.height - _pageBreakGap;
+
   double _visualShift(double bodyY) {
     var shift = 0.0;
     for (final pageBreak in _pageBreaks) {
