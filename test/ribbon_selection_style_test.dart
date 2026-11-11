@@ -103,6 +103,8 @@ Future<_CountingSession> _pumpRibbon(
             refocus: () {},
             pagesView: true,
             onPagesView: (_) {},
+            showRuler: true,
+            onShowRuler: (_) {},
             zoom: 1,
             onZoom: (_) {},
           ),

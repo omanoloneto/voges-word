@@ -275,6 +275,40 @@ class AppLocalizationsEn extends AppLocalizations {
   String get spellingTooltip => 'Underline misspelled words in red';
 
   @override
+  String get groupShow => 'Show';
+
+  @override
+  String get ruler => 'Ruler';
+
+  @override
+  String get rulerTooltip =>
+      'Show the rulers to measure and set the margins and indents';
+
+  @override
+  String get firstLineIndent => 'First line indent';
+
+  @override
+  String get hangingIndent => 'Hanging indent';
+
+  @override
+  String get leftIndent => 'Left indent';
+
+  @override
+  String get rightIndent => 'Right indent';
+
+  @override
+  String get leftMargin => 'Left margin';
+
+  @override
+  String get rightMargin => 'Right margin';
+
+  @override
+  String get topMargin => 'Top margin';
+
+  @override
+  String get bottomMargin => 'Bottom margin';
+
+  @override
   String get rowAbove => 'Above';
 
   @override
