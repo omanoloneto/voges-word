@@ -2,8 +2,13 @@ Voges Word: a lightweight document editor with .docx support, for macOS, Windows
 
 ## What's new
 
-- Voges Updater now also offers the Voges apps you don't have yet, below the updates. They are never ticked for you: pick the ones you want, or follow the link to the app's page first.
-- Apps that join the suite from now on show up there without a new version of Voges Word. The updater reads them from a list on the Voges website, signed with the same key as the releases.
+- **Rulers** above and beside the page, as in Word. Drag the gray part of a margin to change the page margins, or the markers to change the first-line, hanging, left and right indents of the paragraph. **View → Ruler** hides them.
+- **Save as** is one menu with every format: Word document, PDF, OpenDocument, RTF, web page, Markdown and plain text.
+- **Long documents are fast to edit:** in a book of 869 pages, a key press now shows in 20–60 ms instead of over a second, and moving the caret, Enter and Backspace got just as quick. [The numbers](https://github.com/omanoloneto/voges-word/blob/main/docs/performance.md) and how they were taken.
+- **Pasting** text from web pages and chat apps, such as ChatGPT, keeps its paragraphs and line breaks.
+- Page breaks no longer show a "Page break" label on the pages; the continuous view still marks them.
+- The first-line and right indents you set are saved in `.docx` files.
+- **Linux:** the window shows the app's icon in Alt+Tab and in window lists.
 
 ## Install
 

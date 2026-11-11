@@ -43,7 +43,7 @@ Status as of October 29, 2026, after version 1.2.0:
 - [x] **Alignment**: Align Left, Center, Align Right and Justify (Ctrl+L, E, R, J).
 - [x] **Open** (Ctrl+O) and **Recent files**.
 - [x] **New document** (Ctrl+N), with the blank, single spacing, school paper (ABNT, the Brazilian standard for academic papers) and résumé templates.
-- [x] **Save As** (Ctrl+Shift+S), as `.docx`; the File menu's Other formats saves as `.odt`, `.rtf`, `.html`, `.md` or `.txt`.
+- [x] **Save As** (Ctrl+Shift+S): one menu with a Word document (`.docx`), PDF, `.odt`, `.rtf`, `.html`, `.md` and `.txt`.
 - [x] **Print** (Ctrl+P). On Mac and Android it opens the system print dialog; on Windows and Linux it opens the PDF in the viewer, and you print from there.
 - [x] **Select All** (Ctrl+A).
 
@@ -66,7 +66,8 @@ Status as of October 29, 2026, after version 1.2.0:
 - [ ] **Partial: spacing before and after the paragraph.** Shown as in the file, but it cannot be changed.
 - [ ] **Partial: first-line indent.** Shown as in the file, and the school paper template already comes with 1.25 cm. There is no way to adjust it on screen.
 - [ ] **Automatic lists while typing** "- " or "1. ". The text editor already supports it; it just needs to be turned on.
-- [ ] **Ruler**, with adjustable indents and tab stops. Today Tab inserts a tab, but the tab stop positions cannot be changed.
+- [x] **Ruler**, above and beside the page, with draggable margins and indents (first line, hanging, left in 1.27 cm steps, right).
+- [ ] Tab stops on the ruler. Today Tab inserts a tab, but the tab stop positions cannot be changed.
 - [ ] Show formatting marks (¶).
 - [ ] Paragraph borders and shading.
 
@@ -144,7 +145,7 @@ The order takes into account the estimated usage and who uses Voges Word (studen
 2. Format Painter and Change Case.
 3. Resize pictures.
 4. Track Changes and Comments.
-5. Spacing before and after the paragraph, and a ruler with indents.
+5. Spacing before and after the paragraph, and tab stops on the ruler.
 6. Automatic table of contents and footnotes, the two that matter most in an ABNT paper.
 7. Merge cells, symbols and automatic lists while typing.
 

@@ -35,7 +35,8 @@ From version 1.2.0 on, Voges Word checks for a new version every time it opens a
 - Insert link, image, table (with new rows and columns) and page break.
 - Header, footer and page number (Insert tab), with a different first page for a cover. Logos and page fields that come from Word show up on every page.
 - First-line indent, indents and spacing of each paragraph show on screen as in the file; the school paper template already comes with the 1.25 cm ABNT indent.
-- PDF, printing and sharing from the File menu. The PDF looks just like the screen, with searchable text.
+- Rulers above and beside the page, as in Word: drag the gray part of a margin to change the page margins, or the markers to change the indents of the paragraph. View → Ruler hides them.
+- PDF (in Save as), printing and sharing from the File menu. The PDF looks just like the screen, with searchable text.
 - Spell checker in the interface language, with suggestions on right-click (or long press), on Mac, Android and iPhone.
 - Recovery: while there are unsaved changes, a copy is kept; if the app closes without saving, it offers to recover it the next time it opens.
 - Tables editable cell by cell, including merged cells.
@@ -59,9 +60,9 @@ What already exists and what is missing compared to Word's most used features is
 | Web page | `.html`, `.htm`, `.xhtml` | Yes | Yes, without the page setup, headers and footers |
 | Markdown | `.md`, `.markdown` | Yes | Yes, with basic formatting only |
 | Plain text | `.txt` | Yes | Yes, only the text |
-| PDF | `.pdf` | No | Export only |
+| PDF | `.pdf` | No | Yes, from Save as; the open document stays as it is |
 
-- **Save** keeps the format of the file. **Save as** creates a `.docx`, which keeps everything; **Other formats**, next to it in the File menu, saves as `.odt`, `.rtf`, `.html`, `.md` or `.txt`. When the document's format keeps less than a `.docx` or saves differently, the status bar says so and its tooltip explains why; for `.odt` and `.rtf`, it does so when the document has equations, charts or other protected Word content.
+- **Save** keeps the format of the file. **Save as** offers every format: a Word document (`.docx`, which keeps everything), PDF, `.odt`, `.rtf`, `.html`, `.md` and `.txt`. When the document's format keeps less than a `.docx` or saves differently, the status bar says so and its tooltip explains why; for `.odt` and `.rtf`, it does so when the document has equations, charts or other protected Word content.
 - Templates open as new, untitled documents, as in Word.
 - Files named `.doc` are never written, whatever their content, so the original can't be damaged: saving one creates a `.docx` copy and leaves the original untouched.
 - The macros of a `.docm` are kept when it is saved and are never run. **Save as** leaves them out, because Word refuses a `.docx` with macros.
