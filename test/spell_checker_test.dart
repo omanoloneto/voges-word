@@ -42,7 +42,7 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test(
-    'a long check is announced a few times, not after every batch',
+    'a long check announces every batch, for the paragraphs in it',
     () async {
       final backend = _Backend();
       final checker = SpellChecker(backend);
@@ -58,8 +58,8 @@ void main() {
       await _settle(backend);
 
       expect(backend.batches, 100);
-      // Each announcement rebuilds the editor; it was one per batch.
-      expect(announcements, lessThanOrEqualTo(10));
+      // The editor builds again only the paragraphs a batch answers for.
+      expect(announcements, 100);
       for (final text in texts) {
         expect(checker.misspellingsOf(text), hasLength(1));
       }
@@ -90,7 +90,7 @@ void main() {
     'keeps every paragraph the editor shows, even beyond the cache',
     () async {
       final backend = _Backend();
-      final checker = SpellChecker(backend);
+      final checker = SpellChecker(backend, maxResults: 4000);
       addTearDown(checker.dispose);
       final texts = [for (var index = 0; index < 5000; index++) 'Text $index'];
       void showAll() {
@@ -116,7 +116,7 @@ void main() {
     'drops the oldest results nobody asks for once the cache is full',
     () async {
       final backend = _Backend();
-      final checker = SpellChecker(backend);
+      final checker = SpellChecker(backend, maxResults: 4000);
       addTearDown(checker.dispose);
       final old = [for (var index = 0; index < 4000; index++) 'Old $index'];
       for (final text in old) {

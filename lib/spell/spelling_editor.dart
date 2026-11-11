@@ -190,48 +190,105 @@ TextSpanBuilder spellingSpanBuilder(SpellChecker checker) =>
     };
 
 /// Right-click (or long-press) menu with suggestions for the word.
-QuillEditorContextMenuBuilder spellingContextMenu(SpellChecker checker) =>
-    (context, state) {
-      final items = [...state.contextMenuButtonItems];
-      final word = _misspellingAt(checker, state.controller);
-      if (word != null) {
-        items.insertAll(0, [
-          for (final suggestion in word.suggestions.take(4))
-            ContextMenuButtonItem(
-              label: suggestion,
-              onPressed: () {
-                state.controller.replaceText(
-                  word.offset,
-                  word.text.length,
-                  suggestion,
-                  TextSelection.collapsed(
-                    offset: word.offset + suggestion.length,
-                  ),
-                );
-                state.hideToolbar();
-              },
-            ),
-          ContextMenuButtonItem(
-            label: context.l10n.ignoreWord(word.text),
-            onPressed: () {
-              checker.ignore(word.text);
-              state.hideToolbar();
-            },
-          ),
-        ]);
-      }
-      return TextFieldTapRegion(
-        child: AdaptiveTextSelectionToolbar.buttonItems(
-          buttonItems: items,
-          anchors: state.contextMenuAnchors,
-        ),
-      );
-    };
-
-({int offset, String text, List<String> suggestions})? _misspellingAt(
+QuillEditorContextMenuBuilder spellingContextMenu(
   SpellChecker checker,
-  QuillController controller,
+) => (context, state) {
+  final word = _misspellingAt(checker, state.controller);
+  if (word != null && word.suggestions.isEmpty && checker.suggestsOnRequest) {
+    return TextFieldTapRegion(
+      child: _RequestedSuggestions(checker: checker, state: state, word: word),
+    );
+  }
+  return TextFieldTapRegion(
+    child: _toolbar(
+      context,
+      checker,
+      state,
+      word,
+      word?.suggestions ?? const [],
+    ),
+  );
+};
+
+typedef _Word = ({int offset, String text, List<String> suggestions});
+
+Widget _toolbar(
+  BuildContext context,
+  SpellChecker checker,
+  QuillRawEditorState state,
+  _Word? word,
+  List<String> suggestions,
 ) {
+  final items = [...state.contextMenuButtonItems];
+  if (word != null) {
+    items.insertAll(0, [
+      for (final suggestion in suggestions.take(4))
+        ContextMenuButtonItem(
+          label: suggestion,
+          onPressed: () {
+            state.controller.replaceText(
+              word.offset,
+              word.text.length,
+              suggestion,
+              TextSelection.collapsed(offset: word.offset + suggestion.length),
+            );
+            state.hideToolbar();
+          },
+        ),
+      ContextMenuButtonItem(
+        label: context.l10n.ignoreWord(word.text),
+        onPressed: () {
+          checker.ignore(word.text);
+          state.hideToolbar();
+        },
+      ),
+    ]);
+  }
+  return AdaptiveTextSelectionToolbar.buttonItems(
+    buttonItems: items,
+    anchors: state.contextMenuAnchors,
+  );
+}
+
+/// The menu of a word whose suggestions the checker finds when asked: it
+/// opens at once and shows them when they come.
+class _RequestedSuggestions extends StatefulWidget {
+  const _RequestedSuggestions({
+    required this.checker,
+    required this.state,
+    required this.word,
+  });
+
+  final SpellChecker checker;
+  final QuillRawEditorState state;
+  final _Word word;
+
+  @override
+  State<_RequestedSuggestions> createState() => _RequestedSuggestionsState();
+}
+
+class _RequestedSuggestionsState extends State<_RequestedSuggestions> {
+  var _suggestions = const <String>[];
+
+  @override
+  void initState() {
+    super.initState();
+    widget.checker.suggestionsFor(widget.word.text).then((found) {
+      if (mounted) setState(() => _suggestions = found);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => _toolbar(
+    context,
+    widget.checker,
+    widget.state,
+    widget.word,
+    _suggestions,
+  );
+}
+
+_Word? _misspellingAt(SpellChecker checker, QuillController controller) {
   final selection = controller.selection;
   if (!selection.isValid) return null;
   final query = controller.document.queryChild(selection.start);

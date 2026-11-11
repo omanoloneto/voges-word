@@ -56,9 +56,7 @@ class AppDelegate: FlutterAppDelegate {
       binaryMessenger: controller.engine.binaryMessenger)
     let spellTag = NSSpellChecker.uniqueSpellDocumentTag()
     spelling.setMethodCallHandler { call, result in
-      guard call.method == "check",
-        let arguments = call.arguments as? [String: Any],
-        let texts = arguments["texts"] as? [String],
+      guard let arguments = call.arguments as? [String: Any],
         let wanted = arguments["language"] as? String
       else {
         result(FlutterMethodNotImplemented)
@@ -70,29 +68,46 @@ class AppDelegate: FlutterAppDelegate {
       let language =
         languages.first { $0 == wanted } ?? languages.first { $0 == base }
         ?? languages.first { $0.hasPrefix(base + "_") }
-      result(
-        texts.map { text -> [[String: Any]] in
-          var found: [[String: Any]] = []
-          var start = 0
-          let length = (text as NSString).length
-          while start < length {
-            let range = checker.checkSpelling(
-              of: text, startingAt: start, language: language, wrap: false,
-              inSpellDocumentWithTag: spellTag, wordCount: nil)
-            if range.location == NSNotFound || range.length == 0 { break }
-            let guesses =
-              checker.guesses(
-                forWordRange: range, in: text, language: language,
-                inSpellDocumentWithTag: spellTag) ?? []
-            found.append([
-              "start": range.location,
-              "end": range.location + range.length,
-              "suggestions": Array(guesses.prefix(5)),
-            ])
-            start = range.location + range.length
-          }
-          return found
-        })
+      switch call.method {
+      // Only where the mistakes are: guessing the words took almost all the
+      // time, on the thread the interface runs on. Suggestions come when the
+      // menu of a word asks for them.
+      case "check":
+        guard let texts = arguments["texts"] as? [String] else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        result(
+          texts.map { text -> [[String: Any]] in
+            var found: [[String: Any]] = []
+            var start = 0
+            let length = (text as NSString).length
+            while start < length {
+              let range = checker.checkSpelling(
+                of: text, startingAt: start, language: language, wrap: false,
+                inSpellDocumentWithTag: spellTag, wordCount: nil)
+              if range.location == NSNotFound || range.length == 0 { break }
+              found.append([
+                "start": range.location,
+                "end": range.location + range.length,
+              ])
+              start = range.location + range.length
+            }
+            return found
+          })
+      case "suggest":
+        guard let word = arguments["word"] as? String else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        let guesses =
+          checker.guesses(
+            forWordRange: NSRange(location: 0, length: (word as NSString).length),
+            in: word, language: language, inSpellDocumentWithTag: spellTag) ?? []
+        result(Array(guesses.prefix(5)))
+      default:
+        result(FlutterMethodNotImplemented)
+      }
     }
 
     let printing = FlutterMethodChannel(
