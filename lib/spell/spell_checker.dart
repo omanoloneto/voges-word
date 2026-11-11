@@ -113,9 +113,17 @@ class SpellChecker extends ChangeNotifier {
   var _running = false;
   var _disposed = false;
 
-  /// Counts the announcements of new results; each one rebuilds the editor,
-  /// which asks again for every paragraph it shows.
+  /// Counts the announcements of new results.
   var _round = 0;
+
+  var _generation = 0;
+
+  /// Changes with every announcement of new results.
+  int get round => _round;
+
+  /// Changes whenever results already given may read differently: another
+  /// language, words ignored, checking turned on or off.
+  int get generation => _generation;
 
   bool get enabled => _enabled;
 
@@ -127,6 +135,7 @@ class SpellChecker extends ChangeNotifier {
     _language = value;
     _results.clear();
     _queue.clear();
+    _generation++;
     if (!_disposed) notifyListeners();
   }
 
@@ -138,12 +147,14 @@ class SpellChecker extends ChangeNotifier {
     } catch (_) {
       return;
     }
+    _generation++;
     if (!_disposed) notifyListeners();
   }
 
   set enabled(bool value) {
     if (_enabled == value) return;
     _enabled = value;
+    _generation++;
     notifyListeners();
     _save((preferences) => preferences.setBool(_enabledKey, value));
   }
@@ -169,10 +180,14 @@ class SpellChecker extends ChangeNotifier {
 
   void ignore(String word) {
     if (!_ignored.add(word.toLowerCase())) return;
+    _generation++;
     notifyListeners();
     final words = _ignored.toList()..sort();
     _save((preferences) => preferences.setStringList(_ignoredKey, words));
   }
+
+  /// Whether [text] waits for the backend; it has results once it does not.
+  bool isWaiting(String text) => _queue.contains(text);
 
   void _enqueue(String text) {
     if (!_queue.add(text)) return;
@@ -187,18 +202,21 @@ class SpellChecker extends ChangeNotifier {
     var announced = 0;
     try {
       while (_queue.isNotEmpty && !_disposed) {
+        // A batch stays queued until its results are in, so it is waiting
+        // all along.
         final batch = _queue.take(_batchSize).toList();
-        _queue.removeAll(batch);
         final language = _language;
         final found = await _backend.check(batch, language);
         if (language != _language) continue;
         for (var i = 0; i < batch.length && i < found.length; i++) {
           _results[batch[i]] = _Checked(found[i], _round);
         }
+        _queue.removeAll(batch);
         checked += batch.length;
-        // Each announcement rebuilds the whole editor, so a long check
-        // announces only when its results double, about log2(n) times. A
-        // short queue, as while typing, is announced after every batch.
+        // Each announcement makes the editor look at every paragraph it
+        // shows, so a long check announces only when its results double,
+        // about log2(n) times. A short queue, as while typing, is announced
+        // after every batch.
         if (checked >= 2 * announced || _queue.length < _batchSize) {
           announced = checked;
           _announce();
@@ -220,9 +238,9 @@ class SpellChecker extends ChangeNotifier {
   }
 
   /// Drops the oldest results beyond [_maxResults] that were neither checked
-  /// nor asked for in the last two rounds. The editor asks for every
-  /// paragraph it shows after each announcement, so dropping one of those
-  /// would only queue it again.
+  /// nor asked for in the last two rounds. The editor keeps what each
+  /// paragraph it shows found, so a dropped one is checked again only when
+  /// its paragraph changes.
   void _trim() {
     final excess = _results.length - _maxResults;
     if (excess <= 0) return;

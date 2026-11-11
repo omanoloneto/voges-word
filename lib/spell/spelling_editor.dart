@@ -16,17 +16,56 @@ String spellingTextOf(Line line) {
       .replaceAll('￼', ' ');
 }
 
-/// A line's misspellings for one build of the line's widget.
+/// What a paragraph found, kept with the paragraph until it changes or the
+/// checker's results read differently.
 final class _LineSpelling {
-  _LineSpelling(this._widget, this._line, this.misspellings);
+  _LineSpelling._(
+    this._checker,
+    this._line,
+    this.text,
+    this.misspellings, {
+    required this.waiting,
+  }) : _revision = _line.revision,
+       _generation = _checker.generation,
+       _round = _checker.round;
 
-  final Widget _widget;
+  factory _LineSpelling.of(SpellChecker checker, Line line) {
+    final text = spellingTextOf(line);
+    final misspellings = checker.misspellingsOf(text);
+    return _LineSpelling._(
+      checker,
+      line,
+      text,
+      misspellings,
+      waiting: misspellings == null && checker.isWaiting(text),
+    );
+  }
+
+  final SpellChecker _checker;
   final Line _line;
+  final int _revision;
+  final int _generation;
+  final int _round;
+  final String text;
+
+  /// Null while the paragraph waits to be checked or is not checked.
   final List<Misspelling>? misspellings;
+
+  /// Whether the checker has yet to answer for [text].
+  final bool waiting;
+
   Map<Node, int>? _starts;
 
-  bool isFor(Widget widget, Line line) =>
-      identical(widget, _widget) && identical(line, _line);
+  /// Whether this still holds for [checker]: the paragraph is the same, and
+  /// one that waits has had no announcement since.
+  bool isCurrentFor(SpellChecker checker) =>
+      identical(checker, _checker) &&
+      _revision == _line.revision &&
+      _generation == checker.generation &&
+      (!waiting || _round == checker.round);
+
+  /// Whether the checker answered since, so the paragraph has to show it.
+  bool get answered => waiting && !_checker.isWaiting(text);
 
   /// Where [leaf] starts in the paragraph's text, from one walk over the
   /// line: Quill's cached offset of a run stays put when another run is
@@ -46,77 +85,109 @@ final class _LineSpelling {
   }
 }
 
-/// Underlines misspelled words with a wavy red line.
-TextSpanBuilder spellingSpanBuilder(SpellChecker checker) {
-  _LineSpelling? last;
-  return (context, node, nodeOffset, text, style, recognizer) {
-    final line = node.parent;
-    _LineSpelling? paragraph;
-    if (recognizer == null && line is Line && text.isNotEmpty) {
-      paragraph = last;
-      // Quill builds a line's leaves one after another for the same widget,
-      // so each build looks the paragraph up once instead of once per leaf.
-      if (paragraph == null || !paragraph.isFor(context.widget, line)) {
-        paragraph = last = _LineSpelling(
-          context.widget,
-          line,
-          checker.misspellingsOf(spellingTextOf(line)),
-        );
-      }
-    }
-    final found = paragraph?.misspellings;
-    if (paragraph == null || found == null || found.isEmpty) {
-      return defaultSpanBuilder(
-        context,
-        node,
-        nodeOffset,
-        text,
-        style,
-        recognizer,
-      );
-    }
-    final start = paragraph.startOf(node) + nodeOffset;
-    final end = start + text.length;
-    final wavy = (style ?? const TextStyle()).copyWith(
-      decoration: TextDecoration.combine([
-        ?style?.decoration,
-        TextDecoration.underline,
-      ]),
-      decorationStyle: TextDecorationStyle.wavy,
-      decorationColor: _wavyColor,
-    );
-    final children = <TextSpan>[];
-    var cursor = start;
-    for (final misspelling in found) {
-      final from = math.max(misspelling.start, start);
-      final to = math.min(misspelling.end, end);
-      if (from >= to) continue;
-      if (from > cursor) {
-        children.add(
-          TextSpan(text: text.substring(cursor - start, from - start)),
-        );
-      }
-      children.add(
-        TextSpan(text: text.substring(from - start, to - start), style: wavy),
-      );
-      cursor = to;
-    }
-    if (children.isEmpty) {
-      return defaultSpanBuilder(
-        context,
-        node,
-        nodeOffset,
-        text,
-        style,
-        recognizer,
-      );
-    }
-    if (cursor < end) {
-      children.add(TextSpan(text: text.substring(cursor - start)));
-    }
-    return TextSpan(style: style, children: children);
-  };
+final _spellings = Expando<_LineSpelling>('spelling');
+
+/// Builds a paragraph again when the checker answers for it, and every
+/// paragraph when the results read differently, without building the
+/// editor again.
+class SpellingScope extends InheritedModel<Line> {
+  SpellingScope({required this.checker, required super.child, super.key})
+    : _generation = checker.generation,
+      _round = checker.round;
+
+  final SpellChecker checker;
+  final int _generation;
+  final int _round;
+
+  @override
+  bool updateShouldNotify(SpellingScope oldWidget) =>
+      !identical(checker, oldWidget.checker) ||
+      _generation != oldWidget._generation ||
+      _round != oldWidget._round;
+
+  @override
+  bool updateShouldNotifyDependent(
+    SpellingScope oldWidget,
+    Set<Line> dependencies,
+  ) =>
+      !identical(checker, oldWidget.checker) ||
+      _generation != oldWidget._generation ||
+      dependencies.any((line) => _spellings[line]?.answered ?? false);
 }
+
+/// [line]'s spelling, looked up once while it stays the same: Quill builds a
+/// paragraph's runs one after another, each with this.
+_LineSpelling _spellingOf(
+  BuildContext context,
+  SpellChecker checker,
+  Line line,
+) {
+  InheritedModel.inheritFrom<SpellingScope>(context, aspect: line);
+  final kept = _spellings[line];
+  if (kept != null && kept.isCurrentFor(checker)) return kept;
+  return _spellings[line] = _LineSpelling.of(checker, line);
+}
+
+/// Underlines misspelled words with a wavy red line. A [SpellingScope] above
+/// the editor shows what the checker finds later.
+TextSpanBuilder spellingSpanBuilder(SpellChecker checker) =>
+    (context, node, nodeOffset, text, style, recognizer) {
+      final line = node.parent;
+      final paragraph = recognizer == null && line is Line && text.isNotEmpty
+          ? _spellingOf(context, checker, line)
+          : null;
+      final found = paragraph?.misspellings;
+      if (paragraph == null || found == null || found.isEmpty) {
+        return defaultSpanBuilder(
+          context,
+          node,
+          nodeOffset,
+          text,
+          style,
+          recognizer,
+        );
+      }
+      final start = paragraph.startOf(node) + nodeOffset;
+      final end = start + text.length;
+      final wavy = (style ?? const TextStyle()).copyWith(
+        decoration: TextDecoration.combine([
+          ?style?.decoration,
+          TextDecoration.underline,
+        ]),
+        decorationStyle: TextDecorationStyle.wavy,
+        decorationColor: _wavyColor,
+      );
+      final children = <TextSpan>[];
+      var cursor = start;
+      for (final misspelling in found) {
+        final from = math.max(misspelling.start, start);
+        final to = math.min(misspelling.end, end);
+        if (from >= to) continue;
+        if (from > cursor) {
+          children.add(
+            TextSpan(text: text.substring(cursor - start, from - start)),
+          );
+        }
+        children.add(
+          TextSpan(text: text.substring(from - start, to - start), style: wavy),
+        );
+        cursor = to;
+      }
+      if (children.isEmpty) {
+        return defaultSpanBuilder(
+          context,
+          node,
+          nodeOffset,
+          text,
+          style,
+          recognizer,
+        );
+      }
+      if (cursor < end) {
+        children.add(TextSpan(text: text.substring(cursor - start)));
+      }
+      return TextSpan(style: style, children: children);
+    };
 
 /// Right-click (or long-press) menu with suggestions for the word.
 QuillEditorContextMenuBuilder spellingContextMenu(SpellChecker checker) =>

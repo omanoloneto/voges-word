@@ -84,6 +84,17 @@ class EditorFactory {
 
   late final DefaultStyles styles = paperStyles(look, scale);
 
+  // The editor builds a paragraph again only when these change, so they are
+  // made once per factory; tear-offs of one method are equal.
+  LineFormat? _lineFormat(Line line) => paragraphFormat(line, look);
+
+  late final TextSpanBuilder _spanBuilder = spelling == null
+      ? defaultSpanBuilder
+      : spellingSpanBuilder(spelling!);
+  late final QuillEditorContextMenuBuilder? _contextMenu = spelling == null
+      ? null
+      : spellingContextMenu(spelling!);
+
   late final List<EmbedBuilder> embedBuilders = [
     const ImageEmbedBuilder(),
     const PageBreakEmbedBuilder(),
@@ -133,13 +144,9 @@ class EditorFactory {
       placeholder: placeholder,
       editorKey: editorKey,
       customStyles: styles,
-      lineFormat: (line) => paragraphFormat(line, look),
-      textSpanBuilder: spelling == null
-          ? defaultSpanBuilder
-          : spellingSpanBuilder(spelling!),
-      contextMenuBuilder: spelling == null
-          ? null
-          : spellingContextMenu(spelling!),
+      lineFormat: _lineFormat,
+      textSpanBuilder: _spanBuilder,
+      contextMenuBuilder: _contextMenu,
       embedBuilders: embedBuilders,
       unknownEmbedBuilder: const UnknownEmbedBuilder(),
       customStyleBuilder: lineHeightStyle,

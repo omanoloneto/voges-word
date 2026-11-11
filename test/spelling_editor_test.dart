@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_quill/quill_delta.dart';
+// ignore: implementation_imports
+import 'package:flutter_quill/src/editor/widgets/text/text_line.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:voges_word/app.dart';
@@ -125,6 +127,23 @@ List<TextSpan> _spans(InlineSpan root) {
   return spans;
 }
 
+/// The paragraphs built while [action] runs, by their first words.
+Future<List<String>> _built(Future<void> Function() action) async {
+  final built = <String>[];
+  debugOnRebuildDirtyWidget = (element, _) {
+    final widget = element.widget;
+    if (widget is TextLine) {
+      built.add(widget.line.toPlainText().split(' has').first);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugOnRebuildDirtyWidget = null;
+  }
+  return built;
+}
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
@@ -175,6 +194,42 @@ void main() {
     expect(session.controller.document.toPlainText(), 'My big hause is blue\n');
     // Quill's cached offset of the italic run stays where it was.
     expect(_underlined(tester), ['hause']);
+    await tester.pump(const Duration(milliseconds: 500));
+  });
+
+  testWidgets('typing builds the paragraph typed in and the ones around it, '
+      'and the answer for it builds it alone', (tester) async {
+    final checker = SpellChecker(_InstantBackend());
+    addTearDown(checker.dispose);
+    final content = Delta();
+    for (var index = 0; index < 12; index++) {
+      content.insert('Paragraph $index has a hause in it.\n');
+    }
+    final session = await _show(tester, content, checker);
+    await _settle(tester);
+    expect(_underlined(tester), hasLength(12));
+    final controller = session.controller;
+    final offset = controller.document.toPlainText().indexOf('Paragraph 5') + 3;
+    controller.updateSelection(
+      TextSelection.collapsed(offset: offset),
+      ChangeSource.local,
+    );
+    await tester.pump();
+
+    final typed = await _built(() async {
+      controller.replaceText(
+        offset,
+        0,
+        'x',
+        TextSelection.collapsed(offset: offset + 1),
+      );
+      await tester.pump();
+    });
+    final answered = await _built(() => _settle(tester));
+
+    expect(typed, ['Paragraph 4', 'Parxagraph 5', 'Paragraph 6']);
+    expect(answered, ['Parxagraph 5']);
+    expect(_underlined(tester), hasLength(12));
     await tester.pump(const Duration(milliseconds: 500));
   });
 
