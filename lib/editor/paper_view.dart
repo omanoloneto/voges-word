@@ -73,13 +73,14 @@ class _PaperViewState extends State<PaperView> {
     return _decorations = next;
   }
 
-  EditorFactory _factoryFor(double contentWidth) {
+  EditorFactory _factoryFor(double contentWidth, {required bool paged}) {
     final key = (
       widget.session.generation,
       widget.session.look,
       widget.zoom,
       contentWidth,
       widget.spelling,
+      paged,
     );
     if (_factory == null || _factoryKey != key) {
       _factoryKey = key;
@@ -94,6 +95,7 @@ class _PaperViewState extends State<PaperView> {
         onEditLink: widget.onEditLink,
         cellFocusParent: _paperFocus,
         spelling: widget.spelling,
+        paged: paged,
       );
     }
     return _factory!;
@@ -150,7 +152,10 @@ class _PaperViewState extends State<PaperView> {
             look.margins.bottom * scale + (paged ? pageGap : 0),
           );
         }
-        final factory = _factoryFor(sheetWidth - padding.horizontal);
+        final factory = _factoryFor(
+          sheetWidth - padding.horizontal,
+          paged: paged,
+        );
         final controller = widget.session.controller;
 
         return Focus(

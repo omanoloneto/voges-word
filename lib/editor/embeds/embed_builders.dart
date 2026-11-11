@@ -238,7 +238,11 @@ class _ShownPictures {
 }
 
 class PageBreakEmbedBuilder extends EmbedBuilder {
-  const PageBreakEmbedBuilder();
+  const PageBreakEmbedBuilder({this.marked = true});
+
+  /// Whether the break shows as a marked line. On pages it does not: the
+  /// next page shows it, as in Word.
+  final bool marked;
 
   @override
   String get key => EmbedTypes.pageBreak;
@@ -251,11 +255,14 @@ class PageBreakEmbedBuilder extends EmbedBuilder {
 
   @override
   Widget build(BuildContext context, EmbedContext embedContext) =>
-      _BreakMarker(label: context.l10n.pageBreak);
+      _BreakMarker(label: context.l10n.pageBreak, marked: marked);
 }
 
 class SectionBreakEmbedBuilder extends EmbedBuilder {
-  const SectionBreakEmbedBuilder();
+  const SectionBreakEmbedBuilder({this.marked = true});
+
+  /// As [PageBreakEmbedBuilder.marked].
+  final bool marked;
 
   @override
   String get key => EmbedTypes.sectionBreak;
@@ -265,16 +272,18 @@ class SectionBreakEmbedBuilder extends EmbedBuilder {
 
   @override
   Widget build(BuildContext context, EmbedContext embedContext) =>
-      _BreakMarker(label: context.l10n.sectionBreak);
+      _BreakMarker(label: context.l10n.sectionBreak, marked: marked);
 }
 
 class _BreakMarker extends StatelessWidget {
-  const _BreakMarker({required this.label});
+  const _BreakMarker({required this.label, this.marked = true});
 
   final String label;
+  final bool marked;
 
   @override
   Widget build(BuildContext context) {
+    if (!marked) return Semantics(label: label, child: const SizedBox.shrink());
     return Semantics(
       label: label,
       child: SizedBox(
