@@ -12,6 +12,8 @@
 // * `chapters=N` sets the size of the book (72 chapters, about 850 pages,
 //   when left out);
 // * `nospell` leaves the spell checker out;
+// * `justify` justifies the body text with 1.5 lines, as in a school work,
+//   so each chapter's paragraphs are one block of the editor;
 // * `repeat=N` makes every group of steps N times longer, to sample it;
 // * the names of the groups of steps (`type`, `keys`, `pointer`, `scroll`,
 //   `shell`) run only those groups after the opening.
@@ -305,7 +307,7 @@ String _prose(math.Random random, int length) {
 
 /// A novel: chapters that start on a new page, each with a heading and a
 /// mix of short lines of dialog, paragraphs and a few long ones.
-List<int> _book(int chapters) {
+List<int> _book(int chapters, {bool justified = false}) {
   final random = math.Random(7);
   final spec = DocumentSpec(
     page: const PageSpec(
@@ -351,18 +353,27 @@ List<int> _book(int chapters) {
           ? text.lastIndexOf(' ', text.length ~/ 2)
           : -1;
       spec.body.add(
-        ParagraphSpec([
-          if (cut > 0) ...[
-            TextSpec(text.substring(0, cut)),
-            TextSpec(text.substring(cut), const RunFormat(italic: true)),
-          ] else
-            TextSpec(text),
-        ], format: const ParagraphFormat(firstLine: 18)),
+        ParagraphSpec(
+          [
+            if (cut > 0) ...[
+              TextSpec(text.substring(0, cut)),
+              TextSpec(text.substring(cut), const RunFormat(italic: true)),
+            ] else
+              TextSpec(text),
+          ],
+          format: justified ? _justified : const ParagraphFormat(firstLine: 18),
+        ),
       );
     }
   }
   return DocxBuilder(spec).build().encode();
 }
+
+const _justified = ParagraphFormat(
+  firstLine: 18,
+  align: ParagraphAlign.justify,
+  lineSpacing: LineSpacing.multiple(1.5),
+);
 
 class _Bench {
   _Bench(this.session, this.options)
@@ -403,14 +414,19 @@ class _Bench {
     await step('first frames', () => frame(5));
 
     final clock = Stopwatch()..start();
-    final bytes = _book(_option(options, 'chapters', 72));
+    final bytes = _book(
+      _option(options, 'chapters', 72),
+      justified: options.contains('justify'),
+    );
     print(
       'book of ${bytes.length} bytes made in ${clock.elapsedMilliseconds} ms',
     );
     await step('open the book', () => _open(bytes));
     final text = document.toPlainText();
     print(
-      '  ${document.root.childCount} top nodes, ${text.length} characters, '
+      '  ${document.root.childCount} top nodes, '
+      '${document.root.children.whereType<Block>().length} blocks, '
+      '${text.length} characters, '
       '${_editor.renderEditor.pageCount} pages, text input client '
       '${_input.client}',
     );
