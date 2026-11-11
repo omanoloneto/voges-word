@@ -416,13 +416,16 @@ class AutoFormatMultipleLinksRule extends InsertRule {
     // Only format when inserting text.
     if (data is! String) return null;
 
-    // Get current text.
-    final entireText = document.toPlainText();
+    // Voges Word: the words around the insertion are in its paragraph, so
+    // only that is read; splitting the whole text into paragraphs took two
+    // copies of a long document for every key.
+    final query = document.queryChild(index);
+    final paragraph = query.node?.toPlainText() ?? '';
 
     // Get word before insertion.
-    final leftWordPart = entireText
+    final leftWordPart = paragraph
         // Keep all text before insertion.
-        .substring(0, index)
+        .substring(0, query.offset)
         // Keep last paragraph.
         .split('\n')
         .last
@@ -432,9 +435,9 @@ class AutoFormatMultipleLinksRule extends InsertRule {
         .trimLeft();
 
     // Get word after insertion.
-    final rightWordPart = entireText
+    final rightWordPart = paragraph
         // Keep all text after insertion.
-        .substring(index)
+        .substring(query.offset)
         // Keep first paragraph.
         .split('\n')
         .first
