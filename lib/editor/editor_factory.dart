@@ -62,6 +62,7 @@ class EditorFactory {
     required this.onEditLink,
     required this.cellFocusParent,
     this.spelling,
+    this.paged = false,
   });
 
   final DocumentLook look;
@@ -80,6 +81,9 @@ class EditorFactory {
   /// Null where there is no spell checker, and in the PDF.
   final SpellChecker? spelling;
 
+  /// Whether the document shows as pages, where breaks are not marked.
+  final bool paged;
+
   double get scale => pointsToPixels * zoom;
 
   late final DefaultStyles styles = paperStyles(look, scale);
@@ -97,8 +101,8 @@ class EditorFactory {
 
   late final List<EmbedBuilder> embedBuilders = [
     const ImageEmbedBuilder(),
-    const PageBreakEmbedBuilder(),
-    const SectionBreakEmbedBuilder(),
+    PageBreakEmbedBuilder(marked: !paged),
+    SectionBreakEmbedBuilder(marked: !paged),
     const OpaqueInlineEmbedBuilder(),
     const OpaqueBlockEmbedBuilder(),
     const PageNumberEmbedBuilder(),
