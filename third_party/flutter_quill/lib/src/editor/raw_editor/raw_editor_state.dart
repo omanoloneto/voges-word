@@ -33,6 +33,7 @@ import '../widgets/text/text_line.dart';
 import '../widgets/text/text_selection.dart';
 import 'keyboard_shortcuts/editor_keyboard_shortcut_actions_manager.dart';
 import 'keyboard_shortcuts/editor_keyboard_shortcuts.dart';
+import 'node_widget_cache.dart';
 import 'raw_editor.dart';
 import 'raw_editor_render_object.dart';
 import 'raw_editor_state_selection_delegate_mixin.dart';
@@ -75,6 +76,9 @@ class QuillRawEditorState extends EditorState
 
   // Theme
   DefaultStyles? _styles;
+
+  // Voges Word: the paragraphs' widgets, kept from one build to the next.
+  final NodeWidgetCache _nodeWidgets = NodeWidgetCache();
 
   // for pasting style
   @override
@@ -568,7 +572,7 @@ class QuillRawEditorState extends EditorState
 
   List<Widget> _buildChildren(Document doc, BuildContext context) {
     final result = <Widget>[];
-    final indentLevelCounts = <int, int>{};
+    var indentLevelCounts = <int, int>{};
     // this need for several ordered list in document
     // we need to reset indents Map, if list finished
     // List finished when there is node without Attribute.ol in styles
@@ -576,6 +580,15 @@ class QuillRawEditorState extends EditorState
     // to the next EditableTextBlock
     var prevNodeOl = false;
     var clearIndents = false;
+
+    // Voges Word: the placeholder is a document made for this build alone,
+    // so its paragraphs are not kept.
+    final cache = identical(doc, controller.document) ? _nodeWidgets : null;
+    cache?.useEnvironment(_widgetEnvironment(context));
+    final selection = controller.selection;
+    final composing = composingRange.value;
+    final hasFocus = _hasFocus;
+    var offset = 0;
 
     for (final node in doc.root.children) {
       final attrs = node.style.attributes;
@@ -586,14 +599,47 @@ class QuillRawEditorState extends EditorState
       }
 
       prevNodeOl = attrs[Attribute.list.key] == Attribute.ol;
+      // Voges Word: the counts start over in a map of their own, since a
+      // block kept from the last build is not built again to empty the one
+      // it shares.
+      final restartsCounts = node is Block && clearIndents;
+      if (restartsCounts) {
+        indentLevelCounts = <int, int>{};
+        clearIndents = false;
+      }
+
+      final inputs =
+          cache == null || node is Block && !NodeWidgetCache.keepsLinesOf(node)
+              ? null
+              : NodeInputs.of(
+                  node,
+                  offset: offset,
+                  previous: node.previous,
+                  next: node.next,
+                  selection: selection,
+                  composing: composing,
+                  hasFocus: hasFocus,
+                );
+      offset += node.length;
+      final kept = inputs == null ? null : cache!.lookup(node, inputs);
+      if (kept != null) {
+        result.add(kept);
+        continue;
+      }
+
       final nodeTextDirection = getDirectionOfNode(node, _textDirection);
+      final Widget child;
       if (node is Line) {
-        final editableTextLine =
-            _getEditableTextLineFromNode(node, context, attrs);
-        result.add(Directionality(
-            textDirection: nodeTextDirection, child: editableTextLine));
+        child = _getEditableTextLineFromNode(
+          node,
+          context,
+          attrs,
+          selection: inputs?.selection ?? selection,
+          composing: inputs?.composing ?? composing,
+          hasFocus: inputs?.hasFocus ?? hasFocus,
+        );
       } else if (node is Block) {
-        final editableTextBlock = EditableTextBlock(
+        child = EditableTextBlock(
           block: node,
           controller: controller,
           customLeadingBlockBuilder: widget.config.customLeadingBuilder,
@@ -601,11 +647,11 @@ class QuillRawEditorState extends EditorState
           scrollBottomInset: widget.config.scrollBottomInset,
           horizontalSpacing: _getHorizontalSpacingForBlock(node, _styles),
           verticalSpacing: _getVerticalSpacingForBlock(node, _styles),
-          textSelection: controller.selection,
+          textSelection: inputs?.selection ?? selection,
           color: widget.config.selectionColor,
           styles: _styles,
           enableInteractiveSelection: widget.config.enableInteractiveSelection,
-          hasFocus: _hasFocus,
+          hasFocus: inputs?.hasFocus ?? hasFocus,
           contentPadding: attrs.containsKey(Attribute.codeBlock.key)
               ? const EdgeInsets.all(16)
               : null,
@@ -615,35 +661,72 @@ class QuillRawEditorState extends EditorState
           onLaunchUrl: widget.config.onLaunchUrl,
           cursorCont: _cursorCont,
           indentLevelCounts: indentLevelCounts,
-          clearIndents: clearIndents,
+          clearIndents: restartsCounts,
           onCheckboxTap: _handleCheckboxTap,
           readOnly: widget.config.readOnly,
           checkBoxReadOnly: widget.config.checkBoxReadOnly,
           customRecognizerBuilder: widget.config.customRecognizerBuilder,
           customStyleBuilder: widget.config.customStyleBuilder,
           customLinkPrefixes: widget.config.customLinkPrefixes,
-          composingRange: composingRange.value,
+          composingRange: inputs?.composing ?? composing,
           lineFormat: widget.config.lineFormat,
+          widgetCache: cache,
         );
-        result.add(
-          Directionality(
-            textDirection: nodeTextDirection,
-            child: editableTextBlock,
-          ),
-        );
-
-        clearIndents = false;
       } else {
         _dirty = false;
         throw StateError('Unreachable.');
       }
+      // Voges Word: the key keeps each paragraph's element with it when
+      // paragraphs come and go above.
+      final built = Directionality(
+        key: cache == null ? null : ObjectKey(node),
+        textDirection: nodeTextDirection,
+        child: child,
+      );
+      if (inputs != null) {
+        cache!.store(node, inputs, built);
+      }
+      result.add(built);
     }
     _dirty = false;
     return result;
   }
 
+  /// Voges Word: what every paragraph's widget is built from besides the
+  /// paragraph itself; see [NodeWidgetCache.useEnvironment].
+  List<Object?> _widgetEnvironment(BuildContext context) {
+    final config = widget.config;
+    return [
+      controller,
+      _styles,
+      _cursorCont,
+      _textDirection,
+      MediaQuery.textScalerOf(context),
+      MediaQuery.devicePixelRatioOf(context),
+      config.readOnly,
+      config.checkBoxReadOnly,
+      config.selectionColor,
+      config.enableInteractiveSelection,
+      config.scrollBottomInset,
+      config.embedBuilder,
+      config.textSpanBuilder,
+      config.customStyleBuilder,
+      config.customRecognizerBuilder,
+      config.customLeadingBuilder,
+      config.customLinkPrefixes,
+      config.onLaunchUrl,
+      config.lineFormat,
+    ];
+  }
+
   EditableTextLine _getEditableTextLineFromNode(
-      Line node, BuildContext context, Map<String, Attribute<dynamic>> attrs) {
+    Line node,
+    BuildContext context,
+    Map<String, Attribute<dynamic>> attrs, {
+    required TextSelection selection,
+    required TextRange composing,
+    required bool hasFocus,
+  }) {
     final textLine = TextLine(
       line: node,
       textDirection: _textDirection,
@@ -657,7 +740,7 @@ class QuillRawEditorState extends EditorState
       linkActionPicker: _linkActionPicker,
       onLaunchUrl: widget.config.onLaunchUrl,
       customLinkPrefixes: widget.config.customLinkPrefixes,
-      composingRange: composingRange.value,
+      composingRange: composing,
       lineFormat: widget.config.lineFormat,
     );
     // Voges Word: the paragraph's own spacing and right indent.
@@ -677,10 +760,10 @@ class QuillRawEditorState extends EditorState
             : VerticalSpacing(scaler.scale(format.spaceBefore),
                 scaler.scale(format.spaceAfter)),
         _textDirection,
-        controller.selection,
+        selection,
         widget.config.selectionColor,
         widget.config.enableInteractiveSelection,
-        _hasFocus,
+        hasFocus,
         MediaQuery.devicePixelRatioOf(context),
         _cursorCont,
         _styles!.inlineCode!,
@@ -962,7 +1045,10 @@ class QuillRawEditorState extends EditorState
     }
 
     // in case customStyles changed in new widget
-    if (widget.config.customStyles != null) {
+    // Voges Word: and only then, since new styles build every paragraph
+    // again.
+    if (widget.config.customStyles != oldWidget.config.customStyles &&
+        widget.config.customStyles != null) {
       _styles = _styles!.merge(widget.config.customStyles!);
     }
   }
@@ -974,6 +1060,11 @@ class QuillRawEditorState extends EditorState
 
   @override
   void dispose() {
+    // Voges Word: closing the connection while something is being composed
+    // empties the composing range, which built this editor as it went.
+    if (!widget.config.readOnly) {
+      composingRange.removeListener(_onComposingRangeChanged);
+    }
     closeConnectionIfNeeded();
     _keyboardVisibilitySubscription?.cancel();
     HardwareKeyboard.instance.removeHandler(_hardwareKeyboardEvent);
@@ -983,7 +1074,6 @@ class QuillRawEditorState extends EditorState
     controller.removeListener(_didChangeTextEditingValueListener);
     if (!widget.config.readOnly) {
       widget.config.focusNode.removeListener(_handleFocusChanged);
-      composingRange.removeListener(_onComposingRangeChanged);
     }
     _cursorCont.dispose();
     if (_clipboardStatus != null) {
@@ -1074,15 +1164,19 @@ class QuillRawEditorState extends EditorState
     }
   }
 
-  void _updateOrDisposeSelectionOverlayIfNeeded() {
+  void _updateOrDisposeSelectionOverlayIfNeeded({bool forToolbar = false}) {
     if (_selectionOverlay != null) {
-      if (!_hasFocus || textEditingValue.selection.isCollapsed) {
+      if (!_hasFocus || controller.selection.isCollapsed) {
         _selectionOverlay!.dispose();
         _selectionOverlay = null;
       } else {
         _selectionOverlay!.update(textEditingValue);
       }
-    } else if (_hasFocus) {
+    } else if (_hasFocus &&
+        // Voges Word: a caret shows no handles, and on a computer no
+        // magnifier, so its overlay was made with the whole text after every
+        // other key only to be dropped at the next one.
+        (forToolbar || !isDesktopApp || !controller.selection.isCollapsed)) {
       _selectionOverlay = EditorTextSelectionOverlay(
         value: textEditingValue,
         context: context,
@@ -1238,7 +1332,7 @@ class QuillRawEditorState extends EditorState
     // to remove unnecessary handles. Since a toolbar is requested here,
     // attempt to create the selectionOverlay if it's not already created.
     if (_selectionOverlay == null) {
-      _updateOrDisposeSelectionOverlayIfNeeded();
+      _updateOrDisposeSelectionOverlayIfNeeded(forToolbar: true);
     }
 
     if (_selectionOverlay == null || _selectionOverlay!.toolbar != null) {

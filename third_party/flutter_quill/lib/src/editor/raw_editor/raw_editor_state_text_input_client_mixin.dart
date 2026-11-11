@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/cupertino.dart';
@@ -10,6 +11,7 @@ import 'package:meta/meta.dart';
 import '../../common/extensions/view_id_ext.dart';
 import '../../delta/delta_diff.dart';
 import '../../document/document.dart';
+import '../../document/nodes/line.dart';
 import '../editor.dart';
 import 'raw_editor.dart';
 
@@ -20,9 +22,111 @@ mixin RawEditorStateTextInputClientMixin on EditorState
 
   set _lastKnownRemoteTextEditingValue(TextEditingValue? value) {
     __lastKnownRemoteTextEditingValue = value;
-    if (composingRange.value != value?.composing) {
-      composingRange.value = value?.composing ?? TextRange.empty;
+    final composing = value == null || !value.composing.isValid
+        ? TextRange.empty
+        : TextRange(
+            start: value.composing.start + _remoteStart,
+            end: value.composing.end + _remoteStart,
+          );
+    if (composingRange.value != composing) {
+      composingRange.value = composing;
     }
+  }
+
+  // Voges Word: the platform gets the text around the selection, not the
+  // whole document: a long book went to the system and back, two megabytes,
+  // with every key. The remote value is in the offsets of that window, which
+  // starts at [_remoteStart] in the document and ended at [_remoteEnd] when
+  // the document was [_documentLength] long.
+  static const _reach = 1000;
+  static const _slack = 250;
+  int _remoteStart = 0;
+  int _remoteEnd = 0;
+  int _documentLength = 0;
+
+  /// What the platform should have now, and where in the document it is. The
+  /// window stays while the selection is well inside it, and always while
+  /// something is being composed in it.
+  ({TextEditingValue value, int start, int end}) _remoteValue() {
+    final document = widget.controller.document;
+    final length = document.length;
+    final selection = widget.controller.selection;
+    final from = selection.isValid ? math.min(selection.start, length) : 0;
+    final to = selection.isValid ? math.min(selection.end, length) : 0;
+    final last = _lastKnownRemoteTextEditingValue;
+    var start = _remoteStart;
+    var end = _remoteEnd + length - _documentLength;
+    final composing = last != null && last.composing.isValid
+        ? last.composing
+        : TextRange.empty;
+    final inside = last != null &&
+        start <= from &&
+        to <= end &&
+        end <= length &&
+        (composing.isValid && !composing.isCollapsed ||
+            (start == 0 || from - start >= _slack) &&
+                (end == length || end - to >= _slack) &&
+                from - start <= _reach + _slack &&
+                end - to <= _reach + _slack);
+    if (!inside) {
+      start = math.max(0, from - _reach);
+      end = math.min(length, to + _reach);
+    }
+    // A pair of surrogates is one character to the platform.
+    if (start > 0 && _isLowSurrogate(_textBetween(start, start + 1))) {
+      start--;
+    }
+    if (end < length && _isLowSurrogate(_textBetween(end, end + 1))) {
+      end++;
+    }
+    final text = _textBetween(start, end);
+    final remoteSelection = selection.isValid
+        ? selection.copyWith(
+            baseOffset: selection.baseOffset - start,
+            extentOffset: selection.extentOffset - start,
+          )
+        : selection;
+    return (
+      value: TextEditingValue(
+        text: text,
+        selection: remoteSelection,
+        // Ignore last known composing range if it exceeds current text length.
+        composing: composing.end > text.length ? TextRange.empty : composing,
+      ),
+      start: start,
+      end: end,
+    );
+  }
+
+  static bool _isLowSurrogate(String character) =>
+      character.isNotEmpty &&
+      character.codeUnitAt(0) >= 0xDC00 &&
+      character.codeUnitAt(0) <= 0xDFFF;
+
+  /// The document's text from [start] to [end], as [Document.toPlainText]
+  /// gives it.
+  String _textBetween(int start, int end) {
+    final query = widget.controller.document.queryChild(start);
+    var line = query.node as Line?;
+    var offset = query.offset;
+    var remaining = end - start;
+    final buffer = StringBuffer();
+    while (line != null && remaining > 0) {
+      final text = line.toPlainText();
+      final taken = math.min(remaining, text.length - offset);
+      buffer.write(text.substring(offset, offset + taken));
+      remaining -= taken;
+      offset = 0;
+      line = line.nextLine;
+    }
+    return buffer.toString();
+  }
+
+  void _setRemote(({TextEditingValue value, int start, int end}) remote) {
+    _remoteStart = remote.start;
+    _remoteEnd = remote.end;
+    _documentLength = widget.controller.document.length;
+    _lastKnownRemoteTextEditingValue = remote.value;
   }
 
   TextEditingValue? get _lastKnownRemoteTextEditingValue =>
@@ -77,7 +181,8 @@ mixin RawEditorStateTextInputClientMixin on EditorState
     }
 
     if (!hasConnection) {
-      _lastKnownRemoteTextEditingValue = textEditingValue;
+      _lastKnownRemoteTextEditingValue = null;
+      _setRemote(_remoteValue());
       _textInputConnection = TextInput.attach(
         this,
         TextInputConfiguration(
@@ -118,8 +223,7 @@ mixin RawEditorStateTextInputClientMixin on EditorState
   }
 
   void _updateComposingRectIfNeeded() {
-    final composingRange = _lastKnownRemoteTextEditingValue?.composing ??
-        textEditingValue.composing;
+    final composingRange = this.composingRange.value;
     if (hasConnection) {
       assert(mounted);
       if (composingRange.isValid) {
@@ -157,6 +261,7 @@ mixin RawEditorStateTextInputClientMixin on EditorState
     _textInputConnection!.close();
     _textInputConnection = null;
     _lastKnownRemoteTextEditingValue = null;
+    _remoteStart = 0;
   }
 
   /// Updates remote value based on current state of [document] and
@@ -169,24 +274,18 @@ mixin RawEditorStateTextInputClientMixin on EditorState
       return;
     }
 
-    final value = textEditingValue;
-
-    // Since we don't keep track of the composing range in value provided
-    // by the Controller we need to add it here manually before comparing
-    // with the last known remote value.
-    // It is important to prevent excessive remote updates as it can cause
-    // race conditions.
-    final composingRange = _lastKnownRemoteTextEditingValue!.composing;
-    final actualValue = value.copyWith(
-      // Ignore last known composing range if it exceeds current text length.
-      composing: composingRange.end > value.text.length ? null : composingRange,
-    );
-
+    // The remote value keeps the last known composing range: we don't keep
+    // track of it in the controller. It is important to prevent excessive
+    // remote updates as it can cause race conditions.
+    final remote = _remoteValue();
+    final actualValue = remote.value;
     if (actualValue == _lastKnownRemoteTextEditingValue) {
+      _remoteEnd = remote.end;
+      _documentLength = widget.controller.document.length;
       return;
     }
 
-    _lastKnownRemoteTextEditingValue = actualValue;
+    _setRemote(remote);
     _textInputConnection!.setEditingState(
       // Set composing to (-1, -1), otherwise an exception will be thrown if
       // the values are different.
@@ -232,14 +331,25 @@ mixin RawEditorStateTextInputClientMixin on EditorState
     final text = value.text;
     final cursorPosition = value.selection.extentOffset;
     final diff = getDiff(oldText, text, cursorPosition);
+    // Voges Word: the platform's offsets are in the window.
+    final selection = value.selection.isValid
+        ? value.selection.copyWith(
+            baseOffset: value.selection.baseOffset + _remoteStart,
+            extentOffset: value.selection.extentOffset + _remoteStart,
+          )
+        : value.selection;
+    _remoteEnd = _remoteStart + text.length;
+    _documentLength = widget.controller.document.length +
+        diff.inserted.length -
+        diff.deleted.length;
     if (diff.deleted.isEmpty && diff.inserted.isEmpty) {
-      widget.controller.updateSelection(value.selection, ChangeSource.local);
+      widget.controller.updateSelection(selection, ChangeSource.local);
     } else {
       widget.controller.replaceText(
-        diff.start,
+        diff.start + _remoteStart,
         diff.deleted.length,
         diff.inserted,
-        value.selection,
+        selection,
       );
     }
   }
@@ -381,6 +491,7 @@ mixin RawEditorStateTextInputClientMixin on EditorState
     _textInputConnection!.connectionClosedReceived();
     _textInputConnection = null;
     _lastKnownRemoteTextEditingValue = null;
+    _remoteStart = 0;
   }
 
   void _updateSizeAndTransform() {

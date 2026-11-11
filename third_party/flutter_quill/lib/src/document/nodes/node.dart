@@ -40,6 +40,22 @@ abstract base class Node extends LinkedListEntry<Node> {
   Style get style => _style;
   Style _style = const Style();
 
+  /// Voges Word: counts the changes to this node and to what is under it, so
+  /// the editor builds again only the paragraphs that changed.
+  int get revision => _revision;
+  int _revision = 0;
+
+  /// Voges Word: counts one change on this node alone.
+  @protected
+  void bumpRevision() => _revision++;
+
+  /// Voges Word: counts a change of this node on it and on every node above.
+  void markChanged() {
+    for (Node? node = this; node != null; node = node.parent) {
+      node._revision++;
+    }
+  }
+
   /// Returns `true` if this node is the first node in the [parent] list.
   bool get isFirst => list!.first == this;
 
@@ -119,14 +135,17 @@ abstract base class Node extends LinkedListEntry<Node> {
 
   void applyAttribute(Attribute attribute) {
     _style = _style.merge(attribute);
+    markChanged();
   }
 
   void applyStyle(Style value) {
     _style = _style.mergeAll(value);
+    markChanged();
   }
 
   void clearStyle() {
     _style = const Style();
+    markChanged();
   }
 
   @override

@@ -312,7 +312,7 @@ class QuillEditorState extends State<QuillEditor>
         keyboardAppearance: config.keyboardAppearance,
         enableInteractiveSelection: config.enableInteractiveSelection,
         scrollPhysics: config.scrollPhysics,
-        embedBuilder: _getEmbedBuilder,
+        embedBuilder: _currentEmbedBuilder,
         textSpanBuilder: config.textSpanBuilder,
         quillMagnifierBuilder: config.quillMagnifierBuilder,
         linkActionPickerDelegate: config.linkActionPickerDelegate,
@@ -360,6 +360,23 @@ class QuillEditorState extends State<QuillEditor>
     }
 
     return editor;
+  }
+
+  EmbedsBuilder? _embedBuilder;
+  Iterable<EmbedBuilder>? _embedBuilders;
+  EmbedBuilder? _unknownEmbedBuilder;
+
+  /// Voges Word: a new function whenever the builders change, so the raw
+  /// editor notices and builds its paragraphs again.
+  EmbedsBuilder get _currentEmbedBuilder {
+    if (_embedBuilder == null ||
+        !identical(config.embedBuilders, _embedBuilders) ||
+        !identical(config.unknownEmbedBuilder, _unknownEmbedBuilder)) {
+      _embedBuilders = config.embedBuilders;
+      _unknownEmbedBuilder = config.unknownEmbedBuilder;
+      _embedBuilder = (node) => _getEmbedBuilder(node);
+    }
+    return _embedBuilder!;
   }
 
   EmbedBuilder _getEmbedBuilder(Embed node) {
@@ -1980,9 +1997,23 @@ void layoutPagedChild(
         parentUsesSize: true);
     return;
   }
+  final bottom = pages.contentBottom(pages.pageAt(top)) + 0.5;
+  // A line that crossed the margin last time is laid out with the page
+  // first, so it is laid out again only when it changed or moved: going from
+  // one layout to the other laid out and painted every paragraph that
+  // crosses a page twice on each key. It goes back when it fits.
+  if (child is RenderEditableTextLine &&
+      child.hasSize &&
+      child.constraints is PagedBoxConstraints) {
+    child.layout(PagedBoxConstraints.from(constraints, pages, top),
+        parentUsesSize: true);
+    if (top + child.naturalHeight <= bottom) {
+      child.layout(constraints, parentUsesSize: true);
+    }
+    return;
+  }
   child.layout(constraints, parentUsesSize: true);
-  final bottom = top + child.size.height;
-  if (bottom > pages.contentBottom(pages.pageAt(top)) + 0.5) {
+  if (top + child.size.height > bottom) {
     child.layout(PagedBoxConstraints.from(constraints, pages, top),
         parentUsesSize: true);
   }

@@ -328,6 +328,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('counts the words and characters of the document', (
+    tester,
+  ) async {
+    final tables = TableStore();
+    await _pumpWithFormat(
+      tester,
+      DocumentFormat.docx,
+      content: DocxCodec(
+        tables,
+      ).encode(Delta()..insert("Two words, and Ana's one-liner.\n")),
+    );
+    // The count comes from another isolate.
+    final words = _inStatusBar(find.textContaining('5 words'));
+    for (var wait = 0; wait < 40 && words.evaluate().isEmpty; wait++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 250)),
+      );
+      await tester.pump();
+    }
+
+    expect(words, findsOneWidget);
+    expect(_inStatusBar(find.textContaining('31 characters')), findsOneWidget);
+  });
+
   testWidgets('the longest note fits the narrowest window', (tester) async {
     await _pumpWithFormat(
       tester,

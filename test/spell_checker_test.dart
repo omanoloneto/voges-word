@@ -9,6 +9,7 @@ class _Backend implements SpellBackend {
   final void Function()? onCheck;
   var batches = 0;
   var texts = 0;
+  final sizes = <int>[];
 
   @override
   Future<List<List<Misspelling>>> check(
@@ -17,6 +18,7 @@ class _Backend implements SpellBackend {
   ) async {
     batches++;
     this.texts += texts.length;
+    sizes.add(texts.length);
     onCheck?.call();
     await Future<void>.delayed(Duration.zero);
     return [
@@ -42,7 +44,7 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test(
-    'a long check is announced a few times, not after every batch',
+    'a long check announces every batch, for the paragraphs in it',
     () async {
       final backend = _Backend();
       final checker = SpellChecker(backend);
@@ -58,13 +60,29 @@ void main() {
       await _settle(backend);
 
       expect(backend.batches, 100);
-      // Each announcement rebuilds the editor; it was one per batch.
-      expect(announcements, lessThanOrEqualTo(10));
+      // The editor builds again only the paragraphs a batch answers for.
+      expect(announcements, 100);
       for (final text in texts) {
         expect(checker.misspellingsOf(text), hasLength(1));
       }
     },
   );
+
+  test('a batch stops at two thousand characters, so frames come between '
+      'batches', () async {
+    final backend = _Backend();
+    final checker = SpellChecker(backend);
+    addTearDown(checker.dispose);
+    for (var index = 0; index < 9; index++) {
+      checker.misspellingsOf('$index ${'word ' * 199}');
+    }
+    checker.misspellingsOf('long ${'word ' * 999}');
+    await _settle(backend);
+
+    // Nine of about a thousand characters, two by two, and the long one
+    // alone.
+    expect(backend.sizes, [2, 2, 2, 2, 1, 1]);
+  });
 
   test('each batch is announced while a paragraph is being typed', () async {
     late final SpellChecker checker;
@@ -90,7 +108,7 @@ void main() {
     'keeps every paragraph the editor shows, even beyond the cache',
     () async {
       final backend = _Backend();
-      final checker = SpellChecker(backend);
+      final checker = SpellChecker(backend, maxResults: 4000);
       addTearDown(checker.dispose);
       final texts = [for (var index = 0; index < 5000; index++) 'Text $index'];
       void showAll() {
@@ -116,7 +134,7 @@ void main() {
     'drops the oldest results nobody asks for once the cache is full',
     () async {
       final backend = _Backend();
-      final checker = SpellChecker(backend);
+      final checker = SpellChecker(backend, maxResults: 4000);
       addTearDown(checker.dispose);
       final old = [for (var index = 0; index < 4000; index++) 'Old $index'];
       for (final text in old) {

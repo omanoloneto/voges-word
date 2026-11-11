@@ -80,6 +80,27 @@ class EditorKeyboardShortcutsActionsManager {
   }
 
   void _replaceText(ReplaceTextIntent intent) {
+    final range = intent.replacementRange;
+    if (intent.replacementText.isEmpty && range.isValid && !range.isCollapsed) {
+      // Voges Word: a deletion goes to the document as it is. Making the
+      // whole text with it and comparing that with the document, as for
+      // other replacements, cost a long book two copies of itself on every
+      // Backspace; the comparison finds this same range. The selection moves
+      // as TextEditingValue.replaced moves it.
+      int moved(int offset) =>
+          offset - (offset.clamp(range.start, range.end) - range.start);
+      final selection = intent.currentTextEditingValue.selection;
+      rawEditorState.controller.replaceTextWithEmbeds(
+        range.start,
+        range.end - range.start,
+        '',
+        TextSelection(
+          baseOffset: moved(selection.baseOffset),
+          extentOffset: moved(selection.extentOffset),
+        ),
+      );
+      return;
+    }
     rawEditorState.userUpdateTextEditingValue(
       intent.currentTextEditingValue
           .replaced(intent.replacementRange, intent.replacementText),

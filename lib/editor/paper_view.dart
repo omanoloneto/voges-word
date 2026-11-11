@@ -3,6 +3,7 @@ import 'package:flutter_quill/flutter_quill.dart';
 
 import '../l10n/l10n.dart';
 import '../spell/spell_checker.dart';
+import '../spell/spelling_editor.dart';
 import 'editor_factory.dart';
 import 'editor_session.dart';
 import 'header_footer_painter.dart';
@@ -116,10 +117,14 @@ class _PaperViewState extends State<PaperView> {
   @override
   Widget build(BuildContext context) {
     final spelling = widget.spelling;
-    if (spelling == null) return _paper(context);
+    final paper = _paper(context);
+    if (spelling == null) return paper;
+    // Only the paragraphs the checker answered for are built again.
     return ListenableBuilder(
       listenable: spelling,
-      builder: (context, _) => _paper(context),
+      builder: (context, paper) =>
+          SpellingScope(checker: spelling, child: paper!),
+      child: paper,
     );
   }
 

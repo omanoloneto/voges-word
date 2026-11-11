@@ -10,6 +10,7 @@ import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_quill/quill_delta.dart';
 
 import '../docx/docx_codec.dart';
+import '../docx/docx_package.dart';
 import '../docx/docx_template.dart';
 import '../docx/image_formats.dart';
 import '../document/document_codec.dart';
@@ -249,6 +250,32 @@ class EditorSession extends ChangeNotifier {
       format: format,
       content: content,
       bytes: encode(content),
+      savedAt: DateTime.now(),
+    );
+  }
+
+  /// [snapshot], with its .docx made on another isolate: a long book took a
+  /// third of a second, every time the copy was taken while editing.
+  Future<RecoverySnapshot> snapshotInBackground() async {
+    final content = format == DocumentFormat.docm
+        ? DocumentFormat.docm
+        : DocumentFormat.docx;
+    final source = _document.source;
+    final bytes = await compute(_encodeCopy, (
+      delta: controller.document.toDelta(),
+      source: source is DocxPackage ? source : null,
+      look: _look,
+      pageSetupChanged: _pageSetupChanged,
+      headersFooters: headersFooters,
+      tables: tables.snapshot(),
+      macros: content == DocumentFormat.docm,
+    ));
+    return RecoverySnapshot(
+      name: _name ?? '',
+      path: path,
+      format: format,
+      content: content,
+      bytes: bytes,
       savedAt: DateTime.now(),
     );
   }
@@ -516,3 +543,26 @@ class EditorSession extends ChangeNotifier {
     super.dispose();
   }
 }
+
+typedef _CopyWork = ({
+  Delta delta,
+  DocxPackage? source,
+  DocumentLook look,
+  bool pageSetupChanged,
+  HeadersFooters headersFooters,
+  List<TableSnapshot> tables,
+  bool macros,
+});
+
+/// The .docx of a recovery copy, on any isolate.
+Uint8List _encodeCopy(_CopyWork work) =>
+    DocxCodec(
+      TableStore.of(work.tables),
+      flavor: work.macros ? DocxFlavor.macroEnabled : DocxFlavor.document,
+    ).encode(
+      work.delta,
+      source: work.source,
+      look: work.look,
+      pageSetupChanged: work.pageSetupChanged,
+      headersFooters: work.headersFooters,
+    );

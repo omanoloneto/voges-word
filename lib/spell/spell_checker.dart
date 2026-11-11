@@ -22,6 +22,12 @@ abstract interface class SpellBackend {
   Future<List<List<Misspelling>>> check(List<String> texts, String language);
 }
 
+/// A backend that finds a word's suggestions only when asked: finding them
+/// for every mistake is most of what checking costs.
+abstract interface class SpellSuggester {
+  Future<List<String>> suggest(String word, String language);
+}
+
 SpellBackend? platformSpellBackend() {
   if (kIsWeb) return null;
   if (Platform.isMacOS) return const _NativeSpellBackend();
@@ -29,7 +35,7 @@ SpellBackend? platformSpellBackend() {
   return null;
 }
 
-class _NativeSpellBackend implements SpellBackend {
+class _NativeSpellBackend implements SpellBackend, SpellSuggester {
   const _NativeSpellBackend();
 
   static const _channel = MethodChannel('voges_word/spell');
@@ -52,11 +58,19 @@ class _NativeSpellBackend implements SpellBackend {
             Misspelling(
               item['start']! as int,
               item['end']! as int,
-              (item['suggestions']! as List).cast<String>(),
+              (item['suggestions'] as List?)?.cast<String>() ?? const [],
             ),
         ],
     ];
   }
+
+  @override
+  Future<List<String>> suggest(String word, String language) async =>
+      await _channel.invokeListMethod<String>('suggest', {
+        'word': word,
+        'language': language,
+      }) ??
+      const [];
 }
 
 class _MobileSpellBackend implements SpellBackend {
@@ -94,14 +108,22 @@ final class _Checked {
 /// Paragraph spelling, checked in the background and cached by each
 /// paragraph's text; ignored words apply to every document.
 class SpellChecker extends ChangeNotifier {
-  SpellChecker(this._backend);
+  SpellChecker(this._backend, {@visibleForTesting this.maxResults = 20000});
 
   // Stored on the user's device; renaming these keys loses their data.
   static const _ignoredKey = 'ortografia_ignoradas';
   static const _enabledKey = 'ortografia_ligada';
 
   static const _batchSize = 20;
-  static const _maxResults = 4000;
+
+  /// The system checks a batch on the thread the interface runs on, so a
+  /// batch stops at this many characters and frames come between batches.
+  static const _batchCharacters = 2000;
+
+  /// How many paragraph texts keep their results. The editor keeps what each
+  /// paragraph it shows found and asks again when the results read
+  /// differently, as after an ignored word, so a long book fits.
+  final int maxResults;
 
   final SpellBackend _backend;
   final _results = <String, _Checked>{};
@@ -113,9 +135,17 @@ class SpellChecker extends ChangeNotifier {
   var _running = false;
   var _disposed = false;
 
-  /// Counts the announcements of new results; each one rebuilds the editor,
-  /// which asks again for every paragraph it shows.
+  /// Counts the announcements of new results.
   var _round = 0;
+
+  var _generation = 0;
+
+  /// Changes with every announcement of new results.
+  int get round => _round;
+
+  /// Changes whenever results already given may read differently: another
+  /// language, words ignored, checking turned on or off.
+  int get generation => _generation;
 
   bool get enabled => _enabled;
 
@@ -127,6 +157,7 @@ class SpellChecker extends ChangeNotifier {
     _language = value;
     _results.clear();
     _queue.clear();
+    _generation++;
     if (!_disposed) notifyListeners();
   }
 
@@ -138,12 +169,14 @@ class SpellChecker extends ChangeNotifier {
     } catch (_) {
       return;
     }
+    _generation++;
     if (!_disposed) notifyListeners();
   }
 
   set enabled(bool value) {
     if (_enabled == value) return;
     _enabled = value;
+    _generation++;
     notifyListeners();
     _save((preferences) => preferences.setBool(_enabledKey, value));
   }
@@ -167,12 +200,31 @@ class SpellChecker extends ChangeNotifier {
     ];
   }
 
+  /// Whether the backend finds suggestions only when [suggestionsFor] asks.
+  bool get suggestsOnRequest => _backend is SpellSuggester;
+
+  /// What [word] could be, from a backend that finds it only when asked.
+  Future<List<String>> suggestionsFor(String word) async {
+    if (_backend case final SpellSuggester suggester) {
+      try {
+        return await suggester.suggest(word, _language);
+      } catch (_) {
+        return const [];
+      }
+    }
+    return const [];
+  }
+
   void ignore(String word) {
     if (!_ignored.add(word.toLowerCase())) return;
+    _generation++;
     notifyListeners();
     final words = _ignored.toList()..sort();
     _save((preferences) => preferences.setStringList(_ignoredKey, words));
   }
+
+  /// Whether [text] waits for the backend; it has results once it does not.
+  bool isWaiting(String text) => _queue.contains(text);
 
   void _enqueue(String text) {
     if (!_queue.add(text)) return;
@@ -183,32 +235,35 @@ class SpellChecker extends ChangeNotifier {
   Future<void> _drain() async {
     if (_running) return;
     _running = true;
-    var checked = 0;
-    var announced = 0;
     try {
       while (_queue.isNotEmpty && !_disposed) {
-        final batch = _queue.take(_batchSize).toList();
-        _queue.removeAll(batch);
+        // A batch stays queued until its results are in, so it is waiting
+        // all along.
+        final batch = <String>[];
+        var characters = 0;
+        for (final text in _queue) {
+          if (batch.length == _batchSize ||
+              batch.isNotEmpty && characters + text.length > _batchCharacters) {
+            break;
+          }
+          batch.add(text);
+          characters += text.length;
+        }
         final language = _language;
         final found = await _backend.check(batch, language);
         if (language != _language) continue;
         for (var i = 0; i < batch.length && i < found.length; i++) {
           _results[batch[i]] = _Checked(found[i], _round);
         }
-        checked += batch.length;
-        // Each announcement rebuilds the whole editor, so a long check
-        // announces only when its results double, about log2(n) times. A
-        // short queue, as while typing, is announced after every batch.
-        if (checked >= 2 * announced || _queue.length < _batchSize) {
-          announced = checked;
-          _announce();
-        }
+        _queue.removeAll(batch);
+        // The editor builds again only the paragraphs of the batch, so each
+        // one shows its results as soon as they are in.
+        _announce();
       }
     } catch (_) {
       _queue.clear();
     } finally {
       _running = false;
-      if (checked > announced) _announce();
     }
   }
 
@@ -219,12 +274,12 @@ class SpellChecker extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Drops the oldest results beyond [_maxResults] that were neither checked
-  /// nor asked for in the last two rounds. The editor asks for every
-  /// paragraph it shows after each announcement, so dropping one of those
-  /// would only queue it again.
+  /// Drops the oldest results beyond [maxResults] that were neither checked
+  /// nor asked for in the last two rounds. The editor keeps what each
+  /// paragraph it shows found, so a dropped one is checked again only when
+  /// its paragraph changes.
   void _trim() {
-    final excess = _results.length - _maxResults;
+    final excess = _results.length - maxResults;
     if (excess <= 0) return;
     final unused = [
       for (final MapEntry(:key, :value) in _results.entries)

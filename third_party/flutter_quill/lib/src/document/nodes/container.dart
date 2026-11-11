@@ -154,6 +154,7 @@ abstract base class QuillContainer<T extends Node?> extends Node {
   @override
   void clearLengthCache() {
     _length = null;
+    bumpRevision();
     clearOffsetCache();
     if (parent != null) {
       parent!.clearLengthCache();

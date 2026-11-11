@@ -72,17 +72,26 @@ class _TextLineState extends State<TextLine> {
 
   void _pressedKeysChanged() {
     final newValue = _pressedKeys!.metaPressed || _pressedKeys!.controlPressed;
-    if (_metaOrControlPressed != newValue) {
-      setState(() {
-        _metaOrControlPressed = newValue;
-        _linkRecognizers
-          ..forEach((key, value) {
-            value.dispose();
-          })
-          ..clear();
-      });
+    if (_metaOrControlPressed == newValue) {
+      return;
     }
+    _metaOrControlPressed = newValue;
+    // Voges Word: the key changes only what links do, so a paragraph without
+    // one is not built again: pressing Cmd built every paragraph.
+    if (_linkRecognizers.isEmpty && !_hasLink) {
+      return;
+    }
+    setState(() {
+      _linkRecognizers
+        ..forEach((key, value) {
+          value.dispose();
+        })
+        ..clear();
+    });
   }
+
+  bool get _hasLink => widget.line.children.any(
+      (node) => node.style.attributes[Attribute.link.key]?.value != null);
 
   bool get canLaunchLinks {
     // In readOnly mode users can launch links
@@ -137,6 +146,24 @@ class _TextLineState extends State<TextLine> {
     super.dispose();
   }
 
+  // Voges Word: the same span while the indent keeps its width. A new one
+  // never equals the old one, and the whole paragraph would be laid out and
+  // painted again on every build.
+  WidgetSpan? _indentSpan;
+  double _indentWidth = 0;
+
+  WidgetSpan _indentSpanFor(double width) {
+    if (_indentSpan == null || _indentWidth != width) {
+      _indentWidth = width;
+      _indentSpan = WidgetSpan(
+        alignment: PlaceholderAlignment.baseline,
+        baseline: TextBaseline.alphabetic,
+        child: SizedBox(width: width),
+      );
+    }
+    return _indentSpan!;
+  }
+
   /// Check if this line contains the placeholder attribute
   bool get isPlaceholderLine =>
       widget.line.toDelta().first.attributes?.containsKey('placeholder') ??
@@ -182,14 +209,10 @@ class _TextLineState extends State<TextLine> {
     final firstLine = widget.lineFormat?.call(widget.line)?.firstLine ?? 0;
     final indented = firstLine > 0;
     if (indented) {
-      textSpan = TextSpan(style: textSpan.style, children: [
-        WidgetSpan(
-          alignment: PlaceholderAlignment.baseline,
-          baseline: TextBaseline.alphabetic,
-          child: SizedBox(width: firstLine),
-        ),
-        textSpan,
-      ]);
+      textSpan = TextSpan(
+        style: textSpan.style,
+        children: [_indentSpanFor(firstLine), textSpan],
+      );
     }
     final child = RichText(
       key: _richTextKey,
@@ -870,6 +893,10 @@ class RenderEditableTextLine extends RenderEditableBox {
 
   double get _pageBreakGap =>
       _pageBreaks.fold(0, (total, pageBreak) => total + pageBreak.gap);
+
+  /// Voges Word: the height of the line laid out without the page, which is
+  /// its height less the room that moves part of it to the next page.
+  double get naturalHeight => size.height - _pageBreakGap;
 
   double _visualShift(double bodyY) {
     var shift = 0.0;
@@ -1588,9 +1615,11 @@ class RenderEditableTextLine extends RenderEditableBox {
 
         // Paint a small rect at the start of empty lines that
         // are contained by the selection.
+        // Voges Word: the selection is in document offsets, which the
+        // offset of a line in a block is not.
         if (line.isEmpty &&
-            textSelection.baseOffset <= line.offset &&
-            textSelection.extentOffset > line.offset) {
+            textSelection.baseOffset <= line.documentOffset &&
+            textSelection.extentOffset > line.documentOffset) {
           final lineHeight = preferredLineHeight(
             TextPosition(
               offset: line.offset,

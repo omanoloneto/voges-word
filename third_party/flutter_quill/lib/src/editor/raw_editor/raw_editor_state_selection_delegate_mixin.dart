@@ -18,6 +18,12 @@ mixin RawEditorStateSelectionDelegateMixin on EditorState
     final cursorPosition = value.selection.extentOffset;
     final oldText = widget.controller.document.toPlainText();
     final newText = value.text;
+    // Voges Word: moving the selection hands back the document's own text,
+    // which the comparison below went through whole for every arrow key.
+    if (identical(oldText, newText)) {
+      widget.controller.updateSelection(value.selection, ChangeSource.local);
+      return;
+    }
     final diff = getDiff(oldText, newText, cursorPosition);
     if (diff.deleted == '' && diff.inserted == '') {
       // Only changing selection range
