@@ -116,10 +116,14 @@ base class Line extends QuillContainer<Leaf?> {
       }
       final nextLine = line._getNextLine(index);
       line.clearStyle();
-      if (line.parent is Block) {
-        line._unwrap();
+      if (line._staysInBlock(style)) {
+        line.applyStyle(style!);
+      } else {
+        if (line.parent is Block) {
+          line._unwrap();
+        }
+        line._format(style);
       }
-      line._format(style);
       line = nextLine;
       index = 0;
       start = lineBreak + 1;
@@ -399,12 +403,47 @@ base class Line extends QuillContainer<Leaf?> {
   }
 
   void _applyBlockStyles(Style newStyle) {
-    var block = Block();
-    for (final style in newStyle.getBlocksExceptHeader().values) {
-      block = block..applyAttribute(style);
+    // Voges Word: in the registry's order, the order a copy of a block gets,
+    // so every block has its attributes in one order; see _staysInBlock.
+    final block = Block();
+    for (final attribute in newStyle.values) {
+      if (attribute.isBlockExceptHeader) {
+        block.applyAttribute(attribute);
+      }
     }
     _wrap(block);
     block.adjust();
+  }
+
+  /// Voges Word: whether a line break of [style] that ends this line leaves
+  /// the line where it is, in its block.
+  ///
+  /// Quill takes the line out of the block and wraps it in a new block, which
+  /// then takes in the lines of the old one: as costly as the whole block,
+  /// and the block is a new node, so the editor builds all of it again. In
+  /// justified text, every Enter did. The line stays when Quill would end
+  /// with the same block: the line break keeps the block's attributes, the
+  /// block has them in the registry's order, as Quill's new block would, and
+  /// no block of the same style is next to it to merge with.
+  bool _staysInBlock(Style? style) {
+    final block = parent;
+    if (style == null || block is! Block) {
+      return false;
+    }
+    final attributes = block.style.attributes;
+    final kept = {
+      for (final attribute in style.getBlocksExceptHeader().values)
+        if (attribute.value != null) attribute.key: attribute,
+    };
+    if (!const MapEquality<String, Attribute>().equals(attributes, kept) ||
+        !const IterableEquality<Attribute>()
+            .equals(attributes.values, block.style.values)) {
+      return false;
+    }
+    final before = block.previous;
+    final after = block.next;
+    return !(before is Block && before.style == block.style) &&
+        !(after is Block && after.style == block.style);
   }
 
   /// Wraps this line with new parent [block].

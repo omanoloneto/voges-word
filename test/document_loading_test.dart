@@ -632,6 +632,54 @@ String _history(QuillController controller) {
   ]);
 }
 
+/// Our editor and Quill's, each on its own tree of [delta].
+(QuillController, QuillController) _twins(Delta delta) {
+  const start = TextSelection.collapsed(offset: 0);
+  final ours = QuillController(
+    document: Document.fromDelta(delta),
+    selection: start,
+  );
+  final quill = QuillController(
+    document: Document.fromDeltaByInserts(delta),
+    selection: start,
+  );
+  addTearDown(ours.dispose);
+  addTearDown(quill.dispose);
+  return (ours, quill);
+}
+
+/// The trees and deltas of the twins, compared as [_expectSameEditing]
+/// compares them.
+void _expectTwins(QuillController ours, QuillController quill, String reason) {
+  expect(
+    _difference(ours.document.root, quill.document.root),
+    isNull,
+    reason: reason,
+  );
+  expect(_staleCache(ours.document.root), isNull, reason: reason);
+  expect(
+    _deltaJson(ours.document.toDelta()),
+    _deltaJson(quill.document.toDelta()),
+    reason: reason,
+  );
+  expect(
+    _deltaJson(ours.document.root.toDelta()),
+    _deltaJson(_concatenated(ours.document.root)),
+    reason: reason,
+  );
+}
+
+List<Block> _blocks(Document document) =>
+    document.root.children.whereType<Block>().toList();
+
+void _type(QuillController controller, int offset, String text) =>
+    controller.replaceText(
+      offset,
+      0,
+      text,
+      TextSelection.collapsed(offset: offset + text.length),
+    );
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -922,6 +970,149 @@ void main() {
           reason: 'seed $seed: ${_deltaJson(change)} on ${_deltaJson(base)}',
         );
       }
+    });
+  });
+
+  group('A new paragraph in a block', () {
+    const justified = {'align': 'justify'};
+
+    Delta paragraphs(
+      Map<String, dynamic> attributes, {
+      Map<String, dynamic>? heading,
+    }) {
+      final delta = Delta()..insert('Intro\n');
+      if (heading != null) {
+        delta
+          ..insert('Heading')
+          ..insert('\n', heading);
+      }
+      for (var i = 0; i < 5; i++) {
+        delta
+          ..insert('Line $i of the block')
+          ..insert('\n', attributes);
+      }
+      return delta..insert('Outro\n');
+    }
+
+    for (final (where, delta, after, text) in <(String, Delta, String, String)>[
+      ('in the middle of a line', paragraphs(justified), 'Line 2 of', '\n'),
+      ('in the first line', paragraphs(justified), 'Line 0 of', '\n'),
+      (
+        'at the end of the last line',
+        paragraphs(justified),
+        'Line 4 of the block',
+        '\n',
+      ),
+      (
+        'at the start of a line',
+        paragraphs(justified),
+        'Line 2 of the block\n',
+        '\n',
+      ),
+      (
+        'in a block of two attributes',
+        // The reader writes them in this order, which is not Quill's.
+        paragraphs({'align': 'justify', 'line-height': 1.5}),
+        'Line 2 of',
+        '\n',
+      ),
+      ('in a list', paragraphs({'list': 'ordered'}), 'Line 2 of', '\n'),
+      (
+        'after a heading',
+        paragraphs(
+          {'align': 'center'},
+          heading: {'header': 1, 'align': 'center'},
+        ),
+        'Heading',
+        '\n',
+      ),
+      (
+        'pasted with lines of its own',
+        paragraphs(justified),
+        'Line 2 of',
+        'one\ntwo\n\nthree',
+      ),
+    ]) {
+      test('keeps the block and its lines, and ends as Quill ends, '
+          '$where', () {
+        final (ours, quill) = _twins(delta);
+        final block = _blocks(ours.document).single;
+        final style = block.style;
+        final lines = block.children.toList();
+        final offset =
+            ours.document.toPlainText().indexOf(after) + after.length;
+        final split = ours.document.queryChild(offset).node;
+
+        void expectKept(String reason, Iterable<Node> kept) {
+          expect(_blocks(ours.document).single, same(block), reason: reason);
+          expect(block.style, same(style), reason: reason);
+          expect(
+            [
+              for (final line in kept)
+                if (!identical(line.parent, block)) line.toPlainText(),
+            ],
+            isEmpty,
+            reason: '$reason: lines out of the block',
+          );
+        }
+
+        _type(ours, offset, text);
+        _type(quill, offset, text);
+        _expectTwins(ours, quill, 'typed');
+        expectKept('typed', lines);
+
+        ours.undo();
+        quill.undo();
+        _expectTwins(ours, quill, 'undone');
+        expect(ours.document.toDelta(), delta, reason: 'undone');
+        // Joining two lines keeps the second, as Quill does.
+        expectKept('undone', lines.where((line) => line != split));
+      });
+    }
+
+    test('in one of two blocks of one style that touch joins them, as Quill '
+        'does', () {
+      final delta = Delta();
+      for (final text in ['One', 'Two', 'Three']) {
+        delta
+          ..insert(text)
+          ..insert('\n', justified);
+      }
+      delta.insert('Plain\n');
+      for (final text in ['Four', 'Five', 'Six']) {
+        delta
+          ..insert(text)
+          ..insert('\n', justified);
+      }
+      delta.insert('Outro\n');
+      final (ours, quill) = _twins(delta);
+      final plain = ours.document.toPlainText().indexOf('Plain');
+      for (final controller in [ours, quill]) {
+        controller.replaceText(
+          plain,
+          'Plain\n'.length,
+          '',
+          TextSelection.collapsed(offset: plain),
+        );
+      }
+      _expectTwins(ours, quill, 'deleted');
+      expect(
+        _blocks(ours.document),
+        hasLength(2),
+        reason: 'Quill leaves them apart',
+      );
+
+      final two = ours.document.toPlainText().indexOf('Two') + 1;
+      _type(ours, two, '\n');
+      _type(quill, two, '\n');
+      _expectTwins(ours, quill, 'the first new paragraph');
+      final block = _blocks(ours.document).single;
+
+      final five = ours.document.toPlainText().indexOf('Five') + 1;
+      _type(ours, five, '\n');
+      _type(quill, five, '\n');
+      _expectTwins(ours, quill, 'the second new paragraph');
+      expect(_blocks(ours.document).single, same(block));
     });
   });
 

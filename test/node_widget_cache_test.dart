@@ -219,30 +219,35 @@ void main() {
 
       expect(built, ['Paragraph 11']);
     });
+
+    testWidgets('a new paragraph builds only the ones around it$where', (
+      tester,
+    ) async {
+      final stage = await _show(
+        tester,
+        _paragraphs(12, attributes: attributes),
+      );
+      final split = stage.startOf(5) + 'Paragraph 5 goes on'.length;
+      stage.moveCaretTo(split);
+      await tester.pump();
+      final before = _states(tester);
+
+      final built = await _built(tester, () => stage.type(split, '\n'));
+
+      expect(built, [
+        'Paragraph 4',
+        'Paragraph 5',
+        'for a while, as body text does.',
+        'Paragraph 6',
+      ]);
+      final after = _states(tester);
+      expect(after, hasLength(13));
+      expect([
+        for (final line in before.keys)
+          if (!identical(after[line], before[line])) _name(line.toPlainText()),
+      ], isEmpty);
+    });
   }
-
-  testWidgets('a new paragraph builds only the ones around it', (tester) async {
-    final stage = await _show(tester, _paragraphs(12));
-    final split = stage.startOf(5) + 'Paragraph 5 goes on'.length;
-    stage.moveCaretTo(split);
-    await tester.pump();
-    final before = _states(tester);
-
-    final built = await _built(tester, () => stage.type(split, '\n'));
-
-    expect(built, [
-      'Paragraph 4',
-      'Paragraph 5',
-      'for a while, as body text does.',
-      'Paragraph 6',
-    ]);
-    final after = _states(tester);
-    expect(after, hasLength(13));
-    expect([
-      for (final line in before.keys)
-        if (!identical(after[line], before[line])) _name(line.toPlainText()),
-    ], isEmpty);
-  });
 
   testWidgets('ordered lists keep their numbers when the paragraph between '
       'them is not built again', (tester) async {
