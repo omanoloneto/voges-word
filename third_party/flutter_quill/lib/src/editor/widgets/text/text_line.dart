@@ -72,17 +72,26 @@ class _TextLineState extends State<TextLine> {
 
   void _pressedKeysChanged() {
     final newValue = _pressedKeys!.metaPressed || _pressedKeys!.controlPressed;
-    if (_metaOrControlPressed != newValue) {
-      setState(() {
-        _metaOrControlPressed = newValue;
-        _linkRecognizers
-          ..forEach((key, value) {
-            value.dispose();
-          })
-          ..clear();
-      });
+    if (_metaOrControlPressed == newValue) {
+      return;
     }
+    _metaOrControlPressed = newValue;
+    // Voges Word: the key changes only what links do, so a paragraph without
+    // one is not built again: pressing Cmd built every paragraph.
+    if (_linkRecognizers.isEmpty && !_hasLink) {
+      return;
+    }
+    setState(() {
+      _linkRecognizers
+        ..forEach((key, value) {
+          value.dispose();
+        })
+        ..clear();
+    });
   }
+
+  bool get _hasLink => widget.line.children.any(
+      (node) => node.style.attributes[Attribute.link.key]?.value != null);
 
   bool get canLaunchLinks {
     // In readOnly mode users can launch links

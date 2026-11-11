@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_quill/quill_delta.dart';
 // ignore: implementation_imports
@@ -374,6 +376,38 @@ void main() {
 
     expect(await _built(tester, stage.pump), isEmpty);
   });
+
+  testWidgets(
+    'pressing Cmd builds only the paragraphs with a link',
+    (tester) async {
+      final delta = _paragraphs(3)
+        ..insert('Paragraph 3 goes to a ')
+        ..insert('link', {'link': 'https://example.com'})
+        ..insert('\n');
+      await _show(tester, delta.concat(_paragraphs(3, from: 4)));
+      GestureRecognizer? linkRecognizer() => [
+        for (final text in tester.widgetList<RichText>(find.byType(RichText)))
+          for (final span in _spans(text.text))
+            if (span.text == 'link') span.recognizer,
+      ].single;
+      expect(linkRecognizer(), isNull);
+
+      final down = await _built(
+        tester,
+        () => tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft),
+      );
+      expect(down, ['Paragraph 3']);
+      expect(linkRecognizer(), isNotNull, reason: 'Cmd+click opens the link');
+
+      final up = await _built(
+        tester,
+        () => tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft),
+      );
+      expect(up, ['Paragraph 3']);
+      expect(linkRecognizer(), isNull);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
 
   testWidgets('the composing underline follows the text being composed', (
     tester,
